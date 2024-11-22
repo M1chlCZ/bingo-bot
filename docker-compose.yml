@@ -1,0 +1,11 @@
+services:
+  trading-bot:
+    build:
+      context: .
+    container_name: bingo-bot
+    restart: always
+    volumes:
+      - /path/to/local/folder:/app/data # Mount the SQLite database volume
+
+volumes:
+  sqlite_data:
