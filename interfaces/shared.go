@@ -1,6 +1,9 @@
 package interfaces
 
-import "binance_bot/models"
+import (
+	"binance_bot/models"
+	"binance_bot/strategies"
+)
 
 // Exchange interface defines methods our bot needs from an exchange
 type Exchange interface {
@@ -15,5 +18,6 @@ type Exchange interface {
 
 // Strategy interface for implementing different trading strategies
 type Strategy interface {
+	GetStrategyType() strategies.StrategyType
 	Calculate(candles []models.CandleStick, pair string, trend bool) (signal int, err error)
 }

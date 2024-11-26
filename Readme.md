@@ -1,5 +1,4 @@
 
----
 
 # Bingo-Bot 🚀
 Bingo-Bot (Binance GO Bot) is a **work-in-progress**, **experimental trading bot** for Binance, built with **Go** and designed to be flexible, extensible, and easy to use. Whether you're testing strategies or building a robust trading system, Bingo-Bot is here to help!

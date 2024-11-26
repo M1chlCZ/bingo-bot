@@ -2,3 +2,4 @@
 upload.sh
 .idea
 data
+docker-compose.yml

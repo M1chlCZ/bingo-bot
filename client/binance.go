@@ -64,6 +64,18 @@ func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
 	return fmt.Errorf("symbol %s not found", pair.Symbol)
 }
 
+func (b *BinanceClient) GetCurrentPrice(symbol string) (float64, error) {
+	prices, err := b.client.NewListPricesService().Symbol(symbol).Do(context.Background())
+	if err != nil {
+		return 0, err
+	}
+	price, err := strconv.ParseFloat(prices[0].Price, 64)
+	if err != nil {
+		return 0, err
+	}
+	return price, nil
+}
+
 // FetchCandles implements the Exchange interface
 func (b *BinanceClient) FetchCandles(symbol, interval string, limit int) ([]models.CandleStick, error) {
 	var klines []*binance.Kline
@@ -165,6 +177,54 @@ func (b *BinanceClient) CreateOrder(symbol, orderType, side string, amount strin
 	}
 
 	return executedPrice, nil
+}
+
+func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (float64, error) {
+	// Check if the trading pair is configured
+	b.PairsMutex.RLock()
+	_, exists := b.Pairs[symbol]
+	b.PairsMutex.RUnlock()
+
+	if !exists {
+		return 0, fmt.Errorf("trading pair %s not configured", symbol)
+	}
+
+	// Place the market order
+	order, err := b.client.NewCreateOrderService().
+		Symbol(symbol).
+		Side(binance.SideType(side)).
+		Type(binance.OrderTypeMarket). // Market order
+		Quantity(quantity).            // Base asset quantity
+		Do(context.Background())
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to place MARKET %s order for %s: %v", side, symbol, err)
+	}
+
+	// Calculate the executed price based on fills
+	var totalQuoteQty float64
+	var totalBaseQty float64
+
+	for _, fill := range order.Fills {
+		price, err := strconv.ParseFloat(fill.Price, 64)
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse fill price: %v", err)
+		}
+		quantity, err := strconv.ParseFloat(fill.Quantity, 64)
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse fill quantity: %v", err)
+		}
+		totalQuoteQty += price * quantity
+		totalBaseQty += quantity
+	}
+
+	// Calculate the average executed price
+	if totalBaseQty == 0 {
+		return 0, fmt.Errorf("no fills returned for the market order")
+	}
+	averagePrice := totalQuoteQty / totalBaseQty
+
+	return averagePrice, nil
 }
 
 func (b *BinanceClient) CreateLimitOrder(symbol, side, quantity, price string) (int64, error) {
@@ -408,6 +468,20 @@ func (b *BinanceClient) CancelOrder(symbol string, orderID int64) error {
 
 	log.Printf("Successfully canceled order %d for %s", orderID, symbol)
 	return nil
+}
+
+func (b *BinanceClient) GetFeeRate() (float64, error) {
+	accountInfo, err := b.client.NewGetAccountService().Do(context.Background())
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch account info: %v", err)
+	}
+
+	// Default spot trading fee (if using BNB discounts, adjust this value)
+	feeRate := 0.001 // Default 0.1%
+	if accountInfo.MakerCommission > 0 {
+		feeRate = float64(accountInfo.MakerCommission) / 10000 // Convert commission to decimal
+	}
+	return feeRate, nil
 }
 
 // Retry helper for API calls

@@ -45,18 +45,23 @@ func main() {
 	}
 
 	// Create trading strategy
-	strategy := &strategies.CompoundStrategy{
+	strategy := &strategies.RSIMACDStrategy{
 		RSI: &strategies.RSIStrategy{
-			Overbought: 70,
-			Oversold:   30,
-			Period:     19,
+			Overbought: 65,
+			Oversold:   40,
+			Period:     18,
 		},
 		MACD: &strategies.MACDStrategy{
 			FastPeriod:   15, // Short-term EMA
 			SlowPeriod:   30, // Long-term EMA
 			SignalPeriod: 10, // Signal line EMA
 		},
+		FeeRate: 0.001,
 	}
+
+	//strategy := &strategies.SpikeStrategy{
+	//	VolumeThreshold: 5000,
+	//}
 
 	bt := bot.NewMultiPairTradingBot(cl, strategy, "15m")
 
@@ -70,12 +75,17 @@ func main() {
 		{"FTMUSDT", "FTM", "USDT", 50, 10, 4, 1},
 		{"ADAUSDT", "ADA", "USDT", 50, 10, 4, 1},
 		{"HBARUSDT", "HBAR", "USDT", 50, 10, 4, 1},
-		{"TROYUSDT", "TROY", "USDT", 50, 10, 4, 1},
-		{"SCRUSDT", "SCR", "USDT", 50, 10, 4, 1},
-		{"KAIAUSDT", "KAIA", "USDT", 50, 10, 4, 1},
+		{"POWRUSDT", "POWR", "USDT", 50, 10, 4, 1},
+		{"OGUSDT", "OG", "USDT", 50, 10, 4, 1},
 		{"BNBUSDT", "BNB", "USDT", 50, 10, 4, 1},
 		{"CTXCUSDT", "CTXC", "USDT", 50, 10, 4, 1},
+		{"SCRTUSDT", "SCRT", "USDT", 50, 10, 4, 1},
+		{"XLMUSDT", "XLM", "USDT", 50, 10, 4, 1},
+		{"AVAXUSDT", "AVAX", "USDT", 50, 10, 4, 1},
+		{"ALGOUSDT", "ALGO", "USDT", 50, 10, 4, 1},
 	}
+
+	fmt.Println("/// Starting trading bot ///")
 
 	for _, pair := range pairs {
 		if err := cl.AddTradingPair(pair); err != nil {
