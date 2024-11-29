@@ -8,13 +8,14 @@ Bingo-Bot (Binance GO Bot) is a **work-in-progress**, **experimental trading bot
 ---
 
 ## ⚡ Features
-- **Automated Trading**: Works with Binance for spot trading.
+- **Automated Trading**: Works with Binance for spot trading. More exchanges coming soon!
 - **Custom Strategies**: Easily implement your own strategies in the `./strategies/` folder.
 - **Pluggable Exchanges**: Add other exchanges by adhering to the shared interface in `./interfaces/shared.go`.
 - **Stop-Loss and Take-Profit**: Dynamic risk management for trades.
+- **Multi-Pair Trading**: Manage multiple trading pairs with thread-safe operations.
 - **Trend Filtering**: Combines indicators like RSI and MACD for smarter trades.
 - **Docker Support**: Deploy quickly with Docker Compose.
-- **SQLite Logging**: Tracks your trades for performance analysis.
+- **Performance Logging**: Tracks your trades for performance analysis.
 
 ---
 
@@ -72,15 +73,39 @@ Bingo-Bot (Binance GO Bot) is a **work-in-progress**, **experimental trading bot
 ## ⚙️ Configuration
 
 ### Strategies
+
 You can find the default strategies in the `./strategies/` folder. To add your own:
 1. Implement a new struct that adheres to the `Strategy` interface in `./interfaces/shared.go`.
 2. Add your logic for signal generation (e.g., RSI, MACD, Moving Averages).
-3. Register your strategy in `main.go`.
+3. The bot's trading logic manages multiple pairs using `MultiPairTradingBot`. Ensure your strategy is compatible with this multi-pair setup.
+
+**Example**:
+```go
+type MyCustomStrategy struct {}
+
+func (self *MyCustomStrategy) Calculate(candles []models.CandleStick, pair string, trend bool) (int, error) {
+    // Custom logic here
+    return 0, nil
+}
+```
+
+### Exchanges
+1. **Binance** is currently supported. More exchanges are coming soon!
+2. To add a new exchange, implement the `ExchangeClient` interface in `./interfaces/shared.go`.
+3. PRs are welcome for new exchange integrations.
 
 ### Adding New Exchanges
 To integrate a new exchange:
 1. Implement the `Exchange` interface in `./interfaces/shared.go`.
 2. Provide methods for fetching market data, creating orders, and managing balances.
+
+### Mutex and Thread Safety
+
+The bot manages multiple trading pairs using internal thread-safe mechanisms.
+- Mutexes are used to handle concurrent access to shared resources such as trading pairs and market data.
+- No manual mutex handling is required for users implementing new strategies or adding pairs. The bot's `MultiPairTradingBot` handles this automatically.
+
+For advanced users integrating new exchanges or modifying the bot, ensure proper thread safety by leveraging `sync.RWMutex` where applicable.
 
 ---
 
@@ -102,6 +127,8 @@ bingo-bot/
 ├── db/                # SQLite integration for logging trades
 ├── interfaces/        # Shared interfaces for strategies and exchanges
 ├── strategies/        # Default and custom trading strategies
+├── logger/            # Logging
+├── utils/             # Utility functions (Performance, Time, etc.)
 ├── main.go            # Entry point for the bot
 ├── Dockerfile         # Docker file for building the bot
 └── docker-compose.yml # Docker Compose for easy deployment
@@ -123,7 +150,7 @@ Feel free to submit **pull requests**, **bug reports**, or **feature requests**.
 
 ## 🔧 TODO
 - [ ] Add backtesting framework.
-- [ ] Improve logging and analytics.
+- [x] Improve logging and analytics.
 - [ ] Integrate more exchanges.
 - [ ] Add more strategies (Bollinger Bands, Stochastic Oscillator, etc.).
 

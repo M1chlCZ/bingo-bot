@@ -22,6 +22,7 @@ type Strategy interface {
 	Calculate(candles []models.CandleStick, pair string, trend bool) (signal int, err error)
 }
 
+// ExchangeClient interface defines methods our bot needs from an exchange client
 type ExchangeClient interface {
 	AddTradingPair(pair models.TradingPair) error
 	GetCurrentPrice(symbol string) (float64, error)
