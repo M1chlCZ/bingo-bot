@@ -9,8 +9,10 @@ import (
 
 var highestPrices sync.Map
 
-// RSIMACDStrategy represents the type of strategy, all fields are required to be filled
-type RSIMACDStrategy struct {
+// CompoundStrategy represents the type of strategy, all fields are required to be filled
+// TODO: Deal with RSI or MACD strategy being nil
+// TODO: Implement StochasticOscillator strategy
+type CompoundStrategy struct {
 	StrategyType StrategyType
 	RSI          *RSIStrategy
 	MACD         *MACDStrategy
@@ -22,11 +24,11 @@ type RSIMACDStrategy struct {
 	HighestPriceFallOffMargin float64
 }
 
-func (cs *RSIMACDStrategy) GetStrategyType() StrategyType {
+func (cs *CompoundStrategy) GetStrategyType() StrategyType {
 	return RSIMACDStrategyType
 }
 
-func (cs *RSIMACDStrategy) Calculate(candles []models.CandleStick, pair string, trend bool) (int, error) {
+func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string, trend bool) (int, error) {
 	var macdColor string
 	var rsiColor string
 	var trendColor string

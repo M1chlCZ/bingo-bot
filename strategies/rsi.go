@@ -12,7 +12,7 @@ type RSIStrategy struct {
 }
 
 // Calculate implements the Strategy interface for RSIStrategy
-func (r *RSIStrategy) Calculate(candles []models.CandleStick, pair string) (float64, int, error) {
+func (r *RSIStrategy) Calculate(candles []models.CandleStick, _ string) (float64, int, error) {
 	rsi, err := calculateRSI(candles, r.Period)
 	if err != nil {
 		return 0, 0, err

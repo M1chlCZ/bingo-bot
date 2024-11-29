@@ -27,6 +27,7 @@ func (m *MACDStrategy) Calculate(candles []models.CandleStick) (histogram float6
 	return histogram, signalLine, macdLine, 0, nil // Hold
 }
 
+// CalculateMACD calculates the MACD line, signal line, and histogram from a series of candles
 func CalculateMACD(candles []models.CandleStick, fastPeriod, slowPeriod, signalPeriod int) (float64, float64, float64, error) {
 	if len(candles) < slowPeriod {
 		return 0, 0, 0, fmt.Errorf("not enough data to calculate MACD: need %d candles, got %d", slowPeriod, len(candles))

@@ -5,14 +5,14 @@ import (
 	"fmt"
 )
 
-type StochasticStrategy struct {
+type StochasticOscillator struct {
 	Overbought int // Overbought threshold (e.g., 80)
 	Oversold   int // Oversold threshold (e.g., 20)
 	Period     int // Lookback period
 }
 
 // Calculate generates a signal based on the stochastic oscillator
-func (s *StochasticStrategy) Calculate(candles []models.CandleStick) (string, int, error) {
+func (s *StochasticOscillator) Calculate(candles []models.CandleStick) (string, int, error) {
 	k, d, err := calculateStochasticOscillator(candles, s.Period)
 	if err != nil {
 		return "", 0, err

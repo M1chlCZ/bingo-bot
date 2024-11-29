@@ -50,7 +50,7 @@ func main() {
 	}
 
 	// Create trading strategy
-	strategy := &strategies.RSIMACDStrategy{
+	strategy := &strategies.CompoundStrategy{
 		RSI: &strategies.RSIStrategy{
 			Overbought: 65,
 			Oversold:   40,
