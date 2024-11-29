@@ -10,3 +10,8 @@ type TradingPair struct {
 	PricePrecision int
 	QtyPrecision   int
 }
+
+func NewTradingPair(symbol string) TradingPair {
+	// Initialize a new trading pair with the symbol, values will be fetched from the exchange
+	return TradingPair{symbol, "", "", 0, 0, 0, 0}
+}

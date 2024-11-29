@@ -19,6 +19,6 @@ RUN go build -o trading-bot .
 LABEL authors="m1chl"
 
 # Command to run the bot
-CMD ["./trading-bot"]
+CMD ["./trading-bot", "--log=debug"]
 
 

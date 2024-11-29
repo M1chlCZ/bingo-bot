@@ -2,51 +2,84 @@ package utils
 
 import (
 	db2 "binance_bot/db"
+	"binance_bot/interfaces"
 	"database/sql"
-	"log"
+	"fmt"
 	"time"
+
+	"binance_bot/logger"
 )
 
-func calculatePerformance(db *sql.DB) (float64, float64, error) {
-	query := `
-    SELECT 
-        side, SUM(amount * price) as total_value 
-    FROM trades 
-    GROUP BY side`
-
-	rows, err := db.Query(query)
+// calculatePerformance calculates the performance metrics by fetching current prices dynamically.
+func calculatePerformance(db *sql.DB, binanceClient interfaces.ExchangeClient) (float64, float64, float64, error) {
+	// Query total profit/loss from completed trades
+	queryCompleted := `
+		SELECT 
+			SUM(profit_loss) as total_profit_loss
+		FROM completed_trades`
+	var totalProfitLoss float64
+	err := db.QueryRow(queryCompleted).Scan(&totalProfitLoss)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, fmt.Errorf("error calculating completed trades profit/loss: %v", err)
+	}
+
+	// Query active trades
+	queryActive := `
+		SELECT 
+			symbol, buy_price, quantity 
+		FROM active_trades`
+	rows, err := db.Query(queryActive)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("error querying active trades: %v", err)
 	}
 	defer rows.Close()
 
-	var totalBuy, totalSell float64
+	var unrealizedProfit, unrealizedLoss float64
 	for rows.Next() {
-		var side string
-		var totalValue float64
-		err := rows.Scan(&side, &totalValue)
+		var symbol string
+		var buyPrice, quantity float64
+
+		err := rows.Scan(&symbol, &buyPrice, &quantity)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, 0, fmt.Errorf("error scanning active trades: %v", err)
 		}
-		if side == "BUY" {
-			totalBuy += totalValue
-		} else if side == "SELL" {
-			totalSell += totalValue
+
+		// Fetch the current price dynamically
+		currentPrice, err := binanceClient.GetCurrentPrice(symbol) // Assuming this function exists
+		if err != nil {
+			logger.Warnf("Failed to fetch current price for %s: %v", symbol, err)
+			continue
+		}
+
+		// Calculate profit/loss for this trade
+		diff := (currentPrice - buyPrice) * quantity
+		if diff > 0 {
+			unrealizedProfit += diff
+		} else {
+			unrealizedLoss += -diff
 		}
 	}
 
-	return totalSell, totalBuy, nil
+	return totalProfitLoss, unrealizedProfit, unrealizedLoss, nil
 }
 
-func MonitorPerformance() {
+func MonitorPerformance(binanceClient interfaces.ExchangeClient) {
 	for {
-		time.Sleep(1 * time.Hour)
-		totalSell, totalBuy, err := calculatePerformance(db2.SQLiteDB.DB)
-		if err != nil {
-			log.Printf("Failed to calculate performance: %v", err)
-			continue
+		for {
+			time.Sleep(1 * time.Hour)
+
+			// Fetch performance metrics
+			totalProfitLoss, unrealizedProfit, unrealizedLoss, err := calculatePerformance(db2.SQLiteDB.DB, binanceClient)
+			if err != nil {
+				logger.Errorf("Failed to calculate performance: %v", err)
+				continue
+			}
+
+			// Log the performance summary
+			logger.Infof("Performance Summary (Hourly):")
+			logger.Infof("Total Profit/Loss from Completed Trades: %.2f", totalProfitLoss)
+			logger.Infof("Unrealized Profit from Active Trades: %.2f", unrealizedProfit)
+			logger.Infof("Unrealized Loss from Active Trades: %.2f", unrealizedLoss)
 		}
-		profitLoss := totalSell - totalBuy
-		log.Printf("Performance: Total Buy = %.2f, Total Sell = %.2f, P/L = %.2f", totalBuy, totalSell, profitLoss)
 	}
 }

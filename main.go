@@ -4,9 +4,11 @@ import (
 	"binance_bot/bot"
 	"binance_bot/client"
 	sqlite "binance_bot/db"
+	"binance_bot/logger"
 	"binance_bot/models"
 	"binance_bot/strategies"
 	"binance_bot/utils"
+	"flag"
 	"fmt"
 	"github.com/joho/godotenv"
 	"log"
@@ -17,7 +19,10 @@ import (
 
 func main() {
 	// Set up logging
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	// Define a flag for log level
+	logLevel := flag.String("log", "info", "Log level: debug, info, warn, error")
+	flag.Parse()
+	logger.InitLogger(logLevel)
 
 	err := godotenv.Load()
 	if err != nil {
@@ -56,7 +61,9 @@ func main() {
 			SlowPeriod:   30, // Long-term EMA
 			SignalPeriod: 10, // Signal line EMA
 		},
-		FeeRate: 0.001,
+		FeeRate:                   0.001,
+		DesiredProfit:             20.0,
+		HighestPriceFallOffMargin: 5.0,
 	}
 
 	//strategy := &strategies.SpikeStrategy{
@@ -67,35 +74,34 @@ func main() {
 
 	// Trading pairs
 	pairs := []models.TradingPair{
-		{"BTCUSDT", "BTC", "USDT", 50, 100, 2, 6},
-		{"ETHUSDT", "ETH", "USDT", 50, 20, 2, 5},
-		{"DOGEUSDT", "DOGE", "USDT", 50, 10, 5, 0},
-		{"XRPUSDT", "XRP", "USDT", 50, 10, 5, 1},
-		{"SOLUSDT", "SOL", "USDT", 50, 10, 2, 3},
-		{"FTMUSDT", "FTM", "USDT", 50, 10, 4, 1},
-		{"ADAUSDT", "ADA", "USDT", 50, 10, 4, 1},
-		{"HBARUSDT", "HBAR", "USDT", 50, 10, 4, 1},
-		{"POWRUSDT", "POWR", "USDT", 50, 10, 4, 1},
-		{"OGUSDT", "OG", "USDT", 50, 10, 4, 1},
-		{"BNBUSDT", "BNB", "USDT", 50, 10, 4, 1},
-		{"CTXCUSDT", "CTXC", "USDT", 50, 10, 4, 1},
-		{"SCRTUSDT", "SCRT", "USDT", 50, 10, 4, 1},
-		{"XLMUSDT", "XLM", "USDT", 50, 10, 4, 1},
-		{"AVAXUSDT", "AVAX", "USDT", 50, 10, 4, 1},
-		{"ALGOUSDT", "ALGO", "USDT", 50, 10, 4, 1},
+		models.NewTradingPair("BTCUSDT"),
+		models.NewTradingPair("ETHUSDT"),
+		models.NewTradingPair("DOGEUSDT"),
+		models.NewTradingPair("XRPUSDT"),
+		models.NewTradingPair("SOLUSDT"),
+		models.NewTradingPair("FTMUSDT"),
+		models.NewTradingPair("ADAUSDT"),
+		models.NewTradingPair("HBARUSDT"),
+		models.NewTradingPair("POWRUSDT"),
+		models.NewTradingPair("OGUSDT"),
+		models.NewTradingPair("BNBUSDT"),
+		models.NewTradingPair("CTXCUSDT"),
+		models.NewTradingPair("SCRTUSDT"),
+		models.NewTradingPair("XLMUSDT"),
+		models.NewTradingPair("AVAXUSDT"),
+		models.NewTradingPair("ALGOUSDT"),
 	}
-
-	fmt.Println("/// Starting trading bot ///")
 
 	for _, pair := range pairs {
 		if err := cl.AddTradingPair(pair); err != nil {
-			log.Printf("Failed to add trading pair %s: %v", pair.Symbol, err)
+			logger.Infof("Failed to add trading pair %s: %v", pair.Symbol, err)
 		}
 	}
 
-	go utils.MonitorPerformance()
+	go utils.MonitorPerformance(cl)
 
 	go bt.StartTrading()
+	logger.Infof("/// Starting trading bot ///")
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)

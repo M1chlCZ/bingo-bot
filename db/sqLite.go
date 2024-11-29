@@ -1,6 +1,7 @@
 package db
 
 import (
+	"binance_bot/logger"
 	"binance_bot/models"
 	"database/sql"
 	"errors"
@@ -25,11 +26,11 @@ func InitDB() error {
 	// Ensure the database file is created in the mounted volume
 	dbPath := "/app/data/trades.db" // Adjusted to match the Docker mount
 
-	log.Printf("Initializing database at %s", dbPath)
+	logger.Infof("Initializing database at %s", dbPath)
 
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
-		log.Printf("Error opening database: %v", err)
+		logger.Infof("Error opening database: %v", err)
 		return err
 	}
 
@@ -44,7 +45,7 @@ func InitDB() error {
     );`
 	_, err = db.Exec(query)
 	if err != nil {
-		log.Printf("Error creating trades table: %v", err)
+		logger.Infof("Error creating trades table: %v", err)
 		return err
 	}
 
@@ -58,7 +59,7 @@ func InitDB() error {
 	);`
 	_, err = db.Exec(query)
 	if err != nil {
-		log.Printf("Error creating active_trades table: %v", err)
+		logger.Infof("Error creating active_trades table: %v", err)
 		return err
 	}
 
@@ -73,7 +74,7 @@ func InitDB() error {
 );`
 	_, err = db.Exec(query)
 	if err != nil {
-		log.Printf("Error creating completed_trades table: %v", err)
+		logger.Infof("Error creating completed_trades table: %v", err)
 		return err
 	}
 
@@ -91,11 +92,30 @@ func (s *SQLite) LogTrade(symbol, side string, amount, price float64) error {
 
 // LogActiveTrade logs an active trade to the SQLite database
 func (s *SQLite) LogActiveTrade(symbol string, buyPrice, quantity float64) error {
-	_, err := s.DB.Exec(`
-        INSERT INTO active_trades (symbol, buy_price, quantity)
-        VALUES (?, ?, ?)
-    `, symbol, buyPrice, quantity)
-	return err
+	query := `INSERT INTO active_trades (symbol, buy_price, quantity) VALUES (?, ?, ?)`
+	result, err := s.DB.Exec(query, symbol, buyPrice, quantity)
+	if err != nil {
+		logger.Infof("Error inserting active trade: %v", err)
+		return err
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	logger.Infof("Inserted active trade for %s. Rows affected: %d", symbol, rowsAffected)
+	return nil
+}
+
+// LogCompletedTrade logs a completed trade to the SQLite database
+func (s *SQLite) LogCompletedTrade(symbol string, buyPrice, sellPrice, quantity, profitLoss float64) error {
+	query := `INSERT INTO completed_trades (symbol, buy_price, sell_price, quantity, profit_loss) VALUES (?, ?, ?, ?, ?)`
+	result, err := s.DB.Exec(query, symbol, buyPrice, sellPrice, quantity, profitLoss)
+	if err != nil {
+		logger.Infof("Error inserting completed trade: %v", err)
+		return err
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	logger.Infof("Inserted completed trade for %s. Rows affected: %d", symbol, rowsAffected)
+	return nil
 }
 
 // GetActiveTrade fetches the active trade for a given symbol
@@ -139,12 +159,5 @@ func (s *SQLite) GetActiveTrades(symbol string) ([]*models.ActiveTrade, error) {
 // RemoveActiveTrade removes an active trade from the SQLite database
 func (s *SQLite) RemoveActiveTrade(id int) error {
 	_, err := s.DB.Exec(`DELETE FROM active_trades WHERE id = ?`, id)
-	return err
-}
-
-// LogCompletedTrade logs a completed trade to the SQLite database
-func (s *SQLite) LogCompletedTrade(symbol string, buyPrice, sellPrice, quantity, profitLoss float64) error {
-	query := `INSERT INTO completed_trades (symbol, buy_price, sell_price, quantity, profit_loss) VALUES (?, ?, ?, ?, ?)`
-	_, err := s.DB.Exec(query, symbol, buyPrice, sellPrice, quantity, profitLoss)
 	return err
 }

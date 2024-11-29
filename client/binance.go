@@ -1,11 +1,12 @@
 package client
 
 import (
+	"binance_bot/interfaces"
+	"binance_bot/logger"
 	"binance_bot/models"
 	"context"
 	"fmt"
 	"github.com/adshao/go-binance/v2"
-	"log"
 	"math"
 	"strconv"
 	"sync"
@@ -15,64 +16,93 @@ import (
 // BinanceClient implements the Exchange interface
 type BinanceClient struct {
 	client      *binance.Client
-	Pairs       map[string]*models.TradingPair
-	PairsMutex  sync.RWMutex
+	pairs       map[string]*models.TradingPair
+	pairsMutex  sync.RWMutex
 	candleCache map[string][]models.CandleStick
 	cacheMutex  sync.RWMutex
 }
 
 // NewBinanceClient creates a new Binance client instance
-func NewBinanceClient(apiKey, apiSecret string) (*BinanceClient, error) {
+func NewBinanceClient(apiKey, apiSecret string) (interfaces.ExchangeClient, error) {
 	client := binance.NewClient(apiKey, apiSecret)
+	logger.Info("Started trading using Binance")
 	return &BinanceClient{
 		client:      client,
-		Pairs:       make(map[string]*models.TradingPair),
+		pairs:       make(map[string]*models.TradingPair),
 		candleCache: make(map[string][]models.CandleStick),
 	}, nil
 }
 
+func (b *BinanceClient) GetTradingPairs() map[string]*models.TradingPair {
+	return b.pairs
+}
+
 // AddTradingPair adds a new trading pair to monitor
 func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
+	// Fetch exchange info for the trading pair
 	info, err := b.client.NewExchangeInfoService().Symbol(pair.Symbol).Do(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to get exchange info for %s: %v", pair.Symbol, err)
 	}
 
-	// Find and set symbol precision and filters
+	// Loop through symbols to find the matching one
+	var symbolFound bool
 	for _, symbol := range info.Symbols {
 		if symbol.Symbol == pair.Symbol {
+			symbolFound = true
 			pair.PricePrecision = symbol.QuotePrecision
 			pair.QtyPrecision = symbol.BaseAssetPrecision
 
+			// Parse filters to extract additional trading rules
 			for _, filter := range symbol.Filters {
 				if filter["filterType"] == "MIN_NOTIONAL" {
-					minNotionalStr := filter["minNotional"].(string)
+					minNotionalStr, ok := filter["minNotional"].(string)
+					if !ok {
+						return fmt.Errorf("invalid minNotional format for %s", pair.Symbol)
+					}
 					pair.MinNotional, err = strconv.ParseFloat(minNotionalStr, 64)
 					if err != nil {
 						return fmt.Errorf("failed to parse minNotional for %s: %v", pair.Symbol, err)
 					}
 				}
+				// Add more filters here if needed
 			}
 
-			b.PairsMutex.Lock()
-			b.Pairs[pair.Symbol] = &pair
-			b.PairsMutex.Unlock()
-			return nil
+			// Safely add the pair to the map
+			b.pairsMutex.Lock()
+			b.pairs[pair.Symbol] = &pair
+			b.pairsMutex.Unlock()
+
+			logger.Debugf("Successfully added trading pair: %s", pair.Symbol)
+			break
 		}
 	}
 
-	return fmt.Errorf("symbol %s not found", pair.Symbol)
+	if !symbolFound {
+		return fmt.Errorf("symbol %s not found in exchange info", pair.Symbol)
+	}
+	return nil
 }
 
+// GetCurrentPrice fetches the current price for a given symbol
 func (b *BinanceClient) GetCurrentPrice(symbol string) (float64, error) {
+	// Fetch the price from the Binance API
 	prices, err := b.client.NewListPricesService().Symbol(symbol).Do(context.Background())
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to fetch current price for %s: %v", symbol, err)
 	}
+
+	if len(prices) == 0 {
+		return 0, fmt.Errorf("no price data returned for symbol %s", symbol)
+	}
+
+	// Parse the price as a float
 	price, err := strconv.ParseFloat(prices[0].Price, 64)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to parse price for %s: %v", symbol, err)
 	}
+
+	logger.Infof("Current price for %s: %.8f", symbol, price)
 	return price, nil
 }
 
@@ -136,9 +166,9 @@ func (b *BinanceClient) GetBalance(asset string) (float64, error) {
 
 // CreateOrder implements the Exchange interface
 func (b *BinanceClient) CreateOrder(symbol, orderType, side string, amount string) (float64, error) {
-	b.PairsMutex.RLock()
-	_, exists := b.Pairs[symbol]
-	b.PairsMutex.RUnlock()
+	b.pairsMutex.RLock()
+	_, exists := b.pairs[symbol]
+	b.pairsMutex.RUnlock()
 
 	if !exists {
 		return 0, fmt.Errorf("trading pair %s not configured", symbol)
@@ -181,9 +211,9 @@ func (b *BinanceClient) CreateOrder(symbol, orderType, side string, amount strin
 
 func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (float64, error) {
 	// Check if the trading pair is configured
-	b.PairsMutex.RLock()
-	_, exists := b.Pairs[symbol]
-	b.PairsMutex.RUnlock()
+	b.pairsMutex.RLock()
+	_, exists := b.pairs[symbol]
+	b.pairsMutex.RUnlock()
 
 	if !exists {
 		return 0, fmt.Errorf("trading pair %s not configured", symbol)
@@ -268,38 +298,48 @@ func (b *BinanceClient) CreateLimitOrder(symbol, side, quantity, price string) (
 	if quantityFloat < minQty {
 		return 0, fmt.Errorf("quantity %.8f is below the minimum allowed %.8f for %s", quantityFloat, minQty, symbol)
 	}
+
 	if quantityFloat > maxQty {
 		quantityFloat = maxQty // Cap at maxQty
 	}
 
 	// Ensure stepSize is valid
 	if stepSize <= 0 {
-		log.Printf("Invalid stepSize for %s: %.8f", symbol, stepSize)
+		logger.Infof("Invalid stepSize for %s: %.8f", symbol, stepSize)
 		return 0, fmt.Errorf("invalid stepSize for %s: %.8f", symbol, stepSize)
 	}
 
 	// Align with StepSize
 	adjustedQty := math.Floor(quantityFloat/stepSize) * stepSize
 	if math.IsNaN(adjustedQty) || adjustedQty <= 0 {
-		log.Printf("Adjusted Quantity for %s is invalid: Original=%s, Adjusted=NaN or <= 0", symbol, quantity)
+		logger.Infof("Adjusted Quantity for %s is invalid: Original=%s, Adjusted=NaN or <= 0", symbol, quantity)
 		return 0, fmt.Errorf("adjusted quantity is invalid for %s: Original=%s", symbol, quantity)
 	}
 
 	formattedQty := strconv.FormatFloat(adjustedQty, 'f', -1, 64)
-	log.Printf("Adjusted Quantity for %s: Original=%s, Adjusted=%s", symbol, quantity, formattedQty)
+	logger.Infof("Adjusted Quantity for %s: Original=%s, Adjusted=%s", symbol, quantity, formattedQty)
 
 	// Adjust price using PRICE_FILTER (already implemented in previous steps)
 	priceFloat, err := strconv.ParseFloat(price, 64)
 	if err != nil {
 		return 0, fmt.Errorf("invalid price format: %v", err)
 	}
-	pricePrecision := info.Symbols[0].QuotePrecision
+	pricePrecision := 0
+	if side == "BUY" {
+		pricePrecision = info.Symbols[0].QuotePrecision
+	} else {
+		pricePrecision = info.Symbols[0].BaseAssetPrecision
+
+	}
 	adjustedPrice := math.Floor(priceFloat/tickSize) * tickSize
 	formattedPrice := strconv.FormatFloat(adjustedPrice, 'f', pricePrecision, 64)
+	formattedQty = strconv.FormatFloat(adjustedQty, 'f', pricePrecision, 64)
 
 	fmt.Println("Price Precision: ", pricePrecision)
 	fmt.Println("Adjusted Price: ", adjustedPrice)
 	fmt.Println("Formatted Price: ", formattedPrice)
+	fmt.Println("Formatted Qty: ", formattedQty)
+	fmt.Println("Amount in USDT: ", adjustedPrice*adjustedQty)
 
 	// Place the limit order
 	order, err := b.client.NewCreateOrderService().
@@ -315,7 +355,7 @@ func (b *BinanceClient) CreateLimitOrder(symbol, side, quantity, price string) (
 		return 0, fmt.Errorf("failed to place LIMIT %s order for %s: %v", side, symbol, err)
 	}
 
-	log.Printf("Successfully placed LIMIT %s order for %s: OrderID=%d", side, symbol, order.OrderID)
+	logger.Infof("Successfully placed LIMIT %s order for %s: OrderID=%d", side, symbol, order.OrderID)
 	return order.OrderID, nil
 }
 
@@ -366,19 +406,19 @@ func (b *BinanceClient) CreateStopLossLimitOrder(symbol, side, quantity, price, 
 
 	// Ensure stepSize is valid
 	if stepSize <= 0 {
-		log.Printf("Invalid stepSize for %s: %.8f", symbol, stepSize)
+		logger.Infof("Invalid stepSize for %s: %.8f", symbol, stepSize)
 		return 0, fmt.Errorf("invalid stepSize for %s: %.8f", symbol, stepSize)
 	}
 
 	// Align with StepSize
 	adjustedQty := math.Floor(quantityFloat/stepSize) * stepSize
 	if math.IsNaN(adjustedQty) || adjustedQty <= 0 {
-		log.Printf("Adjusted Quantity for %s is invalid: Original=%s, Adjusted=NaN or <= 0", symbol, quantity)
+		logger.Infof("Adjusted Quantity for %s is invalid: Original=%s, Adjusted=NaN or <= 0", symbol, quantity)
 		return 0, fmt.Errorf("adjusted quantity is invalid for %s: Original=%s", symbol, quantity)
 	}
 
 	formattedQty := strconv.FormatFloat(adjustedQty, 'f', -1, 64)
-	log.Printf("Adjusted Quantity for %s: Original=%s, Adjusted=%s", symbol, quantity, formattedQty)
+	logger.Infof("Adjusted Quantity for %s: Original=%s, Adjusted=%s", symbol, quantity, formattedQty)
 
 	// Adjust price using PRICE_FILTER (already implemented in previous steps)
 	priceFloat, err := strconv.ParseFloat(price, 64)
@@ -399,7 +439,7 @@ func (b *BinanceClient) CreateStopLossLimitOrder(symbol, side, quantity, price, 
 		return 0, fmt.Errorf("invalid price format: %v", err)
 	}
 	adjustedStopLossPrice := math.Floor(priceStopLossFloat/tickSize) * tickSize
-	formattedStopLossPrice := strconv.FormatFloat(adjustedPrice, 'f', pricePrecision, 64)
+	formattedStopLossPrice := strconv.FormatFloat(adjustedStopLossPrice, 'f', pricePrecision, 64)
 
 	fmt.Println("Stop Loss Price Precision: ", pricePrecision)
 	fmt.Println("Stop Loss Adjusted Price: ", adjustedStopLossPrice)
@@ -409,7 +449,7 @@ func (b *BinanceClient) CreateStopLossLimitOrder(symbol, side, quantity, price, 
 	order, err := b.client.NewCreateOrderService().
 		Symbol(symbol).
 		Side(binance.SideType(side)).
-		Type(binance.OrderTypeLimit).
+		Type(binance.OrderTypeStopLossLimit).
 		TimeInForce(binance.TimeInForceTypeGTC).
 		Quantity(formattedQty).
 		Price(formattedPrice).
@@ -420,12 +460,12 @@ func (b *BinanceClient) CreateStopLossLimitOrder(symbol, side, quantity, price, 
 		return 0, fmt.Errorf("failed to place LIMIT %s order for %s: %v", side, symbol, err)
 	}
 
-	log.Printf("Successfully placed LIMIT %s order for %s: OrderID=%d", side, symbol, order.OrderID)
+	logger.Infof("Successfully placed LIMIT %s order for %s: OrderID=%d", side, symbol, order.OrderID)
 	return order.OrderID, nil
 }
 
 func (b *BinanceClient) MonitorOrder(symbol string, orderID int64) (bool, error) {
-	log.Printf("Monitoring order %d for %s", orderID, symbol)
+	logger.Infof("Monitoring order %d for %s", orderID, symbol)
 
 	for {
 		// Fetch order status
@@ -437,7 +477,7 @@ func (b *BinanceClient) MonitorOrder(symbol string, orderID int64) (bool, error)
 			return false, fmt.Errorf("failed to fetch order status for %s: %v", symbol, err)
 		}
 
-		log.Printf("Order %d status: %s (Filled Quantity: %s)", orderID, order.Status, order.ExecutedQuantity)
+		logger.Infof("Order %d status: %s (Filled Quantity: %s)", orderID, order.Status, order.ExecutedQuantity)
 
 		// Check if the order is fully filled
 		if order.Status == binance.OrderStatusTypeFilled {
@@ -455,7 +495,7 @@ func (b *BinanceClient) MonitorOrder(symbol string, orderID int64) (bool, error)
 }
 
 func (b *BinanceClient) CancelOrder(symbol string, orderID int64) error {
-	log.Printf("Canceling order %d for %s", orderID, symbol)
+	logger.Infof("Canceling order %d for %s", orderID, symbol)
 
 	_, err := b.client.NewCancelOrderService().
 		Symbol(symbol).
@@ -466,7 +506,7 @@ func (b *BinanceClient) CancelOrder(symbol string, orderID int64) error {
 		return fmt.Errorf("failed to cancel order %d for %s: %v", orderID, symbol, err)
 	}
 
-	log.Printf("Successfully canceled order %d for %s", orderID, symbol)
+	logger.Infof("Successfully canceled order %d for %s", orderID, symbol)
 	return nil
 }
 
