@@ -5,9 +5,9 @@ import (
 	"binance_bot/client"
 	sqlite "binance_bot/db"
 	"binance_bot/logger"
+	"binance_bot/metrics"
 	"binance_bot/models"
 	"binance_bot/strategies"
-	"binance_bot/utils"
 	"flag"
 	"fmt"
 	"github.com/joho/godotenv"
@@ -62,8 +62,8 @@ func main() {
 			SignalPeriod: 10, // Signal line EMA
 		},
 		FeeRate:                   0.001,
-		DesiredProfit:             20.0,
-		HighestPriceFallOffMargin: 5.0,
+		DesiredProfit:             50.0,
+		HighestPriceFallOffMargin: 2.0,
 	}
 
 	//strategy := &strategies.SpikeStrategy{
@@ -90,6 +90,32 @@ func main() {
 		models.NewTradingPair("XLMUSDT"),
 		models.NewTradingPair("AVAXUSDT"),
 		models.NewTradingPair("ALGOUSDT"),
+		models.NewTradingPair("DEGOUSDT"),
+		models.NewTradingPair("IOTAUSDT"),
+		models.NewTradingPair("EOSUSDT"),
+		models.NewTradingPair("DGBUSDT"),
+		models.NewTradingPair("THETAUSDT"),
+		models.NewTradingPair("HOTUSDT"),
+		models.NewTradingPair("FIDAUSDT"),
+		models.NewTradingPair("WLDUSDT"),
+		models.NewTradingPair("LUMIAUSDT"),
+		models.NewTradingPair("TRXUSDT"),
+		models.NewTradingPair("SHIBUSDT"),
+		models.NewTradingPair("DOTUSDT"),
+		models.NewTradingPair("LTCUSDT"),
+		models.NewTradingPair("ICPUSDT"),
+		models.NewTradingPair("POLUSDT"),
+		models.NewTradingPair("ETCUSDT"),
+		models.NewTradingPair("TAOUSDT"),
+		models.NewTradingPair("APTUSDT"),
+		models.NewTradingPair("CRVUSDT"),
+		models.NewTradingPair("ACTUSDT"),
+		models.NewTradingPair("CETUSUST"),
+		models.NewTradingPair("FILUSDT"),
+		models.NewTradingPair("SUIUSDT"),
+		models.NewTradingPair("ORDIUSDT"),
+		models.NewTradingPair("WIFUSDT"),
+		models.NewTradingPair("FLOWUSDT"),
 	}
 
 	for _, pair := range pairs {
@@ -98,7 +124,7 @@ func main() {
 		}
 	}
 
-	go utils.MonitorPerformance(cl)
+	go metrics.MonitorPerformance(cl)
 
 	go bt.StartTrading()
 	logger.Infof("/// Starting trading bot ///")

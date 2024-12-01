@@ -77,7 +77,7 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 	currentPrice := candles[len(candles)-1].Close
 	trade, _ := db2.SQLiteDB.GetActiveTrade(pair) // Fetch active trade from DB
 
-	if trade != nil {
+	if trade != nil && !(rsiSignal > 0 && macdSignal > 0) { // If trade is active and not a strong buy signal
 		logger.Infof("Monitoring trade ID: %d | Pair: %s | Price: %.2f | Quantity %.2f", trade.ID, trade.Symbol, trade.BuyPrice, trade.Quantity)
 		breakevenPrice := trade.BuyPrice * (1 + cs.FeeRate)
 		profitMargin := (currentPrice - trade.BuyPrice) / trade.BuyPrice * 100

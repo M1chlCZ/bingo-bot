@@ -50,6 +50,8 @@ func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
 	for _, symbol := range info.Symbols {
 		if symbol.Symbol == pair.Symbol {
 			symbolFound = true
+			pair.BaseAsset = symbol.BaseAsset
+			pair.QuoteAsset = symbol.QuoteAsset
 			pair.PricePrecision = symbol.QuotePrecision
 			pair.QtyPrecision = symbol.BaseAssetPrecision
 

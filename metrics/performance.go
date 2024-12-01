@@ -1,8 +1,11 @@
-package utils
+package metrics
 
 import (
 	db2 "binance_bot/db"
 	"binance_bot/interfaces"
+	"binance_bot/models"
+	"binance_bot/utils"
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -64,10 +67,15 @@ func calculatePerformance(db *sql.DB, binanceClient interfaces.ExchangeClient) (
 }
 
 func MonitorPerformance(binanceClient interfaces.ExchangeClient) {
-	for {
-		for {
-			time.Sleep(1 * time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
 			// Fetch performance metrics
 			totalProfitLoss, unrealizedProfit, unrealizedLoss, err := calculatePerformance(db2.SQLiteDB.DB, binanceClient)
 			if err != nil {
@@ -75,11 +83,28 @@ func MonitorPerformance(binanceClient interfaces.ExchangeClient) {
 				continue
 			}
 
+			// Create a new metric entry
+			metric := models.PerformanceMetrics{
+				Timestamp:        time.Now(),
+				TotalProfitLoss:  totalProfitLoss,
+				UnrealizedProfit: unrealizedProfit,
+				UnrealizedLoss:   unrealizedLoss,
+			}
+
+			// Append to CSV file
+			if err := utils.AppendMetricsToCSV("/app/data/metrics.csv", metric); err != nil {
+				logger.Errorf("Failed to append metrics to CSV: %v", err)
+			}
+
 			// Log the performance summary
 			logger.Infof("Performance Summary (Hourly):")
-			logger.Infof("Total Profit/Loss from Completed Trades: %.2f", totalProfitLoss)
-			logger.Infof("Unrealized Profit from Active Trades: %.2f", unrealizedProfit)
-			logger.Infof("Unrealized Loss from Active Trades: %.2f", unrealizedLoss)
+			logger.Infof("Total Profit/Loss from Completed Trades: %.2f USDT", totalProfitLoss)
+			logger.Infof("Unrealized Profit from Active Trades: %.2f USDT", unrealizedProfit)
+			logger.Infof("Unrealized Loss from Active Trades: %.2f USDT", unrealizedLoss)
+
+		case <-ctx.Done():
+			return
 		}
+
 	}
 }
