@@ -13,13 +13,19 @@ type StochasticOscillator struct {
 
 // Calculate generates a signal based on the stochastic oscillator
 func (s *StochasticOscillator) Calculate(candles []models.CandleStick) (string, int, error) {
-	k, d, err := calculateStochasticOscillator(candles, s.Period)
+	// Calculate %K and %D
+	kValues, d, err := calculateStochasticOscillator(candles, s.Period)
 	if err != nil {
 		return "", 0, err
 	}
 
+	// Most recent %K value
+	k := kValues[len(kValues)-1]
+
+	// Logging the values
 	str := fmt.Sprintf("K: %.2f D: %.2f", k, d)
 
+	// Generate buy/sell signals
 	if k > float64(s.Overbought) && d > float64(s.Overbought) {
 		return str, -1, nil // Sell signal
 	} else if k < float64(s.Oversold) && d < float64(s.Oversold) {
@@ -29,42 +35,44 @@ func (s *StochasticOscillator) Calculate(candles []models.CandleStick) (string, 
 	return str, 0, nil // Hold
 }
 
-func calculateStochasticOscillator(candles []models.CandleStick, period int) (float64, float64, error) {
+func calculateStochasticOscillator(candles []models.CandleStick, period int) ([]float64, float64, error) {
 	if len(candles) < period {
-		return 0, 0, fmt.Errorf("not enough data to calculate stochastic oscillator: need %d candles, got %d", period, len(candles))
+		return nil, 0, fmt.Errorf("not enough data to calculate stochastic oscillator: need %d candles, got %d", period, len(candles))
 	}
 
-	var highestHigh, lowestLow float64
-	highestHigh = candles[len(candles)-period].High
-	lowestLow = candles[len(candles)-period].Low
+	var kValues []float64
 
-	for i := len(candles) - period; i < len(candles); i++ {
-		if candles[i].High > highestHigh {
-			highestHigh = candles[i].High
+	// Calculate %K for each period
+	for i := period; i <= len(candles); i++ {
+		periodCandles := candles[i-period : i]
+
+		// Find the highest high and lowest low in the period
+		highestHigh, lowestLow := periodCandles[0].High, periodCandles[0].Low
+		for _, candle := range periodCandles {
+			if candle.High > highestHigh {
+				highestHigh = candle.High
+			}
+			if candle.Low < lowestLow {
+				lowestLow = candle.Low
+			}
 		}
-		if candles[i].Low < lowestLow {
-			lowestLow = candles[i].Low
-		}
+
+		// Calculate %K for the current period
+		lastClose := periodCandles[len(periodCandles)-1].Close
+		k := (lastClose - lowestLow) / (highestHigh - lowestLow) * 100
+		kValues = append(kValues, k)
 	}
 
-	// %K calculation
-	lastClose := candles[len(candles)-1].Close
-	k := (lastClose - lowestLow) / (highestHigh - lowestLow) * 100
-
-	// %D calculation (3-period SMA of %K)
-	if len(candles) < period+3 {
-		return k, k, nil // Not enough data for %D, return %K as %D
+	// Calculate %D (3-period SMA of %K)
+	if len(kValues) < 3 {
+		return kValues, kValues[len(kValues)-1], nil // Return only %K if not enough for %D
 	}
 
 	var sumK float64
-	for i := len(candles) - 3; i < len(candles); i++ {
-		cls := candles[i].Close
-		low := candles[i-period].Low
-		high := candles[i-period].High
-		percentK := (cls - low) / (high - low) * 100
-		sumK += percentK
+	for i := len(kValues) - 3; i < len(kValues); i++ {
+		sumK += kValues[i]
 	}
 	d := sumK / 3
 
-	return k, d, nil
+	return kValues, d, nil
 }

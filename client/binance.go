@@ -4,6 +4,7 @@ import (
 	"binance_bot/interfaces"
 	"binance_bot/logger"
 	"binance_bot/models"
+	"binance_bot/types"
 	"context"
 	"fmt"
 	"github.com/adshao/go-binance/v2"
@@ -16,7 +17,7 @@ import (
 // BinanceClient implements the Exchange interface
 type BinanceClient struct {
 	client      *binance.Client
-	pairs       map[string]*models.TradingPair
+	pairs       map[string]*types.TradingPair
 	pairsMutex  sync.RWMutex
 	candleCache map[string][]models.CandleStick
 	cacheMutex  sync.RWMutex
@@ -28,17 +29,17 @@ func NewBinanceClient(apiKey, apiSecret string) (interfaces.ExchangeClient, erro
 	logger.Info("Started trading using Binance")
 	return &BinanceClient{
 		client:      client,
-		pairs:       make(map[string]*models.TradingPair),
+		pairs:       make(map[string]*types.TradingPair),
 		candleCache: make(map[string][]models.CandleStick),
 	}, nil
 }
 
-func (b *BinanceClient) GetTradingPairs() map[string]*models.TradingPair {
+func (b *BinanceClient) GetTradingPairs() map[string]*types.TradingPair {
 	return b.pairs
 }
 
 // AddTradingPair adds a new trading pair to monitor
-func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
+func (b *BinanceClient) AddTradingPair(pair types.TradingPair) error {
 	// Fetch exchange info for the trading pair
 	info, err := b.client.NewExchangeInfoService().Symbol(pair.Symbol).Do(context.Background())
 	if err != nil {
@@ -337,11 +338,11 @@ func (b *BinanceClient) CreateLimitOrder(symbol, side, quantity, price string) (
 	formattedPrice := strconv.FormatFloat(adjustedPrice, 'f', pricePrecision, 64)
 	formattedQty = strconv.FormatFloat(adjustedQty, 'f', pricePrecision, 64)
 
-	fmt.Println("Price Precision: ", pricePrecision)
-	fmt.Println("Adjusted Price: ", adjustedPrice)
-	fmt.Println("Formatted Price: ", formattedPrice)
-	fmt.Println("Formatted Qty: ", formattedQty)
-	fmt.Println("Amount in USDT: ", adjustedPrice*adjustedQty)
+	logger.Debug("Price Precision: ", pricePrecision)
+	logger.Debug("Adjusted Price: ", adjustedPrice)
+	logger.Debug("Formatted Price: ", formattedPrice)
+	logger.Debug("Formatted Qty: ", formattedQty)
+	logger.Debug("Amount in USDT: ", adjustedPrice*adjustedQty)
 
 	// Place the limit order
 	order, err := b.client.NewCreateOrderService().
@@ -431,9 +432,9 @@ func (b *BinanceClient) CreateStopLossLimitOrder(symbol, side, quantity, price, 
 	adjustedPrice := math.Floor(priceFloat/tickSize) * tickSize
 	formattedPrice := strconv.FormatFloat(adjustedPrice, 'f', pricePrecision, 64)
 
-	fmt.Println("Price Precision: ", pricePrecision)
-	fmt.Println("Adjusted Price: ", adjustedPrice)
-	fmt.Println("Formatted Price: ", formattedPrice)
+	logger.Debug("Price Precision: ", pricePrecision)
+	logger.Debug("Adjusted Price: ", adjustedPrice)
+	logger.Debug("Formatted Price: ", formattedPrice)
 
 	// Adjust price using PRICE_FILTER (already implemented in previous steps)
 	priceStopLossFloat, err := strconv.ParseFloat(stopLoss, 64)
@@ -443,9 +444,9 @@ func (b *BinanceClient) CreateStopLossLimitOrder(symbol, side, quantity, price, 
 	adjustedStopLossPrice := math.Floor(priceStopLossFloat/tickSize) * tickSize
 	formattedStopLossPrice := strconv.FormatFloat(adjustedStopLossPrice, 'f', pricePrecision, 64)
 
-	fmt.Println("Stop Loss Price Precision: ", pricePrecision)
-	fmt.Println("Stop Loss Adjusted Price: ", adjustedStopLossPrice)
-	fmt.Println("Stop Loss Formatted Price: ", formattedStopLossPrice)
+	logger.Debug("Stop Loss Price Precision: ", pricePrecision)
+	logger.Debug("Stop Loss Adjusted Price: ", adjustedStopLossPrice)
+	logger.Debug("Stop Loss Formatted Price: ", formattedStopLossPrice)
 
 	// Place the limit order
 	order, err := b.client.NewCreateOrderService().

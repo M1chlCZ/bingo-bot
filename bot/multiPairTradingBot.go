@@ -6,6 +6,7 @@ import (
 	"binance_bot/logger"
 	"binance_bot/models"
 	"binance_bot/strategies"
+	"binance_bot/types"
 	"fmt"
 	"log"
 	"math"
@@ -16,22 +17,36 @@ import (
 
 // MultiPairTradingBot manages multiple trading pairs
 type MultiPairTradingBot struct {
-	exchange interfaces.ExchangeClient
-	strategy interfaces.Strategy
-	interval string
-	pairs    map[string]*models.TradingPair
-	pairsMu  sync.RWMutex
-	wg       sync.WaitGroup
-	stopCh   chan struct{}
+	exchange  interfaces.ExchangeClient
+	strategy  interfaces.Strategy
+	interval  string
+	pairs     map[string]*types.TradingPair
+	pairsMu   sync.RWMutex
+	candles   map[string][]models.CandleStick
+	candlesMu sync.RWMutex
+	wg        sync.WaitGroup
+	stopCh    chan struct{}
 }
 
 // NewMultiPairTradingBot creates a new instance of MultiPairTradingBot
-func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, strategy interfaces.Strategy, interval string) *MultiPairTradingBot {
+func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, strategy interfaces.Strategy) *MultiPairTradingBot {
+	if exchange == nil || strategy == nil {
+		log.Fatal("Exchange and strategy must be provided")
+	}
+	// TODO: Validate the strategy type, values, and other fields
+	if !strategy.GetStrategyType().IsValid() {
+		log.Fatalf("Invalid strategy type: %s", strategy.GetStrategyType())
+	}
+
+	if strategy.GetCandleInterval() == "" {
+		log.Fatal("Candle interval must be provided")
+	}
+
 	return &MultiPairTradingBot{
 		exchange: exchange,
 		strategy: strategy,
-		interval: interval,
-		pairs:    make(map[string]*models.TradingPair),
+		interval: strategy.GetCandleInterval(),
+		pairs:    make(map[string]*types.TradingPair),
 		stopCh:   make(chan struct{}),
 	}
 }
@@ -39,7 +54,7 @@ func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, strategy interfa
 func (bot *MultiPairTradingBot) StartTrading() {
 	pairsExchange := bot.exchange.GetTradingPairs()
 	bot.pairsMu.RLock()
-	pairs := make([]*models.TradingPair, 0, len(pairsExchange))
+	pairs := make([]*types.TradingPair, 0, len(pairsExchange))
 	for _, pair := range pairsExchange {
 		pairs = append(pairs, pair)
 	}
@@ -70,7 +85,7 @@ func (bot *MultiPairTradingBot) StartTrading() {
 func (bot *MultiPairTradingBot) Stop() {
 	close(bot.stopCh)
 	bot.wg.Wait()
-	fmt.Println("Trading bot stopped.")
+	logger.Warn("Trading bot stopped.")
 }
 
 func (bot *MultiPairTradingBot) isUptrend(candles []models.CandleStick) bool {
@@ -116,7 +131,7 @@ func (bot *MultiPairTradingBot) calculateTradeAmount(signal int, quoteBalance, b
 	return 0
 }
 
-func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
+func (bot *MultiPairTradingBot) tradePair(pair *types.TradingPair) {
 	defer bot.wg.Done()
 
 	ticker := time.NewTicker(10 * time.Second)
@@ -149,6 +164,14 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				logger.Infof("Error fetching candles for %s: %v", pair.Symbol, err)
 				continue
 			}
+
+			if bot.candles == nil {
+				bot.candles = make(map[string][]models.CandleStick)
+			}
+
+			bot.candlesMu.Lock()
+			bot.candles[pair.Symbol] = candles
+			bot.candlesMu.Unlock()
 
 			// Detect trend and calculate signal
 			isUptrend := bot.isUptrend(candles)
@@ -195,13 +218,13 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			// Handle BUY or SELL
 			if sngl > 0 { // BUY signal
 				trAmount := tradeAmount / currentPrice
-				fmt.Println("BUY signal", pair.Symbol, "Trade amount", trAmount, "Current price", currentPrice, "Base balance", baseBalance)
+				logger.Info("BUY signal", pair.Symbol, "Trade amount", trAmount, "Current price", currentPrice, "Base balance", baseBalance)
 				if !bot.handleBuy(pair, trAmount, currentPrice, quoteBalance) {
 					logger.Infof("Error handling BUY for %s\n", pair.Symbol)
 					continue
 				}
-			} else if sngl < 0 { // SELL signal
-				fmt.Println("SELL signal", pair.Symbol, "Trade amount", tradeAmount, "Current price", currentPrice, "Quote balance", quoteBalance)
+			} else if sngl < 0 && !isUptrend { // SELL signal
+				logger.Info("SELL signal", pair.Symbol, "Trade amount", tradeAmount, "Current price", currentPrice, "Quote balance", quoteBalance)
 				if !bot.handleSell(pair, tradeAmount, currentPrice, baseBalance) {
 					logger.Infof("Error handling SELL for %s\n", pair.Symbol)
 					continue
@@ -213,7 +236,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 	}
 }
 
-func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, tradeAmount, currentPrice, quoteBalance float64) bool {
+func (bot *MultiPairTradingBot) handleBuy(pair *types.TradingPair, tradeAmount, currentPrice, quoteBalance float64) bool {
 	if tradeAmount*currentPrice < pair.MinNotional {
 		logger.Infof("BUY amount too small for %s. Adjusting to minimum notional.", pair.Symbol)
 		tradeAmount = pair.MinNotional / currentPrice
@@ -246,7 +269,7 @@ func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, tradeAmount,
 }
 
 // handleSell processes a SELL order
-func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount, currentPrice, baseBalance float64) bool {
+func (bot *MultiPairTradingBot) handleSell(pair *types.TradingPair, tradeAmount, currentPrice, baseBalance float64) bool {
 	if tradeAmount*currentPrice < pair.MinNotional {
 		logger.Infof("SELL amount too small for %s. Adjusting to minimum notional.", pair.Symbol)
 		tradeAmount = pair.MinNotional / currentPrice
@@ -256,6 +279,10 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 			return false
 		}
 	}
+
+	bot.candlesMu.RLock()
+	candles, exists := bot.candles[pair.Symbol]
+	bot.candlesMu.RUnlock()
 
 	// Place Limit SELL Order
 	limitPrice := currentPrice * 0.999 // 0.1% lower than current price
@@ -277,26 +304,42 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 	}
 	for _, activeTrade := range activeTrades {
 		profitLoss := (limitPrice - activeTrade.BuyPrice) * tradeAmount
-		err = db2.SQLiteDB.LogCompletedTrade(pair.Symbol, activeTrade.BuyPrice, limitPrice, tradeAmount, profitLoss)
+
+		var rsiVal, macdVal float64
+		var stochasticStr string
+		var stochasticSignal int
+		if rsiMacdStrategy, ok := bot.strategy.(*strategies.CompoundStrategy); ok {
+			if exists || len(candles) != 0 {
+				rsiVal, _, _ = rsiMacdStrategy.GetRSI(candles, pair.Symbol)
+				macdVal, _, _, _, _ = rsiMacdStrategy.GetMACD(candles)
+				stochasticStr, stochasticSignal, _ = rsiMacdStrategy.GetStochastic(candles)
+			}
+		}
+		// Fetch indicator values
+		log.Printf("Trade Indicators: RSI=%.2f, MACD=%.2f, Stochastic=%s (Signal=%d) OrderID %d", rsiVal, macdVal, stochasticStr, stochasticSignal, orderID)
+
+		// Log the trade
+		err = db2.SQLiteDB.LogCompletedTrade(pair.Symbol, activeTrade.BuyPrice, limitPrice, tradeAmount, profitLoss, rsiVal, macdVal, float64(stochasticSignal))
 		if err != nil {
-			logger.Infof("Error logging SELL trade for %s: %v", pair.Symbol, err)
-			return false
+			log.Printf("Error logging completed trade (SELL) for %s: %v", pair.Symbol, err)
+		} else {
+			log.Printf("Successfully logged completed trade (SELL) for %s.", pair.Symbol)
 		}
 
-		// Remove the active trade
+		// Remove active trade
 		err = db2.SQLiteDB.RemoveActiveTrade(activeTrade.ID)
 		if err != nil {
-			logger.Infof("Error removing active trade for %s: %v", pair.Symbol, err)
-			return false
+			log.Printf("Error removing active trade for %s: %v", pair.Symbol, err)
+		} else {
+			log.Printf("Successfully removed active trade for %s.", pair.Symbol)
 		}
-		logger.Infof("Successfully completed SELL order for %s. Order ID: %s", pair.Symbol, orderID)
 
 	}
 
 	return true
 }
 
-func (bot *MultiPairTradingBot) monitorCurrentCandle(pair *models.TradingPair) {
+func (bot *MultiPairTradingBot) monitorCurrentCandle(pair *types.TradingPair) {
 	ticker := time.NewTicker(1 * time.Second) // Monitor every second
 	defer ticker.Stop()
 

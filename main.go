@@ -6,10 +6,9 @@ import (
 	sqlite "binance_bot/db"
 	"binance_bot/logger"
 	"binance_bot/metrics"
-	"binance_bot/models"
 	"binance_bot/strategies"
+	"binance_bot/types"
 	"flag"
-	"fmt"
 	"github.com/joho/godotenv"
 	"log"
 	"os"
@@ -26,7 +25,7 @@ func main() {
 
 	err := godotenv.Load()
 	if err != nil {
-		fmt.Println("Error loading .env file")
+		log.Fatalf("Error loading .env file: %v", err)
 	}
 
 	if os.Getenv("BINANCE_API_KEY") == "" || os.Getenv("BINANCE_API_SECRET") == "" {
@@ -52,70 +51,81 @@ func main() {
 	// Create trading strategy
 	strategy := &strategies.CompoundStrategy{
 		RSI: &strategies.RSIStrategy{
-			Overbought: 65,
-			Oversold:   40,
-			Period:     18,
+			Overbought: 70,
+			Oversold:   35,
+			Period:     14,
 		},
 		MACD: &strategies.MACDStrategy{
-			FastPeriod:   15, // Short-term EMA
-			SlowPeriod:   30, // Long-term EMA
-			SignalPeriod: 10, // Signal line EMA
+			FastPeriod:   12,
+			SlowPeriod:   26,
+			SignalPeriod: 9,
 		},
-		FeeRate:                   0.001,
-		DesiredProfit:             50.0,
-		HighestPriceFallOffMargin: 2.0,
+		Stochastic: &strategies.StochasticOscillator{
+			Overbought: 75,
+			Oversold:   25,
+			Period:     14,
+		},
+		FeeRate:                   0.001, // Binance's default fee rate
+		DesiredProfit:             30.0,
+		HighestPriceFallOffMargin: 1.5,
+		CandleInterval:            "1h",
 	}
 
 	//strategy := &strategies.SpikeStrategy{
 	//	VolumeThreshold: 5000,
 	//}
 
-	bt := bot.NewMultiPairTradingBot(cl, strategy, "15m")
+	bt := bot.NewMultiPairTradingBot(cl, strategy)
 
 	// Trading pairs
-	pairs := []models.TradingPair{
-		models.NewTradingPair("BTCUSDT"),
-		models.NewTradingPair("ETHUSDT"),
-		models.NewTradingPair("DOGEUSDT"),
-		models.NewTradingPair("XRPUSDT"),
-		models.NewTradingPair("SOLUSDT"),
-		models.NewTradingPair("FTMUSDT"),
-		models.NewTradingPair("ADAUSDT"),
-		models.NewTradingPair("HBARUSDT"),
-		models.NewTradingPair("POWRUSDT"),
-		models.NewTradingPair("OGUSDT"),
-		models.NewTradingPair("BNBUSDT"),
-		models.NewTradingPair("CTXCUSDT"),
-		models.NewTradingPair("SCRTUSDT"),
-		models.NewTradingPair("XLMUSDT"),
-		models.NewTradingPair("AVAXUSDT"),
-		models.NewTradingPair("ALGOUSDT"),
-		models.NewTradingPair("DEGOUSDT"),
-		models.NewTradingPair("IOTAUSDT"),
-		models.NewTradingPair("EOSUSDT"),
-		models.NewTradingPair("DGBUSDT"),
-		models.NewTradingPair("THETAUSDT"),
-		models.NewTradingPair("HOTUSDT"),
-		models.NewTradingPair("FIDAUSDT"),
-		models.NewTradingPair("WLDUSDT"),
-		models.NewTradingPair("LUMIAUSDT"),
-		models.NewTradingPair("TRXUSDT"),
-		models.NewTradingPair("SHIBUSDT"),
-		models.NewTradingPair("DOTUSDT"),
-		models.NewTradingPair("LTCUSDT"),
-		models.NewTradingPair("ICPUSDT"),
-		models.NewTradingPair("POLUSDT"),
-		models.NewTradingPair("ETCUSDT"),
-		models.NewTradingPair("TAOUSDT"),
-		models.NewTradingPair("APTUSDT"),
-		models.NewTradingPair("CRVUSDT"),
-		models.NewTradingPair("ACTUSDT"),
-		models.NewTradingPair("CETUSUST"),
-		models.NewTradingPair("FILUSDT"),
-		models.NewTradingPair("SUIUSDT"),
-		models.NewTradingPair("ORDIUSDT"),
-		models.NewTradingPair("WIFUSDT"),
-		models.NewTradingPair("FLOWUSDT"),
+	pairs := []types.TradingPair{
+		types.NewTradingPair("BTCUSDT"),
+		types.NewTradingPair("ETHUSDT"),
+		types.NewTradingPair("DOGEUSDT"),
+		types.NewTradingPair("XRPUSDT"),
+		types.NewTradingPair("SOLUSDT"),
+		types.NewTradingPair("FTMUSDT"),
+		types.NewTradingPair("ADAUSDT"),
+		types.NewTradingPair("HBARUSDT"),
+		types.NewTradingPair("POWRUSDT"),
+		types.NewTradingPair("OGUSDT"),
+		types.NewTradingPair("BNBUSDT"),
+		types.NewTradingPair("CTXCUSDT"),
+		types.NewTradingPair("SCRTUSDT"),
+		types.NewTradingPair("XLMUSDT"),
+		types.NewTradingPair("AVAXUSDT"),
+		types.NewTradingPair("ALGOUSDT"),
+		types.NewTradingPair("DEGOUSDT"),
+		types.NewTradingPair("IOTAUSDT"),
+		types.NewTradingPair("EOSUSDT"),
+		types.NewTradingPair("DGBUSDT"),
+		types.NewTradingPair("THETAUSDT"),
+		types.NewTradingPair("HOTUSDT"),
+		types.NewTradingPair("FIDAUSDT"),
+		types.NewTradingPair("WLDUSDT"),
+		types.NewTradingPair("LUMIAUSDT"),
+		types.NewTradingPair("TRXUSDT"),
+		types.NewTradingPair("SHIBUSDT"),
+		types.NewTradingPair("DOTUSDT"),
+		types.NewTradingPair("LTCUSDT"),
+		types.NewTradingPair("ICPUSDT"),
+		types.NewTradingPair("POLUSDT"),
+		types.NewTradingPair("ETCUSDT"),
+		types.NewTradingPair("TAOUSDT"),
+		types.NewTradingPair("APTUSDT"),
+		types.NewTradingPair("CRVUSDT"),
+		types.NewTradingPair("ACTUSDT"),
+		types.NewTradingPair("CETUSUSDT"),
+		types.NewTradingPair("FILUSDT"),
+		types.NewTradingPair("SUIUSDT"),
+		types.NewTradingPair("ORDIUSDT"),
+		types.NewTradingPair("WIFUSDT"),
+		types.NewTradingPair("FLOWUSDT"),
+		types.NewTradingPair("DOTUSDT"),
+		types.NewTradingPair("RSRUSDT"),
+		types.NewTradingPair("FUNUSDT"),
+		types.NewTradingPair("VETUSDT"),
+		types.NewTradingPair("KDAUSDT"),
 	}
 
 	for _, pair := range pairs {

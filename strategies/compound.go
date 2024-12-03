@@ -16,12 +16,14 @@ type CompoundStrategy struct {
 	StrategyType StrategyType
 	RSI          *RSIStrategy
 	MACD         *MACDStrategy
+	Stochastic   *StochasticOscillator
 	// Fee rate for selling
 	FeeRate float64
 	// Desired profit margin before selling
 	DesiredProfit float64
 	// Sell if price falls below highest price since sale was made by a certain margin
 	HighestPriceFallOffMargin float64
+	CandleInterval            string
 }
 
 func (cs *CompoundStrategy) GetStrategyType() StrategyType {
@@ -37,11 +39,17 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 
 	rsiVal, rsiSignal, err := cs.RSI.Calculate(candles, pair)
 	if err != nil {
+		logger.Debugf("Error calculating RSI: %v", err)
 		return 0, err
 	}
 	histogram, signalLine, macdVal, macdSignal, err := cs.MACD.Calculate(candles)
-
 	if err != nil {
+		logger.Debugf("Error calculating MACD: %v", err)
+		return 0, err
+	}
+	stochasticStr, _, err := cs.Stochastic.Calculate(candles)
+	if err != nil {
+		logger.Debugf("Error calculating Stochastic Oscillator: %v", err)
 		return 0, err
 	}
 
@@ -71,13 +79,14 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 	} else {
 		trendText = "Downtrend"
 	}
-	logger.Infof("%s | HOLD | %s%.6f\033[0m %s%.6f\033[0m\n | %s%.v\u001B[0m \n", pair, rsiColor, rsiVal, macdColor, macdVal, trendColor, trendText)
 
 	// Fetch current price and buy price
 	currentPrice := candles[len(candles)-1].Close
 	trade, _ := db2.SQLiteDB.GetActiveTrade(pair) // Fetch active trade from DB
 
-	if trade != nil && !(rsiSignal > 0 && macdSignal > 0) { // If trade is active and not a strong buy signal
+	strongBuy := rsiSignal > 0 && macdSignal > 0
+	strongSell := rsiSignal < 0 && macdSignal < 0
+	if trade != nil && !strongBuy && !strongSell { // If trade is active and not a strong buy signal
 		logger.Infof("Monitoring trade ID: %d | Pair: %s | Price: %.2f | Quantity %.2f", trade.ID, trade.Symbol, trade.BuyPrice, trade.Quantity)
 		breakevenPrice := trade.BuyPrice * (1 + cs.FeeRate)
 		profitMargin := (currentPrice - trade.BuyPrice) / trade.BuyPrice * 100
@@ -94,6 +103,13 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 
 		// Calculate profit margin relative to ATH
 		profitMarginATH := (currentPrice - athPrice.(float64)) / athPrice.(float64) * 100
+
+		//panic sell
+		if profitMargin < -1.5 {
+			logger.Infof("Panic Selling %s: Current price (%.2f) is 5%% below buy price (%.2f). \n", pair, currentPrice, trade.BuyPrice)
+			highestPrices.Delete(pair)
+			return -1, nil // Sell signal
+		}
 
 		// Sell if price falls below highest price by a certain margin
 		if cs.HighestPriceFallOffMargin != 0 {
@@ -125,17 +141,45 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		}
 	}
 
-	if rsiSignal > 0 && macdSignal > 0 {
+	if strongBuy {
 		logger.Info(pair, "Strong Buy |", rsiVal, macdVal, "\n")
 		return 1, nil // Strong BUY
-	} else if rsiSignal < 0 && macdSignal < 0 {
+	} else if strongSell {
 		logger.Info(pair, "Strong Sell |", rsiVal, macdVal, "\n")
 		return -1, nil // Strong Sell
-	} else if rsiSignal > 0 && macdSignal < 0 {
-		return 0, nil // Buy
-	} else if rsiSignal < 0 && macdSignal > 0 {
-		return 0, nil // Sell
 	}
 
+	logger.Debugf("RSI: %d | MACD: %d | Stochastic %s | Trend: %s\n", rsiSignal, macdSignal, stochasticStr, trendText)
+	//if rsiSignal > 0 && macdSignal > 0 {
+	//	logger.Info(pair, "Strong Buy |", rsiVal, macdVal, "\n")
+	//	return 1, nil // Strong BUY
+	//} else if rsiSignal < 0 && macdSignal < 0 {
+	//	logger.Info(pair, "Strong Sell |", rsiVal, macdVal, "\n")
+	//	return -1, nil // Strong Sell
+	//} else if rsiSignal > 0 && macdSignal < 0 {
+	//	logger.Infof("%s | HODL | %s%.6f\033[0m %s%.6f\033[0m\n | %s%.v\u001B[0m \n", pair, rsiColor, rsiVal, macdColor, macdVal, trendColor, trendText)
+	//	return 0, nil // Buy
+	//} else if rsiSignal < 0 && macdSignal > 0 {
+	//	logger.Infof("%s | HODL | %s%.6f\033[0m %s%.6f\033[0m\n | %s%.v\u001B[0m \n", pair, rsiColor, rsiVal, macdColor, macdVal, trendColor, trendText)
+	//	return 0, nil // Sell
+	//}
+
+	logger.Infof("%s | HOLD | %s%.6f\033[0m %s%.6f\033[0m\n | %s%.v\u001B[0m \n", pair, rsiColor, rsiVal, macdColor, macdVal, trendColor, trendText)
 	return 0, nil // Hold
+}
+
+func (cs *CompoundStrategy) GetRSI(candles []models.CandleStick, pair string) (float64, int, error) {
+	return cs.RSI.Calculate(candles, pair)
+}
+
+func (cs *CompoundStrategy) GetMACD(candles []models.CandleStick) (float64, float64, float64, int, error) {
+	return cs.MACD.Calculate(candles)
+}
+
+func (cs *CompoundStrategy) GetStochastic(candles []models.CandleStick) (string, int, error) {
+	return cs.Stochastic.Calculate(candles)
+}
+
+func (cs *CompoundStrategy) GetCandleInterval() string {
+	return cs.CandleInterval
 }
