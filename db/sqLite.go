@@ -8,9 +8,10 @@ import (
 	"fmt"
 	_ "github.com/mattn/go-sqlite3"
 	"log"
+	"os"
 )
 
-const dbVersion = 2 // Increment this whenever a new schema change is added
+const dbVersion = 4 // Increment this whenever a new schema change is added
 
 type Database interface {
 	InitDB() (*sql.DB, error)
@@ -27,17 +28,19 @@ var SQLiteDB SQLite
 func InitDB() error {
 	dbPath := "/app/data/trades.db" // Adjusted to match the Docker mount
 
+	//folder exists
+	if _, err := os.Stat("/app/data"); os.IsNotExist(err) {
+		logger.Warnf("Running without docker, using local db file")
+		dbPath = "./trades.db"
+	}
+
 	logger.Infof("Initializing database at %s", dbPath)
 
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
-		logger.Infof("Error opening database: %v Trying to create local file", err)
-		dbPath = "./trades.db"
-		db, err = sql.Open("sqlite3", dbPath)
-		if err != nil {
-			logger.Infof("Error opening database: %v", err)
-			return err
-		}
+		logger.Infof("Error opening database: %v", err)
+		return err
+
 	}
 
 	query := `
@@ -139,6 +142,27 @@ func UpdateSchema(db *sql.DB, targetVersion int) error {
 			if _, err := db.Exec(query); err != nil {
 				return fmt.Errorf("failed to apply migration for version 2: %v", err)
 			}
+		case 3:
+			query := `
+			ALTER TABLE completed_trades ADD COLUMN lowerBound REAL;
+			ALTER TABLE completed_trades ADD COLUMN middleBound REAL;
+			ALTER TABLE completed_trades ADD COLUMN upperBound REAL;
+			`
+			if _, err := db.Exec(query); err != nil {
+				return fmt.Errorf("failed to apply migration for version 1: %v", err)
+			}
+		case 4:
+			query := `CREATE TABLE IF NOT EXISTS pair_ath (
+    				  id INTEGER PRIMARY KEY AUTOINCREMENT,
+    				  symbol TEXT NOT NULL,
+    				  ath_price REAL NOT NULL,
+                      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+			);`
+			_, err = db.Exec(query)
+			if err != nil {
+				logger.Infof("Error creating completed_trades table: %v", err)
+				return err
+			}
 		// Add more cases here for future versions
 		default:
 			return fmt.Errorf("unsupported target version: %d", currentVersion)
@@ -175,12 +199,12 @@ func (s *SQLite) LogActiveTrade(symbol string, buyPrice, quantity float64) error
 }
 
 // LogCompletedTrade logs a completed trade to the SQLite database
-func (s *SQLite) LogCompletedTrade(symbol string, buyPrice, sellPrice, quantity, profitLoss, rsi, macd, stochastic float64) error {
+func (s *SQLite) LogCompletedTrade(symbol string, buyPrice, sellPrice, quantity, profitLoss, rsi, macd, stochastic, lowerBound, middleBound, upperBound float64) error {
 	query := `
-        INSERT INTO completed_trades (symbol, buy_price, sell_price, quantity, profit_loss, rsi, macd, stochastic)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO completed_trades (symbol, buy_price, sell_price, quantity, profit_loss, rsi, macd, stochastic, lowerBound, middleBound, upperBound)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
-	_, err := s.DB.Exec(query, symbol, buyPrice, sellPrice, quantity, profitLoss, rsi, macd, stochastic)
+	_, err := s.DB.Exec(query, symbol, buyPrice, sellPrice, quantity, profitLoss, rsi, macd, stochastic, lowerBound, middleBound, upperBound)
 	if err != nil {
 		return fmt.Errorf("failed to log completed trade: %v", err)
 	}
@@ -223,6 +247,75 @@ func (s *SQLite) GetActiveTrades(symbol string) ([]*models.ActiveTrade, error) {
 		trades = append(trades, &trade)
 	}
 	return trades, nil
+}
+
+// GetAllActiveTrades fetches all active trades
+func (s *SQLite) GetAllActiveTrades() ([]*models.ActiveTrade, error) {
+	query := `SELECT id, symbol, buy_price, quantity FROM active_trades WHERE 1`
+	rows, err := s.DB.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var trades []*models.ActiveTrade
+	for rows.Next() {
+		var trade models.ActiveTrade
+		err := rows.Scan(&trade.ID, &trade.Symbol, &trade.BuyPrice, &trade.Quantity)
+		if err != nil {
+			return nil, err
+		}
+		trades = append(trades, &trade)
+	}
+	return trades, nil
+}
+
+// IsCurrentlyActiveTrade checks if an active trade exists for the given symbol
+func (s *SQLite) IsCurrentlyActiveTrade(symbol string) (bool, error) {
+	query := `SELECT COUNT(*) FROM active_trades WHERE symbol = ?`
+	var count int
+	err := s.DB.QueryRow(query, symbol).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (s *SQLite) GetAth(symbol string) (float64, error) {
+	query := `SELECT ath_price FROM pair_ath WHERE symbol = ?`
+	var ath float64
+	err := s.DB.QueryRow(query, symbol).Scan(&ath)
+	if err != nil {
+		return 0, err
+	}
+	return ath, nil
+}
+
+func (s *SQLite) SetUpdateAth(symbol string, ath float64) error {
+	query := `INSERT INTO pair_ath (symbol, ath_price) VALUES (?, ?) ON CONFLICT(symbol) DO UPDATE SET ath_price = excluded.ath_price;`
+	_, err := s.DB.Exec(query, symbol, ath)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLite) UpdateAth(symbol string, ath float64) error {
+	query := `UPDATE pair_ath SET ath_price = ? WHERE symbol = ?`
+	_, err := s.DB.Exec(query, ath, symbol)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLite) RemoveAth(symbol string) error {
+	query := `DELETE FROM pair_ath WHERE symbol = ?`
+	_, err := s.DB.Exec(query, symbol)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // RemoveActiveTrade removes an active trade from the SQLite database

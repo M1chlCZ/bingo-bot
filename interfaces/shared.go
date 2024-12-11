@@ -3,7 +3,6 @@ package interfaces
 import (
 	"binance_bot/models"
 	"binance_bot/strategies"
-	"binance_bot/types"
 )
 
 // Exchange interface defines methods our bot needs from an exchange
@@ -20,13 +19,13 @@ type Exchange interface {
 // Strategy interface for implementing different trading strategies
 type Strategy interface {
 	GetStrategyType() strategies.StrategyType
-	Calculate(candles []models.CandleStick, pair string, trend bool) (signal int, err error)
+	Calculate(candles []models.CandleStick, pair string, marketState models.MarketState) (int, error)
 	GetCandleInterval() string
 }
 
 // ExchangeClient interface defines methods our bot needs from an exchange client
 type ExchangeClient interface {
-	AddTradingPair(pair types.TradingPair) error
+	AddTradingPair(pair models.TradingPair) error
 	GetCurrentPrice(symbol string) (float64, error)
 	FetchCandles(symbol, interval string, limit int) ([]models.CandleStick, error)
 	GetBalance(asset string) (float64, error)
@@ -37,5 +36,6 @@ type ExchangeClient interface {
 	MonitorOrder(symbol string, orderID int64) (bool, error)
 	CancelOrder(symbol string, orderID int64) error
 	GetFeeRate() (float64, error)
-	GetTradingPairs() map[string]*types.TradingPair
+	GetTradingPairs() map[string]*models.TradingPair
+	FetchMarkets(tickers []string, excludedMarkets []string, excludedTradingPairs []models.TradingPair) ([]models.TradingPair, error)
 }

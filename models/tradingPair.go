@@ -1,4 +1,4 @@
-package types
+package models
 
 // TradingPair represents a single trading pair configuration
 type TradingPair struct {

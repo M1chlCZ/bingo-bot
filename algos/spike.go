@@ -1,4 +1,4 @@
-package strategies
+package algos
 
 import (
 	"binance_bot/models"
@@ -15,11 +15,7 @@ type SpikeStrategy struct {
 	VolumeThreshold float64 // Minimum volume to confirm spike
 }
 
-func (s *SpikeStrategy) GetStrategyType() StrategyType {
-	return SpikeDetectionStrategyType
-}
-
-func (s *SpikeStrategy) Calculate(candles []models.CandleStick, pair string, trend bool) (int, error) {
+func (s *SpikeStrategy) Calculate(candles []models.CandleStick, pair string, _ bool) (int, error) {
 	if len(candles) < s.AvgPeriod+1 {
 		return 0, fmt.Errorf("not enough candles to calculate spike")
 	}

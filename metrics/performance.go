@@ -97,10 +97,14 @@ func MonitorPerformance(binanceClient interfaces.ExchangeClient) {
 			}
 
 			// Log the performance summary
+			logger.Infof("\n")
+			logger.Infof("=========================================")
 			logger.Infof("Performance Summary (Hourly):")
 			logger.Infof("Total Profit/Loss from Completed Trades: %.2f USDT", totalProfitLoss)
 			logger.Infof("Unrealized Profit from Active Trades: %.2f USDT", unrealizedProfit)
 			logger.Infof("Unrealized Loss from Active Trades: %.2f USDT", unrealizedLoss)
+			logger.Infof("=========================================")
+			logger.Infof("\n")
 
 		case <-ctx.Done():
 			return

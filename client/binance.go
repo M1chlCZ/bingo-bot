@@ -4,12 +4,13 @@ import (
 	"binance_bot/interfaces"
 	"binance_bot/logger"
 	"binance_bot/models"
-	"binance_bot/types"
 	"context"
 	"fmt"
 	"github.com/adshao/go-binance/v2"
+	"log"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -17,7 +18,7 @@ import (
 // BinanceClient implements the Exchange interface
 type BinanceClient struct {
 	client      *binance.Client
-	pairs       map[string]*types.TradingPair
+	pairs       map[string]*models.TradingPair
 	pairsMutex  sync.RWMutex
 	candleCache map[string][]models.CandleStick
 	cacheMutex  sync.RWMutex
@@ -29,19 +30,19 @@ func NewBinanceClient(apiKey, apiSecret string) (interfaces.ExchangeClient, erro
 	logger.Info("Started trading using Binance")
 	return &BinanceClient{
 		client:      client,
-		pairs:       make(map[string]*types.TradingPair),
+		pairs:       make(map[string]*models.TradingPair),
 		candleCache: make(map[string][]models.CandleStick),
 	}, nil
 }
 
-func (b *BinanceClient) GetTradingPairs() map[string]*types.TradingPair {
+func (b *BinanceClient) GetTradingPairs() map[string]*models.TradingPair {
 	return b.pairs
 }
 
 // AddTradingPair adds a new trading pair to monitor
-func (b *BinanceClient) AddTradingPair(pair types.TradingPair) error {
+func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
 	// Fetch exchange info for the trading pair
-	info, err := b.client.NewExchangeInfoService().Symbol(pair.Symbol).Do(context.Background())
+	info, err := b.client.NewExchangeInfoService().Do(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to get exchange info for %s: %v", pair.Symbol, err)
 	}
@@ -56,9 +57,11 @@ func (b *BinanceClient) AddTradingPair(pair types.TradingPair) error {
 			pair.PricePrecision = symbol.QuotePrecision
 			pair.QtyPrecision = symbol.BaseAssetPrecision
 
-			// Parse filters to extract additional trading rules
+			// Parse filters to extract trading rules
 			for _, filter := range symbol.Filters {
-				if filter["filterType"] == "MIN_NOTIONAL" {
+				switch filter["filterType"] {
+				case "NOTIONAL":
+					// Extract `minNotional`
 					minNotionalStr, ok := filter["minNotional"].(string)
 					if !ok {
 						return fmt.Errorf("invalid minNotional format for %s", pair.Symbol)
@@ -68,7 +71,6 @@ func (b *BinanceClient) AddTradingPair(pair types.TradingPair) error {
 						return fmt.Errorf("failed to parse minNotional for %s: %v", pair.Symbol, err)
 					}
 				}
-				// Add more filters here if needed
 			}
 
 			// Safely add the pair to the map
@@ -76,7 +78,7 @@ func (b *BinanceClient) AddTradingPair(pair types.TradingPair) error {
 			b.pairs[pair.Symbol] = &pair
 			b.pairsMutex.Unlock()
 
-			logger.Debugf("Successfully added trading pair: %s", pair.Symbol)
+			logger.Infof("Successfully added trading pair: %s", pair.Symbol)
 			break
 		}
 	}
@@ -84,6 +86,7 @@ func (b *BinanceClient) AddTradingPair(pair types.TradingPair) error {
 	if !symbolFound {
 		return fmt.Errorf("symbol %s not found in exchange info", pair.Symbol)
 	}
+
 	return nil
 }
 
@@ -328,15 +331,19 @@ func (b *BinanceClient) CreateLimitOrder(symbol, side, quantity, price string) (
 		return 0, fmt.Errorf("invalid price format: %v", err)
 	}
 	pricePrecision := 0
-	if side == "BUY" {
-		pricePrecision = info.Symbols[0].QuotePrecision
-	} else {
-		pricePrecision = info.Symbols[0].BaseAssetPrecision
+	quantityPrecision := 0
 
+	if side == "BUY" {
+		pricePrecision = info.Symbols[0].QuoteAssetPrecision
+		quantityPrecision = info.Symbols[0].BaseAssetPrecision
+	} else {
+		pricePrecision = info.Symbols[0].QuotePrecision
+		quantityPrecision = info.Symbols[0].BaseAssetPrecision
 	}
+
 	adjustedPrice := math.Floor(priceFloat/tickSize) * tickSize
-	formattedPrice := strconv.FormatFloat(adjustedPrice, 'f', pricePrecision, 64)
-	formattedQty = strconv.FormatFloat(adjustedQty, 'f', pricePrecision, 64)
+	formattedPrice := fmt.Sprintf("%.*f", pricePrecision, adjustedPrice)
+	formattedQty = strconv.FormatFloat(adjustedQty, 'f', quantityPrecision, 64)
 
 	logger.Debug("Price Precision: ", pricePrecision)
 	logger.Debug("Adjusted Price: ", adjustedPrice)
@@ -467,6 +474,7 @@ func (b *BinanceClient) CreateStopLossLimitOrder(symbol, side, quantity, price, 
 	return order.OrderID, nil
 }
 
+// MonitorOrder TODO: USE THIS FUNCTION
 func (b *BinanceClient) MonitorOrder(symbol string, orderID int64) (bool, error) {
 	logger.Infof("Monitoring order %d for %s", orderID, symbol)
 
@@ -525,6 +533,110 @@ func (b *BinanceClient) GetFeeRate() (float64, error) {
 		feeRate = float64(accountInfo.MakerCommission) / 10000 // Convert commission to decimal
 	}
 	return feeRate, nil
+}
+
+// FetchMarkets retrieves all trading pairs matching the provided ticker (e.g., "USDT").
+func (b *BinanceClient) FetchMarkets(tickers []string, excludedMarkets []string, excludedTradingPairs []models.TradingPair) ([]models.TradingPair, error) {
+	log.Printf("[INFO] Fetching all markets matching ticker: %v", tickers)
+
+	// Fetch exchange information
+	exchangeInfo, err := b.client.NewExchangeInfoService().Do(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch exchange info: %v", err)
+	}
+
+	// Filter symbols that end with the specified ticker
+	tradingPairs := make([]models.TradingPair, 0)
+
+	for _, symbol := range exchangeInfo.Symbols {
+		// Check if the symbol is excluded
+		if isExcludedMarket(symbol.Symbol, excludedMarkets) {
+			logger.Infof("Excluded quote market: %s", symbol.Symbol)
+			continue
+		}
+
+		if isExcludedTradingPair(models.TradingPair{Symbol: symbol.Symbol}, excludedTradingPairs) {
+			logger.Infof("Excluded trading pair: %s", symbol.Symbol)
+			continue
+		}
+
+		if symbol.Status != "TRADING" {
+			logger.Debugf("Trading is not allowed for %s", symbol.Symbol)
+			continue
+		}
+		if isIncludedMarket(symbol.Symbol, tickers) {
+			if !symbol.IsSpotTradingAllowed {
+				logger.Warnf("Spot trading is not allowed for %s", symbol.Symbol)
+				continue
+			}
+			var minNotional float64
+			for _, filter := range symbol.Filters {
+				switch filter["filterType"] {
+				case "NOTIONAL":
+					// Extract `minNotional`
+					minNotionalStr, ok := filter["minNotional"].(string)
+					if !ok {
+						logger.Errorf("Invalid minNotional format for %s", symbol.Symbol)
+						continue
+					}
+					minNotional, err = strconv.ParseFloat(minNotionalStr, 64)
+					if err != nil {
+						logger.Errorf("Failed to parse minNotional for %s: %v", symbol.Symbol, err)
+						continue
+					}
+				}
+			}
+			tp := models.TradingPair{
+				Symbol:         symbol.Symbol,
+				BaseAsset:      symbol.BaseAsset,
+				QuoteAsset:     symbol.QuoteAsset,
+				PricePrecision: symbol.QuotePrecision,
+				QtyPrecision:   symbol.BaseAssetPrecision,
+				MinNotional:    minNotional,
+			}
+			logger.Infof("Found trading pair: %s", tp.Symbol)
+			logger.Debugf("Found trading pair: %s Base Assets %s Quote Asset %s MinNotional %.2f", tp.Symbol, tp.BaseAsset, tp.QuoteAsset, tp.MinNotional)
+			tradingPairs = append(tradingPairs, tp)
+		}
+	}
+	log.Printf("[INFO] Found %d markets matching tickers: %s", len(tradingPairs), tickers)
+
+	return tradingPairs, nil
+}
+
+func isIncludedMarket(symbol string, includedMarkets []string) bool {
+	for _, market := range includedMarkets {
+		if strings.HasSuffix(symbol, market) {
+			return true
+		}
+	}
+	return false
+}
+
+func isExcludedMarket(symbol string, excludedMarkets []string) bool {
+	for _, market := range excludedMarkets {
+		if strings.HasPrefix(symbol, market) {
+			return true
+		}
+	}
+	return false
+}
+
+func isExcludedTradingPair(tradingPair models.TradingPair, excludedTradingPairs []models.TradingPair) bool {
+	for _, tp := range excludedTradingPairs {
+		if tp.Symbol == tradingPair.Symbol {
+			return true
+		}
+	}
+	return false
+}
+
+// toFloat safely converts string to float64
+func toFloat(value string) float64 {
+	if result, err := strconv.ParseFloat(value, 64); err == nil {
+		return result
+	}
+	return 0
 }
 
 // Retry helper for API calls

@@ -1,4 +1,4 @@
-package strategies
+package algos
 
 import (
 	"binance_bot/models"
@@ -31,13 +31,14 @@ func (r *RSIStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 }
 
 func calculateRSI(candles []models.CandleStick, period int) ([]float64, error) {
-	if len(candles) < period {
-		return nil, fmt.Errorf("not enough data to calculate RSI: need %d candles, got %d", period, len(candles))
+	if len(candles) < period+1 { // Ensure there are enough candles for RSI calculation
+		return nil, fmt.Errorf("not enough data to calculate RSI: need %d candles, got %d", period+1, len(candles))
 	}
 
 	gains := make([]float64, len(candles)-1)
 	losses := make([]float64, len(candles)-1)
 
+	// Calculate gains and losses
 	for i := 1; i < len(candles); i++ {
 		change := candles[i].Close - candles[i-1].Close
 		if change > 0 {
@@ -50,16 +51,24 @@ func calculateRSI(candles []models.CandleStick, period int) ([]float64, error) {
 	// Calculate the initial averages
 	avgGain := 0.0
 	avgLoss := 0.0
+
 	for i := 0; i < period; i++ {
+		if i >= len(gains) { // Check bounds to avoid crash
+			return nil, fmt.Errorf("unexpected index error while calculating initial averages")
+		}
 		avgGain += gains[i]
 		avgLoss += losses[i]
 	}
+
 	avgGain /= float64(period)
 	avgLoss /= float64(period)
 
-	// Calculate the RSI values
+	// Calculate RSI values
 	rsi := make([]float64, len(candles)-period)
 	for i := period; i < len(candles); i++ {
+		if i-1 >= len(gains) || i-period >= len(rsi) { // Check bounds
+			return nil, fmt.Errorf("unexpected index error while calculating RSI")
+		}
 		avgGain = (avgGain*(float64(period)-1) + gains[i-1]) / float64(period)
 		avgLoss = (avgLoss*(float64(period)-1) + losses[i-1]) / float64(period)
 
