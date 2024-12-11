@@ -33,9 +33,6 @@ type MultiPairTradingBot struct {
 	wg             sync.WaitGroup
 	stopCh         chan struct{}
 	config         types.ConfigMultiTrading
-	// Pause trading until a specific time, prevents banning the IP
-	pauseUntil time.Time
-	pauseMu    sync.RWMutex
 }
 
 // NewMultiPairTradingBot creates a new instance of MultiPairTradingBot
@@ -271,7 +268,6 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 	lastResetDay := time.Now().Day()
 
 	for {
-		bot.waitIfPaused()
 		select {
 		case <-bot.stopCh:
 			return
@@ -286,7 +282,6 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			}
 
 		case <-tradeTicker.C:
-			bot.waitIfPaused()
 			// Fetch strategy and market analysis for the pair
 			bot.pairsMu.RLock()
 			strategy, hasStrategy := bot.pairStrategies[pair.Symbol]
@@ -302,7 +297,6 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			candles, err := bot.exchange.FetchCandles(pair.Symbol, strategy.GetCandleInterval(), 69)
 			if err != nil {
 				logger.Errorf("Error fetching candles for %s | Sleeping for 3 minutes", pair.Symbol)
-				bot.pauseAll(3 * time.Minute)
 				continue
 			}
 
@@ -343,7 +337,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 					logger.Errorf("Error fetching %s balance: %v", pair.QuoteAsset, err)
 
 				}
-				bot.pauseAll(10 * time.Second)
+
 				continue
 			}
 
@@ -352,7 +346,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				if pair.BaseAsset != "" {
 					logger.Errorf("Error fetching %s balance: %v", pair.BaseAsset, err)
 				}
-				bot.pauseAll(10 * time.Second)
+
 				continue
 			}
 
@@ -557,7 +551,6 @@ func (bot *MultiPairTradingBot) updateMarketAnalysis() {
 				candles, err := bot.exchange.FetchCandles(pair.Symbol, bot.interval, 69)
 				if err != nil {
 					logger.Errorf("Error fetching candles for %s | Sleeping for 3 minutes", pair.Symbol)
-					bot.pauseAll(3 * time.Minute)
 					continue
 				}
 
@@ -660,7 +653,6 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 		candles, err := bot.exchange.FetchCandles(market.Symbol, bot.interval, 69)
 		if err != nil {
 			logger.Errorf("Error fetching candles for %s | Sleeping for 3 minutes", market.Symbol)
-			bot.pauseAll(3 * time.Minute)
 			return // Skip this market
 		}
 
@@ -760,25 +752,5 @@ func (bot *MultiPairTradingBot) SuggestStrategy(marketState models.MarketState) 
 		return bot.config.RangeBound.Strategy
 	default:
 		return bot.config.Default.Strategy
-	}
-}
-
-func (bot *MultiPairTradingBot) pauseAll(duration time.Duration) {
-	bot.pauseMu.Lock()
-	defer bot.pauseMu.Unlock()
-	// Only set pause if we are not already paused further into the future
-	if time.Now().Add(duration).After(bot.pauseUntil) {
-		bot.pauseUntil = time.Now().Add(duration)
-	}
-}
-
-func (bot *MultiPairTradingBot) waitIfPaused() {
-	bot.pauseMu.RLock()
-	pu := bot.pauseUntil
-	bot.pauseMu.RUnlock()
-
-	if time.Now().Before(pu) {
-		sleepDur := pu.Sub(time.Now())
-		time.Sleep(sleepDur)
 	}
 }

@@ -83,15 +83,15 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		profitMargin := (currentPrice - trade.BuyPrice) / trade.BuyPrice * 100
 
 		// Update or fetch the ATH price
-		athPrice, err := db2.SQLiteDB.GetAth(pair)
+		athPrice, err := db2.SQLiteDB.GetAth(trade.Symbol)
 		if err != nil || currentPrice > athPrice {
-			// Set the ATH to the current price if it's higher
-			err = db2.SQLiteDB.SetUpdateAth(pair, currentPrice)
+			err = db2.SQLiteDB.SetUpdateAth(trade.Symbol, currentPrice)
 			if err != nil {
-				logger.Errorf("Error updating ATH price for %s: %v", pair, err)
+				logger.Errorf("Error updating ATH price for %s: %v", trade.Symbol, err)
+			} else {
+				athPrice = currentPrice
+				logger.Infof("New ATH price for %s: %.2f", trade.Symbol, currentPrice)
 			}
-			athPrice = currentPrice
-			logger.Infof("New ATH price for %s: %.2f", pair, currentPrice)
 		}
 
 		// Calculate profit margin relative to ATH

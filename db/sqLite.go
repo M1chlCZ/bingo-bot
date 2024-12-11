@@ -11,7 +11,7 @@ import (
 	"os"
 )
 
-const dbVersion = 4 // Increment this whenever a new schema change is added
+const dbVersion = 5 // Increment this whenever a new schema change is added
 
 type Database interface {
 	InitDB() (*sql.DB, error)
@@ -158,6 +158,19 @@ func UpdateSchema(db *sql.DB, targetVersion int) error {
     				  ath_price REAL NOT NULL,
                       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 			);`
+			_, err = db.Exec(query)
+			if err != nil {
+				logger.Infof("Error creating completed_trades table: %v", err)
+				return err
+			}
+		case 5:
+			query := `DROP TABLE IF EXISTS pair_ath;
+CREATE TABLE pair_ath (
+    symbol TEXT PRIMARY KEY,
+    ath_price REAL NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+);`
+
 			_, err = db.Exec(query)
 			if err != nil {
 				logger.Infof("Error creating completed_trades table: %v", err)

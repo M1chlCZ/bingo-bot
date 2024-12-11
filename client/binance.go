@@ -22,6 +22,12 @@ type BinanceClient struct {
 	pairsMutex  sync.RWMutex
 	candleCache map[string][]models.CandleStick
 	cacheMutex  sync.RWMutex
+
+	// Fields for rate limiting
+	requestsMu   sync.Mutex
+	requestTimes []time.Time
+	maxRequests  int
+	interval     time.Duration
 }
 
 // NewBinanceClient creates a new Binance client instance
@@ -32,6 +38,8 @@ func NewBinanceClient(apiKey, apiSecret string) (interfaces.ExchangeClient, erro
 		client:      client,
 		pairs:       make(map[string]*models.TradingPair),
 		candleCache: make(map[string][]models.CandleStick),
+		maxRequests: 10,              // max requests
+		interval:    2 * time.Second, // time window
 	}, nil
 }
 
@@ -41,6 +49,7 @@ func (b *BinanceClient) GetTradingPairs() map[string]*models.TradingPair {
 
 // AddTradingPair adds a new trading pair to monitor
 func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
+	b.rateLimitWait()
 	// Fetch exchange info for the trading pair
 	info, err := b.client.NewExchangeInfoService().Do(context.Background())
 	if err != nil {
@@ -92,6 +101,7 @@ func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
 
 // GetCurrentPrice fetches the current price for a given symbol
 func (b *BinanceClient) GetCurrentPrice(symbol string) (float64, error) {
+	b.rateLimitWait()
 	// Fetch the price from the Binance API
 	prices, err := b.client.NewListPricesService().Symbol(symbol).Do(context.Background())
 	if err != nil {
@@ -116,6 +126,7 @@ func (b *BinanceClient) GetCurrentPrice(symbol string) (float64, error) {
 func (b *BinanceClient) FetchCandles(symbol, interval string, limit int) ([]models.CandleStick, error) {
 	var klines []*binance.Kline
 	err := retry(func() error {
+		b.rateLimitWait()
 		var err error
 		klines, err = b.client.NewKlinesService().
 			Symbol(symbol).
@@ -155,6 +166,7 @@ func (b *BinanceClient) FetchCandles(symbol, interval string, limit int) ([]mode
 
 // GetBalance implements the Exchange interface
 func (b *BinanceClient) GetBalance(asset string) (float64, error) {
+	b.rateLimitWait()
 	account, err := b.client.NewGetAccountService().Do(context.Background())
 	if err != nil {
 		return 0, fmt.Errorf("failed to get account info: %v", err)
@@ -181,6 +193,7 @@ func (b *BinanceClient) CreateOrder(symbol, orderType, side string, amount strin
 	}
 
 	// Place market order
+	b.rateLimitWait()
 	order, err := b.client.NewCreateOrderService().
 		Symbol(symbol).
 		Side(binance.SideType(side)).
@@ -226,6 +239,7 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (float6
 	}
 
 	// Place the market order
+	b.rateLimitWait()
 	order, err := b.client.NewCreateOrderService().
 		Symbol(symbol).
 		Side(binance.SideType(side)).
@@ -265,6 +279,7 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (float6
 
 func (b *BinanceClient) CreateLimitOrder(symbol, side, quantity, price string) (int64, error) {
 	// Fetch symbol filters to comply with LOT_SIZE and PRICE_FILTER
+	b.rateLimitWait()
 	info, err := b.client.NewExchangeInfoService().Symbol(symbol).Do(context.Background())
 	if err != nil {
 		return 0, fmt.Errorf("failed to fetch exchange info for %s: %v", symbol, err)
@@ -352,6 +367,7 @@ func (b *BinanceClient) CreateLimitOrder(symbol, side, quantity, price string) (
 	logger.Debug("Amount in USDT: ", adjustedPrice*adjustedQty)
 
 	// Place the limit order
+	b.rateLimitWait()
 	order, err := b.client.NewCreateOrderService().
 		Symbol(symbol).
 		Side(binance.SideType(side)).
@@ -371,6 +387,7 @@ func (b *BinanceClient) CreateLimitOrder(symbol, side, quantity, price string) (
 
 func (b *BinanceClient) CreateStopLossLimitOrder(symbol, side, quantity, price, stopLoss string) (int64, error) {
 	// Fetch symbol filters to comply with LOT_SIZE and PRICE_FILTER
+	b.rateLimitWait()
 	info, err := b.client.NewExchangeInfoService().Symbol(symbol).Do(context.Background())
 	if err != nil {
 		return 0, fmt.Errorf("failed to fetch exchange info for %s: %v", symbol, err)
@@ -456,6 +473,7 @@ func (b *BinanceClient) CreateStopLossLimitOrder(symbol, side, quantity, price, 
 	logger.Debug("Stop Loss Formatted Price: ", formattedStopLossPrice)
 
 	// Place the limit order
+	b.rateLimitWait()
 	order, err := b.client.NewCreateOrderService().
 		Symbol(symbol).
 		Side(binance.SideType(side)).
@@ -480,6 +498,7 @@ func (b *BinanceClient) MonitorOrder(symbol string, orderID int64) (bool, error)
 
 	for {
 		// Fetch order status
+		b.rateLimitWait()
 		order, err := b.client.NewGetOrderService().
 			Symbol(symbol).
 			OrderID(orderID).
@@ -508,6 +527,7 @@ func (b *BinanceClient) MonitorOrder(symbol string, orderID int64) (bool, error)
 func (b *BinanceClient) CancelOrder(symbol string, orderID int64) error {
 	logger.Infof("Canceling order %d for %s", orderID, symbol)
 
+	b.rateLimitWait()
 	_, err := b.client.NewCancelOrderService().
 		Symbol(symbol).
 		OrderID(orderID).
@@ -522,6 +542,7 @@ func (b *BinanceClient) CancelOrder(symbol string, orderID int64) error {
 }
 
 func (b *BinanceClient) GetFeeRate() (float64, error) {
+	b.rateLimitWait()
 	accountInfo, err := b.client.NewGetAccountService().Do(context.Background())
 	if err != nil {
 		return 0, fmt.Errorf("failed to fetch account info: %v", err)
@@ -540,6 +561,7 @@ func (b *BinanceClient) FetchMarkets(tickers []string, excludedMarkets []string,
 	log.Printf("[INFO] Fetching all markets matching ticker: %v", tickers)
 
 	// Fetch exchange information
+	b.rateLimitWait()
 	exchangeInfo, err := b.client.NewExchangeInfoService().Do(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch exchange info: %v", err)
@@ -648,4 +670,45 @@ func retry(fn func() error, retries int, delay time.Duration) error {
 		time.Sleep(delay)
 	}
 	return fmt.Errorf("operation failed after %d retries", retries)
+}
+
+func (b *BinanceClient) rateLimitWait() {
+	b.requestsMu.Lock()
+	defer b.requestsMu.Unlock()
+
+	now := time.Now()
+	// Remove timestamps older than b.interval
+	cutoff := now.Add(-b.interval)
+	filtered := b.requestTimes[:0]
+	for _, t := range b.requestTimes {
+		if t.After(cutoff) {
+			filtered = append(filtered, t)
+		}
+	}
+	b.requestTimes = filtered
+
+	// Check how many requests in this interval
+	if len(b.requestTimes) >= b.maxRequests {
+		// We are at the limit, wait until the oldest request is out of the window
+		oldest := b.requestTimes[0]
+		waitDuration := oldest.Add(b.interval).Sub(now)
+		if waitDuration > 0 {
+			logger.Debugf("Rate limit reached, waiting for %s", waitDuration)
+			time.Sleep(waitDuration)
+		}
+
+		// Clean up again after sleep
+		newNow := time.Now()
+		newCutoff := newNow.Add(-b.interval)
+		newFiltered := b.requestTimes[:0]
+		for _, t := range b.requestTimes {
+			if t.After(newCutoff) {
+				newFiltered = append(newFiltered, t)
+			}
+		}
+		b.requestTimes = newFiltered
+	}
+
+	// Record the current request
+	b.requestTimes = append(b.requestTimes, time.Now())
 }
