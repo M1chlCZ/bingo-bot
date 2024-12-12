@@ -9,9 +9,10 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"log"
 	"os"
+	"sync"
 )
 
-const dbVersion = 5 // Increment this whenever a new schema change is added
+const dbVersion = 6 // Increment this whenever a new schema change is added
 
 type Database interface {
 	InitDB() (*sql.DB, error)
@@ -20,6 +21,7 @@ type Database interface {
 
 type SQLite struct {
 	DB *sql.DB
+	mu sync.RWMutex
 }
 
 var SQLiteDB SQLite
@@ -176,6 +178,12 @@ CREATE TABLE pair_ath (
 				logger.Infof("Error creating completed_trades table: %v", err)
 				return err
 			}
+		case 6:
+			_, err := db.Exec("PRAGMA journal_mode = WAL;")
+			if err != nil {
+				logger.Infof("Error creating completed_trades table: %v", err)
+				return err
+			}
 		// Add more cases here for future versions
 		default:
 			return fmt.Errorf("unsupported target version: %d", currentVersion)
@@ -192,6 +200,8 @@ CREATE TABLE pair_ath (
 
 // Deprecated: LogTrade logs a trade to the SQLite database
 func (s *SQLite) LogTrade(symbol, side string, amount, price float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	query := `INSERT INTO trades (symbol, side, amount, price) VALUES (?, ?, ?, ?)`
 	_, err := s.DB.Exec(query, symbol, side, amount, price)
 	return err
@@ -199,6 +209,8 @@ func (s *SQLite) LogTrade(symbol, side string, amount, price float64) error {
 
 // LogActiveTrade logs an active trade to the SQLite database
 func (s *SQLite) LogActiveTrade(symbol string, buyPrice, quantity float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	query := `INSERT INTO active_trades (symbol, buy_price, quantity) VALUES (?, ?, ?)`
 	result, err := s.DB.Exec(query, symbol, buyPrice, quantity)
 	if err != nil {
@@ -213,6 +225,8 @@ func (s *SQLite) LogActiveTrade(symbol string, buyPrice, quantity float64) error
 
 // LogCompletedTrade logs a completed trade to the SQLite database
 func (s *SQLite) LogCompletedTrade(symbol string, buyPrice, sellPrice, quantity, profitLoss, rsi, macd, stochastic, lowerBound, middleBound, upperBound float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	query := `
         INSERT INTO completed_trades (symbol, buy_price, sell_price, quantity, profit_loss, rsi, macd, stochastic, lowerBound, middleBound, upperBound)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -226,6 +240,8 @@ func (s *SQLite) LogCompletedTrade(symbol string, buyPrice, sellPrice, quantity,
 
 // GetActiveTrade fetches the active trade for a given symbol
 func (s *SQLite) GetActiveTrade(symbol string) (*models.ActiveTrade, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	query := `SELECT id, symbol, buy_price, quantity FROM active_trades WHERE symbol = ? LIMIT 1`
 	row := s.DB.QueryRow(query, symbol)
 
@@ -243,6 +259,8 @@ func (s *SQLite) GetActiveTrade(symbol string) (*models.ActiveTrade, error) {
 
 // GetActiveTrades fetches all active trades for a given symbol
 func (s *SQLite) GetActiveTrades(symbol string) ([]*models.ActiveTrade, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	query := `SELECT id, symbol, buy_price, quantity FROM active_trades WHERE symbol = ?`
 	rows, err := s.DB.Query(query, symbol)
 	if err != nil {
@@ -264,6 +282,8 @@ func (s *SQLite) GetActiveTrades(symbol string) ([]*models.ActiveTrade, error) {
 
 // GetAllActiveTrades fetches all active trades
 func (s *SQLite) GetAllActiveTrades() ([]*models.ActiveTrade, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	query := `SELECT id, symbol, buy_price, quantity FROM active_trades WHERE 1`
 	rows, err := s.DB.Query(query)
 	if err != nil {
@@ -285,6 +305,8 @@ func (s *SQLite) GetAllActiveTrades() ([]*models.ActiveTrade, error) {
 
 // IsCurrentlyActiveTrade checks if an active trade exists for the given symbol
 func (s *SQLite) IsCurrentlyActiveTrade(symbol string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	query := `SELECT COUNT(*) FROM active_trades WHERE symbol = ?`
 	var count int
 	err := s.DB.QueryRow(query, symbol).Scan(&count)
@@ -295,6 +317,8 @@ func (s *SQLite) IsCurrentlyActiveTrade(symbol string) (bool, error) {
 }
 
 func (s *SQLite) GetAth(symbol string) (float64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	query := `SELECT ath_price FROM pair_ath WHERE symbol = ?`
 	var ath float64
 	err := s.DB.QueryRow(query, symbol).Scan(&ath)
@@ -305,6 +329,8 @@ func (s *SQLite) GetAth(symbol string) (float64, error) {
 }
 
 func (s *SQLite) SetUpdateAth(symbol string, ath float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	query := `INSERT INTO pair_ath (symbol, ath_price) VALUES (?, ?) ON CONFLICT(symbol) DO UPDATE SET ath_price = excluded.ath_price;`
 	_, err := s.DB.Exec(query, symbol, ath)
 	if err != nil {
@@ -314,6 +340,8 @@ func (s *SQLite) SetUpdateAth(symbol string, ath float64) error {
 }
 
 func (s *SQLite) UpdateAth(symbol string, ath float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	query := `UPDATE pair_ath SET ath_price = ? WHERE symbol = ?`
 	_, err := s.DB.Exec(query, ath, symbol)
 	if err != nil {
@@ -323,6 +351,8 @@ func (s *SQLite) UpdateAth(symbol string, ath float64) error {
 }
 
 func (s *SQLite) RemoveAth(symbol string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	query := `DELETE FROM pair_ath WHERE symbol = ?`
 	_, err := s.DB.Exec(query, symbol)
 	if err != nil {
@@ -333,6 +363,8 @@ func (s *SQLite) RemoveAth(symbol string) error {
 
 // RemoveActiveTrade removes an active trade from the SQLite database
 func (s *SQLite) RemoveActiveTrade(id int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	_, err := s.DB.Exec(`DELETE FROM active_trades WHERE id = ?`, id)
 	return err
 }
