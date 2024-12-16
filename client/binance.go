@@ -38,7 +38,7 @@ func NewBinanceClient(apiKey, apiSecret string) (interfaces.ExchangeClient, erro
 		client:      client,
 		pairs:       make(map[string]*models.TradingPair),
 		candleCache: make(map[string][]models.CandleStick),
-		maxRequests: 10,              // max requests
+		maxRequests: 12,              // max requests
 		interval:    2 * time.Second, // time window
 	}, nil
 }
@@ -123,7 +123,7 @@ func (b *BinanceClient) GetCurrentPrice(symbol string) (float64, error) {
 }
 
 // FetchCandles implements the Exchange interface
-func (b *BinanceClient) FetchCandles(symbol, interval string, limit int) ([]models.CandleStick, error) {
+func (b *BinanceClient) FetchCandles(symbol, interval string, _ int) ([]models.CandleStick, error) {
 	var klines []*binance.Kline
 	err := retry(func() error {
 		b.rateLimitWait()
@@ -131,7 +131,6 @@ func (b *BinanceClient) FetchCandles(symbol, interval string, limit int) ([]mode
 		klines, err = b.client.NewKlinesService().
 			Symbol(symbol).
 			Interval(interval).
-			Limit(limit).
 			Do(context.Background())
 		return err
 	}, 3, time.Second)
@@ -626,6 +625,16 @@ func (b *BinanceClient) FetchMarkets(tickers []string, excludedMarkets []string,
 	return tradingPairs, nil
 }
 
+// FetchActiveTrades from the Binance client
+func (b *BinanceClient) FetchActiveTrades(symbol string) ([]*binance.TradeV3, error) {
+	trades, err := b.client.NewListTradesService().Symbol(symbol).Do(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	return trades, nil
+}
+
 func isIncludedMarket(symbol string, includedMarkets []string) bool {
 	for _, market := range includedMarkets {
 		if strings.HasSuffix(symbol, market) {
@@ -666,6 +675,8 @@ func retry(fn func() error, retries int, delay time.Duration) error {
 	for i := 0; i < retries; i++ {
 		if err := fn(); err == nil {
 			return nil
+		} else {
+			logger.Error(err.Error())
 		}
 		time.Sleep(delay)
 	}

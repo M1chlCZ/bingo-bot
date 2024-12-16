@@ -3,6 +3,7 @@ package interfaces
 import (
 	"binance_bot/models"
 	"binance_bot/strategies"
+	"github.com/adshao/go-binance/v2"
 )
 
 // Exchange interface defines methods our bot needs from an exchange
@@ -38,4 +39,5 @@ type ExchangeClient interface {
 	GetFeeRate() (float64, error)
 	GetTradingPairs() map[string]*models.TradingPair
 	FetchMarkets(tickers []string, excludedMarkets []string, excludedTradingPairs []models.TradingPair) ([]models.TradingPair, error)
+	FetchActiveTrades(symbol string) ([]*binance.TradeV3, error)
 }

@@ -1,11 +1,8 @@
 package analysis
 
 import (
-	"binance_bot/algos"
-	"binance_bot/interfaces"
 	"binance_bot/logger"
 	"binance_bot/models"
-	"binance_bot/strategies"
 	"github.com/go-playground/validator/v10"
 	"math"
 )
@@ -16,29 +13,50 @@ type MarketAnalyzer struct {
 	ADXPeriod               int     `validate:"required"` // Period for ADX calculation
 	HighVolatilityThreshold float64 `validate:"required"` // Threshold to identify high volatility
 	StrongTrendThreshold    float64 `validate:"required"` // Threshold to identify strong trends
+
+	IchimokuConversionPeriod int     `validate:"required"`
+	IchimokuBasePeriod       int     `validate:"required"`
+	IchimokuSpanBPeriod      int     `validate:"required"`
+	VolumeThreshold          float64 `validate:"required"` // Threshold to consider volume "significant"
+	FractalLookback          int     `validate:"required"` // Period used for Donchian or fractal analysis
 }
 
-// AnalyzeMarket determines the market state based on volatility and trend
+// AnalyzeMarket determines the market state based on various signals
 func (ma *MarketAnalyzer) AnalyzeMarket(candles []models.CandleStick) (marketState models.MarketState, atr float64, adx float64) {
 	if len(candles) < ma.ATRPeriod || len(candles) < ma.ADXPeriod {
 		logger.Debug("[WARN] Insufficient candles for analysis. Expected at least %d candles, got %d", ma.ATRPeriod, len(candles))
 		return models.Default, 0, 0
 	}
 
+	// Core Indicators
 	atr = ma.calculateATR(candles)
 	adx = ma.calculateADX(candles)
-	isTrending := ma.IsUptrend(candles)
+	isUptrend := ma.IsUptrend(candles)
 
-	logger.Debugf("Market Analysis | ATR: %.2f, ADX: %.2f, IsTrending: %v", atr, adx, isTrending)
+	// Additional Indicators
+	ichimokuSignals := ma.calculateIchimokuCloud(candles)
+	volumeSignal := ma.analyzeVolume(candles)
+	fractalSignal := ma.detectFractalCharacteristics(candles)
 
+	logger.Debugf("Market Analysis | ATR: %.2f, ADX: %.2f, Uptrend: %v, Ichimoku: %v, Volume: %v, Fractal: %v",
+		atr, adx, isUptrend, ichimokuSignals, volumeSignal, fractalSignal)
+
+	// Enhanced logic combining multiple signals:
 	switch {
-	case atr > ma.HighVolatilityThreshold && !isTrending:
+	// Example: Chaotic if high volatility but conflicting trend signals
+	case atr > ma.HighVolatilityThreshold && !isUptrend && fractalSignal == models.MixedChannel:
 		return models.Chaotic, atr, adx
-	case atr < ma.HighVolatilityThreshold && isTrending && adx > ma.StrongTrendThreshold:
+
+	// Example: Strong uptrend confirmed by multiple factors
+	case atr < ma.HighVolatilityThreshold && isUptrend && adx > ma.StrongTrendThreshold && ichimokuSignals == models.Bullish && volumeSignal == models.Rising:
 		return models.Trending, atr, adx
-	case atr < ma.HighVolatilityThreshold && !isTrending:
+
+	// Example: Low volatility and all signals suggest a flat/range market
+	case atr < ma.HighVolatilityThreshold && !isUptrend && adx < ma.StrongTrendThreshold && ichimokuSignals == models.Neutral && fractalSignal == models.RangeChannel:
 		return models.RangeBound, atr, adx
+
 	default:
+		// If no conditions match, fall back to default
 		return models.Default, atr, adx
 	}
 }
@@ -68,114 +86,6 @@ func (ma *MarketAnalyzer) CalculateVolatility(candles []models.CandleStick) floa
 
 	// Standard deviation is the square root of variance
 	return math.Sqrt(variance)
-}
-
-func (ma *MarketAnalyzer) SuggestStrategy(marketState models.MarketState) interfaces.Strategy {
-	switch marketState {
-	case models.Trending:
-		return &strategies.CompoundStrategy{
-			RSI: &algos.RSIStrategy{
-				Overbought: 70,
-				Oversold:   30,
-				Period:     14,
-			},
-			MACD: &algos.MACDStrategy{
-				FastPeriod:   12,
-				SlowPeriod:   26,
-				SignalPeriod: 9,
-			},
-			BollingerBands: &algos.BollingerBands{
-				Period: 20,
-				Width:  2.0,
-			},
-			Stochastic: &algos.StochasticOscillator{
-				Overbought: 80,
-				Oversold:   20,
-				Period:     14,
-			},
-			CandleInterval:            "4h",
-			DesiredProfit:             8.0,
-			HighestPriceFallOffMargin: 5.0,
-			FeeRate:                   0.001,
-			MarketState:               models.Trending,
-		}
-	case models.Chaotic:
-		return &strategies.CompoundStrategy{
-			MACD: &algos.MACDStrategy{
-				FastPeriod:   6,
-				SlowPeriod:   13,
-				SignalPeriod: 5,
-			},
-			BollingerBands: &algos.BollingerBands{
-				Period: 10,
-				Width:  2.5,
-			},
-			Stochastic: &algos.StochasticOscillator{
-				Overbought: 85,
-				Oversold:   15,
-				Period:     7,
-			},
-			CandleInterval:            "30m",
-			DesiredProfit:             2.5,
-			HighestPriceFallOffMargin: 1.5,
-			FeeRate:                   0.001,
-			MarketState:               models.Chaotic,
-		}
-	case models.RangeBound:
-		return &strategies.CompoundStrategy{
-			MACD: &algos.MACDStrategy{
-				FastPeriod:   9,
-				SlowPeriod:   21,
-				SignalPeriod: 7,
-			},
-			Stochastic: &algos.StochasticOscillator{
-				Overbought: 70,
-				Oversold:   30,
-				Period:     14,
-			},
-			BollingerBands: &algos.BollingerBands{
-				Period: 20,
-				Width:  2.0,
-			},
-			RSI: &algos.RSIStrategy{
-				Overbought: 70,
-				Oversold:   30,
-				Period:     14,
-			},
-			CandleInterval:            "1h",
-			DesiredProfit:             2.0,
-			HighestPriceFallOffMargin: 1.0,
-			FeeRate:                   0.001,
-			MarketState:               models.RangeBound,
-		}
-	default:
-		return &strategies.CompoundStrategy{
-			RSI: &algos.RSIStrategy{
-				Overbought: 70,
-				Oversold:   35,
-				Period:     14,
-			},
-			MACD: &algos.MACDStrategy{
-				FastPeriod:   12,
-				SlowPeriod:   26,
-				SignalPeriod: 9,
-			},
-			BollingerBands: &algos.BollingerBands{
-				Period: 20,
-				Width:  2.0,
-			},
-			Stochastic: &algos.StochasticOscillator{
-				Overbought: 80,
-				Oversold:   20,
-				Period:     14,
-			},
-			CandleInterval:            "1h",
-			DesiredProfit:             1.0,
-			HighestPriceFallOffMargin: 1.0,
-			FeeRate:                   0.001,
-			MarketState:               models.Default,
-		}
-	}
 }
 
 // calculateATR calculates the Average True Range (ATR)
@@ -294,6 +204,94 @@ func (ma *MarketAnalyzer) IsUptrend(candles []models.CandleStick) bool {
 
 	logger.Debugf("Uptrend detected: ShortEMA=%.2f, LongEMA=%.2f, ADX=%.2f", shortEMA[len(shortEMA)-1], longEMA[len(longEMA)-1], adx)
 	return true
+}
+
+// calculateIchimokuCloud calculates a simplified Ichimoku signal
+func (ma *MarketAnalyzer) calculateIchimokuCloud(candles []models.CandleStick) models.IchimokuCloud {
+	if len(candles) < ma.IchimokuSpanBPeriod {
+		return models.Neutral
+	}
+
+	tenkan := ma.calculateMidpoint(candles, ma.IchimokuConversionPeriod)
+	kijun := ma.calculateMidpoint(candles, ma.IchimokuBasePeriod)
+	spanB := ma.calculateMidpoint(candles, ma.IchimokuSpanBPeriod)
+
+	currentPrice := candles[len(candles)-1].Close
+
+	if tenkan > kijun && currentPrice > spanB {
+		return models.Bullish
+	} else if tenkan < kijun && currentPrice < spanB {
+		return models.Bearish
+	}
+	return models.Neutral
+}
+
+// calculateMidpoint finds midpoint of highs and lows over a period
+func (ma *MarketAnalyzer) calculateMidpoint(candles []models.CandleStick, period int) float64 {
+	if len(candles) < period {
+		return candles[len(candles)-1].Close
+	}
+	segment := candles[len(candles)-period:]
+	high := segment[0].High
+	low := segment[0].Low
+	for _, c := range segment {
+		if c.High > high {
+			high = c.High
+		}
+		if c.Low < low {
+			low = c.Low
+		}
+	}
+	return (high + low) / 2.0
+}
+
+// analyzeVolume checks if volume is increasing, stable, or decreasing relative to a threshold
+func (ma *MarketAnalyzer) analyzeVolume(candles []models.CandleStick) models.VolumeAnalysis {
+	if len(candles) < 2 {
+		return models.NeutralVolume
+	}
+	recentVolume := candles[len(candles)-1].Volume
+	previousVolume := candles[len(candles)-2].Volume
+
+	if recentVolume > ma.VolumeThreshold && recentVolume > previousVolume {
+		return models.Rising
+	} else if recentVolume < previousVolume {
+		return models.Falling
+	}
+	return models.Stable
+}
+
+// detectFractalCharacteristics uses a Donchian channel concept to label market as range, breakout, or mixed
+func (ma *MarketAnalyzer) detectFractalCharacteristics(candles []models.CandleStick) models.DonchianChannel {
+	if len(candles) < ma.FractalLookback {
+		return models.NeutralChannel
+	}
+
+	upper, lower := ma.donchianChannel(candles, ma.FractalLookback)
+	currentPrice := candles[len(candles)-1].Close
+	mid := (upper + lower) / 2.0
+
+	if math.Abs(currentPrice-mid)/mid < 0.01 {
+		return models.RangeChannel
+	} else if currentPrice > upper*0.99 || currentPrice < lower*1.01 {
+		return models.BreakoutChannel
+	}
+	return models.MixedChannel
+}
+
+func (ma *MarketAnalyzer) donchianChannel(candles []models.CandleStick, period int) (upper, lower float64) {
+	segment := candles[len(candles)-period:]
+	high := segment[0].High
+	low := segment[0].Low
+	for _, c := range segment {
+		if c.High > high {
+			high = c.High
+		}
+		if c.Low < low {
+			low = c.Low
+		}
+	}
+	return high, low
 }
 
 // calculateEMA calculates the Exponential Moving Average (EMA)

@@ -12,7 +12,7 @@ import (
 	"sync"
 )
 
-const dbVersion = 6 // Increment this whenever a new schema change is added
+const dbVersion = 7 // Increment this whenever a new schema change is added
 
 type Database interface {
 	InitDB() (*sql.DB, error)
@@ -184,6 +184,13 @@ CREATE TABLE pair_ath (
 				logger.Infof("Error creating completed_trades table: %v", err)
 				return err
 			}
+		case 7:
+			query := `
+			ALTER TABLE active_trades ADD COLUMN order_id INTEGER;
+			`
+			if _, err := db.Exec(query); err != nil {
+				return fmt.Errorf("failed to apply migration for version 1: %v", err)
+			}
 		// Add more cases here for future versions
 		default:
 			return fmt.Errorf("unsupported target version: %d", currentVersion)
@@ -208,11 +215,11 @@ func (s *SQLite) LogTrade(symbol, side string, amount, price float64) error {
 }
 
 // LogActiveTrade logs an active trade to the SQLite database
-func (s *SQLite) LogActiveTrade(symbol string, buyPrice, quantity float64) error {
+func (s *SQLite) LogActiveTrade(symbol string, buyPrice, quantity float64, orderID int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `INSERT INTO active_trades (symbol, buy_price, quantity) VALUES (?, ?, ?)`
-	result, err := s.DB.Exec(query, symbol, buyPrice, quantity)
+	query := `INSERT INTO active_trades (symbol, buy_price, quantity, order_id) VALUES (?, ?, ?, ?)`
+	result, err := s.DB.Exec(query, symbol, buyPrice, quantity, orderID)
 	if err != nil {
 		logger.Infof("Error inserting active trade: %v", err)
 		return err
@@ -242,11 +249,11 @@ func (s *SQLite) LogCompletedTrade(symbol string, buyPrice, sellPrice, quantity,
 func (s *SQLite) GetActiveTrade(symbol string) (*models.ActiveTrade, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	query := `SELECT id, symbol, buy_price, quantity FROM active_trades WHERE symbol = ? LIMIT 1`
+	query := `SELECT id, order_id, symbol, buy_price, quantity FROM active_trades WHERE symbol = ? LIMIT 1`
 	row := s.DB.QueryRow(query, symbol)
 
 	var trade models.ActiveTrade
-	err := row.Scan(&trade.ID, &trade.Symbol, &trade.BuyPrice, &trade.Quantity)
+	err := row.Scan(&trade.ID, &trade.OrderID, &trade.Symbol, &trade.BuyPrice, &trade.Quantity)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("no active trade found for symbol: %s", symbol)
@@ -261,7 +268,7 @@ func (s *SQLite) GetActiveTrade(symbol string) (*models.ActiveTrade, error) {
 func (s *SQLite) GetActiveTrades(symbol string) ([]*models.ActiveTrade, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	query := `SELECT id, symbol, buy_price, quantity FROM active_trades WHERE symbol = ?`
+	query := `SELECT id,order_id, symbol, buy_price, quantity FROM active_trades WHERE symbol = ?`
 	rows, err := s.DB.Query(query, symbol)
 	if err != nil {
 		return nil, err
@@ -271,7 +278,7 @@ func (s *SQLite) GetActiveTrades(symbol string) ([]*models.ActiveTrade, error) {
 	var trades []*models.ActiveTrade
 	for rows.Next() {
 		var trade models.ActiveTrade
-		err := rows.Scan(&trade.ID, &trade.Symbol, &trade.BuyPrice, &trade.Quantity)
+		err := rows.Scan(&trade.ID, &trade.OrderID, &trade.Symbol, &trade.BuyPrice, &trade.Quantity)
 		if err != nil {
 			return nil, err
 		}
@@ -284,7 +291,7 @@ func (s *SQLite) GetActiveTrades(symbol string) ([]*models.ActiveTrade, error) {
 func (s *SQLite) GetAllActiveTrades() ([]*models.ActiveTrade, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	query := `SELECT id, symbol, buy_price, quantity FROM active_trades WHERE 1`
+	query := `SELECT id, order_id, symbol, buy_price, quantity FROM active_trades WHERE 1`
 	rows, err := s.DB.Query(query)
 	if err != nil {
 		return nil, err
@@ -294,7 +301,7 @@ func (s *SQLite) GetAllActiveTrades() ([]*models.ActiveTrade, error) {
 	var trades []*models.ActiveTrade
 	for rows.Next() {
 		var trade models.ActiveTrade
-		err := rows.Scan(&trade.ID, &trade.Symbol, &trade.BuyPrice, &trade.Quantity)
+		err := rows.Scan(&trade.ID, &trade.OrderID, &trade.Symbol, &trade.BuyPrice, &trade.Quantity)
 		if err != nil {
 			return nil, err
 		}

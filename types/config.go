@@ -34,13 +34,18 @@ func DefaultMultiTradingConfig() ConfigMultiTrading {
 		ExcludedMarkets:      []models.TradingPair{},
 		ExcludedQuoteMarkets: []string{"USDC", "USDP", "FDUSD"},
 		IncludedBaseMarkets:  []string{"USDT"},
-		TradingLoopInterval:  30 * time.Second,
+		TradingLoopInterval:  2 * time.Minute,
 		AnalysisLoopInterval: 30 * time.Minute,
 		AnalyzerConfig: &analysis.MarketAnalyzer{
-			ATRPeriod:               14,
-			ADXPeriod:               14,
-			HighVolatilityThreshold: 0.03,
-			StrongTrendThreshold:    25,
+			ATRPeriod:                14,
+			ADXPeriod:                14,
+			HighVolatilityThreshold:  0.03,
+			StrongTrendThreshold:     25,
+			IchimokuConversionPeriod: 9,
+			IchimokuBasePeriod:       26,
+			IchimokuSpanBPeriod:      52,
+			VolumeThreshold:          100000.0,
+			FractalLookback:          20,
 		},
 	}
 }
