@@ -45,13 +45,13 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 	}
 
 	// Calculate indicators
-	rsiVal, _, err := cs.RSI.Calculate(candles, pair)
+	rsiVal, rsiSignal, err := cs.RSI.Calculate(candles, pair)
 	if err != nil {
 		logger.Errorf("Error calculating RSI: %v", err)
 		return 0, err
 	}
 
-	_, _, _, macdIndicatorSignal, err := cs.MACD.Calculate(candles)
+	_, macdSignalLine, macdVal, macdIndicatorSignal, err := cs.MACD.Calculate(candles)
 	if err != nil {
 		logger.Errorf("Error calculating MACD: %v", err)
 		return 0, err
@@ -63,20 +63,17 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		return 0, err
 	}
 
-	lowerBand, _, upperBand, err := cs.BollingerBands.Calculate(candles)
+	lowerBand, middleBand, upperBand, err := cs.BollingerBands.Calculate(candles)
 	if err != nil {
 		logger.Errorf("Error calculating Bollinger Bands: %v", err)
 		return 0, err
 	}
 
-	// Calculate Ichimoku
 	ichimokuRes, err := cs.Ichimoku.Calculate(candles)
 	if err != nil {
 		logger.Errorf("Error calculating Ichimoku: %v", err)
 		return 0, err
 	}
-
-	logger.Infof("Ichimoku Result: %+v", ichimokuRes)
 
 	// Indicator scoring
 	buyScore := 0
@@ -197,40 +194,116 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		return 0, nil // Hold
 	}
 
-	// Risk/Reward consideration using Bollinger as approximate S/L and T/P
-	riskRewardThreshold := cs.RiskRewardThreshold
-	if buyScore > sellScore && buyScore >= 3 {
+	if buyScore >= 3 {
 		target := upperBand
 		stop := lowerBand
 		risk := (currentPrice - stop) / currentPrice
 		reward := (target - currentPrice) / currentPrice
-		logger.Debugf("BUY Risk: %.2f%%, Reward: %.2f%% Ration: %.4f", risk*100, reward*100, reward/risk)
-		if reward > 0 && risk > 0 {
-			rr := reward / risk
-			if rr > riskRewardThreshold {
-				logger.Infof("[BUY] %s: BuyScore=%d, RR=%.2f, Ichimoku Confirmed Bullish", pair, buyScore, rr)
+		rr := reward / risk
+		logger.Infof("Pair %s | RR: %.2f", pair, rr)
+		if rr > cs.RiskRewardThreshold {
+			logger.Infof("Buy signal detected for %s", pair)
+			return 1, nil
+		}
+	}
+
+	// No active trade: decide entry using marketState-based logic
+	switch marketState {
+	case models.Trending:
+		// Trending: Confirm strong trend (Ichimoku bullish, MACD bullish, RSI not overbought)
+		// and ensure a good risk/reward.
+		if ichimokuRes.Bullish && macdIndicatorSignal == 1 && rsiVal < float64(cs.RSI.Overbought) && stochasticK < float64(cs.Stochastic.Overbought) {
+			// Risk/Reward check (upperBand as target, lowerBand as stop)
+			target := upperBand
+			stop := lowerBand
+			risk := (currentPrice - stop) / currentPrice
+			reward := (target - currentPrice) / currentPrice
+			if risk > 0 && reward > 0 && (reward/risk) > cs.RiskRewardThreshold {
+				logger.Infof("[Trending] BUY %s: Ichimoku Bullish, MACD Bullish, Good RR", pair)
 				return 1, nil
 			}
 		}
-	}
 
-	if sellScore > buyScore && sellScore >= 3 && isActive {
-		target := lowerBand
-		stop := upperBand
-		risk := (stop - currentPrice) / currentPrice
-		reward := (currentPrice - target) / currentPrice
-		logger.Debugf("SELL Risk: %.2f%%, Reward: %.2f%% Ration: %.4f", risk*100, reward*100, reward/risk)
-		if reward > 0 && risk > 0 {
-			rr := reward / risk
-			if rr > riskRewardThreshold {
-				logger.Infof("[SELL] %s: SellScore=%d, RR=%.2f, Ichimoku Confirmed Bearish", pair, sellScore, rr)
+		// If conditions for a sell appear (bearish Ichimoku, MACD negative, RSI high), consider a short (if allowed) or wait.
+		// In a trending market, often you might only want to follow the trend direction. So we might skip shorting here.
+		logger.Debugf("[Trending] HOLD %s: No strong buy signal met RR criteria.", pair)
+		return 0, nil
+
+	case models.Chaotic:
+		// Chaotic: Focus on quick mean-reversion trades. Use Bollinger and Stochastic mainly.
+		// Example: If price > upperBand and Stoch > Overbought => quick SELL
+		if currentPrice > upperBand && int(stochasticK) > cs.Stochastic.Overbought && rsiVal > float64(cs.RSI.Overbought) {
+			logger.Infof("[Chaotic] SELL %s: Mean Reversion from Overbought Conditions.", pair)
+			return -1, nil
+		}
+
+		// If price < lowerBand and Stoch < Oversold => quick BUY
+		if currentPrice < lowerBand && int(stochasticK) < cs.Stochastic.Oversold && rsiVal < float64(cs.RSI.Oversold) {
+			logger.Infof("[Chaotic] BUY %s: Mean Reversion from Oversold Conditions.", pair)
+			return 1, nil
+		}
+
+		logger.Debugf("[Chaotic] HOLD %s: No mean-reversion setup found.", pair)
+		return 0, nil
+
+	case models.RangeBound:
+		// Range-bound: Buy near lower band if oscillators confirm oversold. Sell near upper band if overbought.
+		if currentPrice <= lowerBand && macdVal > macdSignalLine && int(stochasticK) < cs.Stochastic.Oversold && int(rsiVal) < cs.RSI.Oversold {
+			// Risk/Reward might be looser in range: smaller threshold
+			target := middleBand                   // maybe aim for middleBand in range
+			stop := lowerBand - (lowerBand * 0.01) // small buffer below lower band
+			risk := (currentPrice - stop) / currentPrice
+			reward := (target - currentPrice) / currentPrice
+			if risk > 0 && reward > 0 && (reward/risk) > (cs.RiskRewardThreshold*0.5) {
+				logger.Infof("[RangeBound] BUY %s: Oversold near lower band, decent RR", pair)
+				return 1, nil
+			}
+		}
+
+		if currentPrice >= upperBand && macdVal < macdSignalLine && int(stochasticK) > cs.Stochastic.Overbought && int(rsiVal) > cs.RSI.Overbought {
+			// Again, a quick mean reversion sell
+			target := middleBand
+			stop := upperBand + (upperBand * 0.01)
+			risk := (stop - currentPrice) / currentPrice
+			reward := (currentPrice - target) / currentPrice
+			if reward > 0 && risk > 0 && (reward/risk) > (cs.RiskRewardThreshold*0.5) {
+				logger.Infof("[RangeBound] SELL %s: Overbought near upper band, decent RR", pair)
 				return -1, nil
 			}
 		}
-	}
 
-	logger.Debugf("HOLD %s: No strong buy/sell signal. BuyScore=%d, SellScore=%d", pair, buyScore, sellScore)
-	return 0, nil
+		logger.Debugf("[RangeBound] HOLD %s: No clear range-bound setup met RR criteria.", pair)
+		return 0, nil
+
+	default:
+		// Default: More balanced approach
+		// If MACD is bullish, RSI and Stoch not overbought, Ichimoku neutral to bullish => BUY
+		if macdIndicatorSignal == 1 && rsiSignal > 0 && int(stochasticK) < cs.Stochastic.Overbought && (ichimokuRes.Bullish || (!ichimokuRes.Bullish && !ichimokuRes.Bearish)) {
+			target := upperBand
+			stop := lowerBand
+			risk := (currentPrice - stop) / currentPrice
+			reward := (target - currentPrice) / currentPrice
+			if reward > 0 && risk > 0 && (reward/risk) > cs.RiskRewardThreshold {
+				logger.Infof("[Default] BUY %s: Balanced signals positive, good RR", pair)
+				return 1, nil
+			}
+		}
+
+		// If MACD bearish, RSI and Stoch overbought, Ichimoku bearish or neutral => SELL (if active)
+		if macdIndicatorSignal == -1 && rsiSignal < 0 && int(stochasticK) > cs.Stochastic.Oversold && (ichimokuRes.Bearish || (!ichimokuRes.Bullish && !ichimokuRes.Bearish)) && isActive {
+			target := lowerBand
+			stop := upperBand
+			risk := (stop - currentPrice) / currentPrice
+			reward := (currentPrice - target) / currentPrice
+			if reward > 0 && risk > 0 && (reward/risk) > cs.RiskRewardThreshold {
+				logger.Infof("[Default] SELL %s: Balanced signals negative, good RR", pair)
+				return -1, nil
+			}
+		}
+
+		logger.Debugf("[Default] HOLD %s: No strong signal met RR criteria.", pair)
+		return 0, nil
+	}
 }
 
 func (cs *CompoundStrategy) GetRSI(candles []models.CandleStick, pair string) (float64, int, error) {

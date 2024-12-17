@@ -46,7 +46,7 @@ var (
 	}
 
 	ChaoticMarketState = MarketStateStrategy{
-		Enabled: false,
+		Enabled: true,
 		Strategy: &strategies.CompoundStrategy{
 			RiskRewardThreshold: 1.8,
 			RSI: &algos.RSIStrategy{
