@@ -12,7 +12,7 @@ import (
 	"sync"
 )
 
-const dbVersion = 7 // Increment this whenever a new schema change is added
+const dbVersion = 8 // Increment this whenever a new schema change is added
 
 type Database interface {
 	InitDB() (*sql.DB, error)
@@ -167,11 +167,11 @@ func UpdateSchema(db *sql.DB, targetVersion int) error {
 			}
 		case 5:
 			query := `DROP TABLE IF EXISTS pair_ath;
-CREATE TABLE pair_ath (
-    symbol TEXT PRIMARY KEY,
-    ath_price REAL NOT NULL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-);`
+				CREATE TABLE pair_ath (
+					symbol TEXT PRIMARY KEY,
+					ath_price REAL NOT NULL,
+					timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+				);`
 
 			_, err = db.Exec(query)
 			if err != nil {
@@ -190,6 +190,17 @@ CREATE TABLE pair_ath (
 			`
 			if _, err := db.Exec(query); err != nil {
 				return fmt.Errorf("failed to apply migration for version 1: %v", err)
+			}
+		case 8:
+			query := `CREATE TABLE IF NOT EXISTS pair_atl (
+    				  id INTEGER PRIMARY KEY AUTOINCREMENT,
+    				  symbol TEXT NOT NULL,
+    				  atl_price REAL NOT NULL,
+                      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP);`
+			_, err := db.Exec(query)
+			if err != nil {
+				logger.Infof("Error creating pair_atl table: %v", err)
+				return err
 			}
 		// Add more cases here for future versions
 		default:
@@ -346,18 +357,41 @@ func (s *SQLite) SetUpdateAth(symbol string, ath float64) error {
 	return nil
 }
 
-func (s *SQLite) UpdateAth(symbol string, ath float64) error {
+func (s *SQLite) RemoveAth(symbol string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `UPDATE pair_ath SET ath_price = ? WHERE symbol = ?`
-	_, err := s.DB.Exec(query, ath, symbol)
+	query := `DELETE FROM pair_ath WHERE symbol = ?`
+	_, err := s.DB.Exec(query, symbol)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *SQLite) RemoveAth(symbol string) error {
+func (s *SQLite) GetAtl(symbol string) (float64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	query := `SELECT ath_price FROM pair_atl WHERE symbol = ?`
+	var ath float64
+	err := s.DB.QueryRow(query, symbol).Scan(&ath)
+	if err != nil {
+		return 0, err
+	}
+	return ath, nil
+}
+
+func (s *SQLite) SetUpdateAtl(symbol string, ath float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	query := `INSERT INTO pair_atl (symbol, ath_price) VALUES (?, ?) ON CONFLICT(symbol) DO UPDATE SET ath_price = excluded.ath_price;`
+	_, err := s.DB.Exec(query, symbol, ath)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLite) RemoveAtl(symbol string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	query := `DELETE FROM pair_ath WHERE symbol = ?`

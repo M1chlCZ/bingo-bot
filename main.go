@@ -3,10 +3,10 @@ package main
 import (
 	"binance_bot/bot"
 	"binance_bot/client"
+	"binance_bot/config"
 	sqlite "binance_bot/db"
 	"binance_bot/logger"
 	"binance_bot/metrics"
-	"binance_bot/types"
 	"flag"
 	"github.com/joho/godotenv"
 	"log"
@@ -19,8 +19,9 @@ func main() {
 	// Set up logging
 	// Define a flag for log level
 	logLevel := flag.String("log", "info", "Log level: debug, info, warn, error")
+	colorEnabled := flag.Bool("color", true, "Enable colorized output")
 	flag.Parse()
-	logger.InitLogger(logLevel)
+	logger.InitLogger(logLevel, colorEnabled)
 
 	err := godotenv.Load()
 	if err != nil {
@@ -47,8 +48,8 @@ func main() {
 		log.Fatalf("Failed to create Binance client: %v", err)
 	}
 
-	config := types.DefaultMultiTradingConfig()
-	bt := bot.NewMultiPairTradingBot(cl, &config)
+	conf := config.DefaultMultiTradingConfig()
+	bt := bot.NewMultiPairTradingBot(cl, &conf)
 
 	go metrics.MonitorPerformance(cl)
 

@@ -24,7 +24,8 @@ type MarketAnalyzer struct {
 // AnalyzeMarket determines the market state based on various signals
 func (ma *MarketAnalyzer) AnalyzeMarket(candles []models.CandleStick) (marketState models.MarketState, atr float64, adx float64) {
 	if len(candles) < ma.ATRPeriod || len(candles) < ma.ADXPeriod {
-		logger.Debug("[WARN] Insufficient candles for analysis. Expected at least %d candles, got %d", ma.ATRPeriod, len(candles))
+		logger.Debugf("[WARN] Insufficient candles for analysis. Expected at least %d candles, got %d",
+			ma.ATRPeriod, len(candles))
 		return models.Default, 0, 0
 	}
 
@@ -34,31 +35,115 @@ func (ma *MarketAnalyzer) AnalyzeMarket(candles []models.CandleStick) (marketSta
 	isUptrend := ma.IsUptrend(candles)
 
 	// Additional Indicators
-	ichimokuSignals := ma.calculateIchimokuCloud(candles)
-	volumeSignal := ma.analyzeVolume(candles)
-	fractalSignal := ma.detectFractalCharacteristics(candles)
+	ichimokuSignal := ma.calculateIchimokuCloud(candles)      // "bullish", "bearish", or "neutral"
+	volumeSignal := ma.analyzeVolume(candles)                 // "rising", "falling", "stable"
+	fractalSignal := ma.detectFractalCharacteristics(candles) // "range", "breakout", "mixed"
 
-	logger.Debugf("Market Analysis | ATR: %.2f, ADX: %.2f, Uptrend: %v, Ichimoku: %v, Volume: %v, Fractal: %v",
-		atr, adx, isUptrend, ichimokuSignals, volumeSignal, fractalSignal)
+	logger.Debugf("[Market Analysis Raw Data] ATR=%.2f | ADX=%.2f | Uptrend=%v | Ichimoku=%v | Volume=%v | Fractal=%v",
+		atr, adx, isUptrend, ichimokuSignal, volumeSignal, fractalSignal)
 
-	// Enhanced logic combining multiple signals:
-	switch {
-	// Example: Chaotic if high volatility but conflicting trend signals
-	case atr > ma.HighVolatilityThreshold && !isUptrend && fractalSignal == models.MixedChannel:
-		return models.Chaotic, atr, adx
+	var trendingScore, chaoticScore, rangeScore float64
 
-	// Example: Strong uptrend confirmed by multiple factors
-	case atr < ma.HighVolatilityThreshold && isUptrend && adx > ma.StrongTrendThreshold && ichimokuSignals == models.Bullish && volumeSignal == models.Rising:
-		return models.Trending, atr, adx
+	// Trending conditions (as before)
+	if atr < ma.HighVolatilityThreshold {
+		trendingScore += 1.0
+	}
+	if isUptrend {
+		trendingScore += 1.0
+	}
+	if adx > ma.StrongTrendThreshold {
+		trendingScore += 1.0
+	}
+	if ichimokuSignal == models.Bullish {
+		trendingScore += 1.0
+	}
+	if volumeSignal == models.Rising {
+		trendingScore += 1.0
+	} else if volumeSignal == models.Stable {
+		trendingScore += 0.5
+	}
 
-	// Example: Low volatility and all signals suggest a flat/range market
-	case atr < ma.HighVolatilityThreshold && !isUptrend && adx < ma.StrongTrendThreshold && ichimokuSignals == models.Neutral && fractalSignal == models.RangeChannel:
-		return models.RangeBound, atr, adx
+	// Chaotic conditions
+	if atr > ma.HighVolatilityThreshold {
+		chaoticScore += 1.0
+	}
+	if !isUptrend {
+		chaoticScore += 1.0
+	}
+	if fractalSignal == models.MixedChannel || fractalSignal == models.BreakoutChannel {
+		chaoticScore += 1.0
+	}
+	if ichimokuSignal != models.Bullish && ichimokuSignal != models.Bearish {
+		chaoticScore += 0.5
+	}
 
-	default:
-		// If no conditions match, fall back to default
+	// Range-Bound conditions
+	if atr < ma.HighVolatilityThreshold {
+		rangeScore += 1.0
+	}
+	if adx < ma.StrongTrendThreshold {
+		rangeScore += 1.0
+	}
+	if ichimokuSignal == models.Neutral {
+		rangeScore += 1.0
+	}
+	if fractalSignal == models.RangeChannel {
+		rangeScore += 1.0
+	}
+
+	logger.Debugf("[State Scores] Trending=%.2f | Chaotic=%.2f | RangeBound=%.2f", trendingScore, chaoticScore, rangeScore)
+
+	// For now, let's just handle them here without changing models:
+	// If you can't modify models easily, consider a local mapping.
+
+	scores := map[models.MarketState]float64{
+		models.Trending:   trendingScore,
+		models.Chaotic:    chaoticScore,
+		models.RangeBound: rangeScore,
+		// Default will get 0 unless all fail
+	}
+
+	// Determine top state
+	var chosenState models.MarketState
+	highestScore := math.Inf(-1)
+	for state, score := range scores {
+		if score > highestScore {
+			highestScore = score
+			chosenState = state
+		}
+	}
+
+	requiredScore := 1.5
+	strongTrendThreshold := 3.5  // If trending score > 3.5, call it strongly trending
+	transitionalThreshold := 0.5 // If we don't meet requiredScore but >0.5, call it transitional
+
+	// If highestScore doesn't meet the requiredScore
+	if highestScore < requiredScore {
+		// Check if we have at least some minor indication
+		if highestScore > transitionalThreshold {
+			logger.Infof("Scores not enough for main states but above transitional threshold. Using TRANSITIONAL.")
+			// You'll need to define TRANSITIONAL in your models:
+			// e.g., const Transitional MarketState = iota + 4
+			// For now assume models.Transitional exists:
+			return models.Transitional, atr, adx
+		}
+
+		logger.Debugf("No state met the required score (%.2f). Using DEFAULT. Scores: T=%.2f C=%.2f R=%.2f",
+			requiredScore, trendingScore, chaoticScore, rangeScore)
 		return models.Default, atr, adx
 	}
+
+	// If Trending is chosen and score is very high, classify as StronglyTrending
+	if chosenState == models.Trending && trendingScore >= strongTrendThreshold {
+		logger.Debugf("Chosen Market State: StronglyTrending with Score=%.2f | T=%.2f C=%.2f R=%.2f",
+			highestScore, trendingScore, chaoticScore, rangeScore)
+		return models.StronglyTrending, atr, adx
+	}
+
+	// Otherwise return the chosen state normally
+	logger.Debugf("Chosen Market State: %v with Score=%.2f | T=%.2f C=%.2f R=%.2f",
+		chosenState, highestScore, trendingScore, chaoticScore, rangeScore)
+	return chosenState, atr, adx
 }
 
 // CalculateVolatility measures the volatility of the market using the standard deviation of the candles' close prices
@@ -167,43 +252,190 @@ func (ma *MarketAnalyzer) calculateADX(candles []models.CandleStick) float64 {
 
 // IsUptrend determines if the market is in an uptrend based on EMA and ADX
 func (ma *MarketAnalyzer) IsUptrend(candles []models.CandleStick) bool {
-	shortPeriod := 12 // Short-term EMA period
-	longPeriod := 26  // Long-term EMA period
-	adxThreshold := ma.StrongTrendThreshold
+	totalCandles := len(candles)
 
-	// Ensure we have enough candles for the calculation
-	if len(candles) < longPeriod+ma.ADXPeriod {
-		logger.Warnf("Insufficient candles for uptrend detection. Expected at least %d, got %d", longPeriod+ma.ADXPeriod, len(candles))
+	if totalCandles >= 50 {
+		// Use the full method
+		return ma.checkUptrendWithLongSMAs(candles)
+	} else if totalCandles >= 20 {
+		// Fallback #1: Shorter SMAs since we have fewer candles
+		return ma.checkUptrendWithShortSMAs(candles)
+	} else if totalCandles >= 10 {
+		// Fallback #2: Simple price-based heuristic
+		return ma.checkSimpleUptrend(candles, 3)
+	} else {
+		// Not enough data at all
+		logger.Infof("Extremely insufficient candles for trend detection. Got %d\n", totalCandles)
+		return false
+	}
+}
+
+func (ma *MarketAnalyzer) checkUptrendWithLongSMAs(candles []models.CandleStick) bool {
+	shortPeriod := 20
+	longPeriod := 50
+
+	shortSMA := ma.calculateSMA(candles, shortPeriod)
+	longSMA := ma.calculateSMA(candles, longPeriod)
+	if shortSMA == nil || longSMA == nil {
+		logger.Infof("Not enough data to calculate long SMAs for trend detection.")
 		return false
 	}
 
-	// Calculate EMAs
-	shortEMA := ma.calculateEMA(candles, shortPeriod)
-	longEMA := ma.calculateEMA(candles, longPeriod)
+	recentShortSMA := shortSMA[len(shortSMA)-1]
+	recentLongSMA := longSMA[len(longSMA)-1]
 
-	// Ensure EMA lengths match for comparison
-	minLength := len(shortEMA)
-	if len(longEMA) < minLength {
-		minLength = len(longEMA)
-	}
-	shortEMA = shortEMA[len(shortEMA)-minLength:]
-	longEMA = longEMA[len(longEMA)-minLength:]
-
-	// Check if the short-term EMA is above the long-term EMA
-	if shortEMA[len(shortEMA)-1] <= longEMA[len(longEMA)-1] {
-		logger.Debugf("EMA indicates no uptrend: ShortEMA=%.2f, LongEMA=%.2f", shortEMA[len(shortEMA)-1], longEMA[len(longEMA)-1])
+	if recentShortSMA <= recentLongSMA {
 		return false
 	}
 
-	// Calculate ADX
-	adx := ma.calculateADX(candles)
-	if adx < adxThreshold {
-		logger.Debugf("ADX below threshold: ADX=%.2f, Threshold=%.2f", adx, adxThreshold)
+	// Check that short SMA above long SMA for last 3 bars
+	if !ma.isShortAboveLongForBars(shortSMA, longSMA, 3) {
 		return false
 	}
 
-	logger.Debugf("Uptrend detected: ShortEMA=%.2f, LongEMA=%.2f, ADX=%.2f", shortEMA[len(shortEMA)-1], longEMA[len(longEMA)-1], adx)
+	// SMA Slope Check
+	if !ma.isSMAIncreasing(shortSMA, 3) {
+		return false
+	}
+
+	// Price Action Check
+	if !ma.isPriceMakingHigherHighs(candles, 3) {
+		return false
+	}
+
 	return true
+}
+
+func (ma *MarketAnalyzer) checkUptrendWithShortSMAs(candles []models.CandleStick) bool {
+	// Use shorter periods, e.g., 7 and 14
+	shortPeriod := 7
+	longPeriod := 14
+
+	shortSMA := ma.calculateSMA(candles, shortPeriod)
+	longSMA := ma.calculateSMA(candles, longPeriod)
+	if shortSMA == nil || longSMA == nil {
+		logger.Infof("Not enough data for even short SMAs.")
+		return false
+	}
+
+	if shortSMA[len(shortSMA)-1] <= longSMA[len(longSMA)-1] {
+		return false
+	}
+
+	// Less strict checks since we have less data
+	if !ma.isShortAboveLongForBars(shortSMA, longSMA, 2) {
+		return false
+	}
+
+	// Maybe skip slope check or just do 2 bars
+	if !ma.isSMAIncreasing(shortSMA, 2) {
+		return false
+	}
+
+	// Price action check with fewer bars
+	if !ma.isPriceMakingHigherHighs(candles, 2) {
+		return false
+	}
+
+	return true
+}
+
+// Helper function to check if short SMA has been consistently above long SMA for given bars
+func (ma *MarketAnalyzer) isShortAboveLongForBars(shortSMA, longSMA []float64, bars int) bool {
+	// To compare apples to apples, align arrays by their ending indices
+	minLen := len(longSMA)
+	shortAligned := shortSMA[len(shortSMA)-minLen:]
+	longAligned := longSMA
+
+	if len(shortAligned) < bars {
+		return false
+	}
+	for i := len(shortAligned) - bars; i < len(shortAligned); i++ {
+		if shortAligned[i] <= longAligned[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Check if SMA is increasing over the last 'bars' periods
+// i.e., each subsequent SMA value should be higher than the previous one
+func (ma *MarketAnalyzer) isSMAIncreasing(sma []float64, bars int) bool {
+	if len(sma) < bars+1 {
+		return false
+	}
+
+	for i := len(sma) - bars; i < len(sma); i++ {
+		if i == 0 {
+			continue
+		}
+		if sma[i] <= sma[i-1] {
+			return false
+		}
+	}
+	return true
+}
+
+// Check if price is making higher highs for the last 'bars' candles
+// This can help confirm that not only the SMAs are aligned, but price action is also trending up.
+func (ma *MarketAnalyzer) isPriceMakingHigherHighs(candles []models.CandleStick, bars int) bool {
+	if len(candles) < bars+1 {
+		return false
+	}
+
+	// Check if each subsequent high is greater than the previous one
+	for i := len(candles) - bars; i < len(candles); i++ {
+		if i == len(candles)-bars {
+			continue // Skip the first in the series since we have nothing to compare it to
+		}
+		// Ensure the current candle's close is higher than the previous candle's close
+		if candles[i].Close <= candles[i-1].Close {
+			return false
+		}
+	}
+	return true
+}
+
+// Helper function to calculate SMA
+func (ma *MarketAnalyzer) calculateSMA(candles []models.CandleStick, period int) []float64 {
+	if len(candles) < period {
+		return nil
+	}
+
+	sma := make([]float64, len(candles)-period+1)
+	for i := 0; i <= len(candles)-period; i++ {
+		sum := 0.0
+		for j := 0; j < period; j++ {
+			sum += candles[i+j].Close
+		}
+		sma[i] = sum / float64(period)
+	}
+	return sma
+}
+
+func (ma *MarketAnalyzer) checkSimpleUptrend(candles []models.CandleStick, barsToCheck int) bool {
+	// Simple heuristic: last few closes each higher than the previous
+	// Or last close > average of last barsToCheck closes
+	if len(candles) < barsToCheck {
+		return false
+	}
+
+	sum := 0.0
+	for i := len(candles) - barsToCheck; i < len(candles); i++ {
+		sum += candles[i].Close
+	}
+	avg := sum / float64(barsToCheck)
+
+	if candles[len(candles)-1].Close > avg {
+		// Optional: Check if each close is higher than the previous
+		for i := len(candles) - barsToCheck + 1; i < len(candles); i++ {
+			if candles[i].Close <= candles[i-1].Close {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // calculateIchimokuCloud calculates a simplified Ichimoku signal

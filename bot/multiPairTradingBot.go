@@ -2,12 +2,12 @@ package bot
 
 import (
 	"binance_bot/analysis"
+	"binance_bot/config"
 	db2 "binance_bot/db"
 	"binance_bot/interfaces"
 	"binance_bot/logger"
 	"binance_bot/models"
 	"binance_bot/strategies"
-	"binance_bot/types"
 	"log"
 	"math"
 	"os"
@@ -32,11 +32,11 @@ type MultiPairTradingBot struct {
 	candlesMu      sync.RWMutex
 	wg             sync.WaitGroup
 	stopCh         chan struct{}
-	config         types.ConfigMultiTrading
+	config         config.ConfigMultiTrading
 }
 
 // NewMultiPairTradingBot creates a new instance of MultiPairTradingBot
-func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, config *types.ConfigMultiTrading) *MultiPairTradingBot {
+func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, config *config.ConfigMultiTrading) *MultiPairTradingBot {
 	if exchange == nil {
 		log.Fatal("Exchange must be provided")
 	}
@@ -117,7 +117,7 @@ func (bot *MultiPairTradingBot) StartTrading() {
 	}
 
 	//// Resync trades Exchange v DB
-	//bot.resyncTrades()
+	bot.resyncTrades()
 
 	// Perform initial pair adjustment
 	bot.performPairAdjustment()
@@ -128,12 +128,8 @@ func (bot *MultiPairTradingBot) StartTrading() {
 
 	// Launch market analysis updater as a separate goroutine
 	go bot.updateMarketAnalysis()
-	// Launch strategy updater as a separate goroutine
-	go bot.updateStrategies()
-	// Launch trading pair adjustment routine
-	go bot.adjustTradingPairs()
 
-	// Fetch all trading pairs from the exchange and add them (only for manually added pairs)
+	// Fetch all trading pairs from the exchange and add them (TODO only for manually added pairs)
 	//var wg sync.WaitGroup
 	//tradingPairs := bot.exchange.GetTradingPairs()
 	//for _, pair := range tradingPairs {
@@ -179,128 +175,6 @@ func (bot *MultiPairTradingBot) Stop() {
 	logger.Warn("Trading bot stopped.")
 }
 
-func (bot *MultiPairTradingBot) isUptrend(candles []models.CandleStick) bool {
-	if len(candles) < 50 { // Ensure enough candles for the longest SMA
-		logger.Infof("Insufficient candles for trend detection. Expected at least 50, got %d\n", len(candles))
-		return false
-	}
-
-	shortPeriod := 20
-	longPeriod := 50
-
-	shortSMA := bot.calculateSMA(candles, shortPeriod)
-	longSMA := bot.calculateSMA(candles, longPeriod)
-	if shortSMA == nil || longSMA == nil {
-		logger.Infof("Not enough data to calculate SMAs for trend detection.")
-		return false
-	}
-
-	// Check if the most recent short SMA is above the most recent long SMA
-	recentShortSMA := shortSMA[len(shortSMA)-1]
-	recentLongSMA := longSMA[len(longSMA)-1]
-
-	if recentShortSMA <= recentLongSMA {
-		return false
-	}
-
-	// Additional Robustness Checks:
-
-	// 1. Trend Duration Check: Ensure that the short SMA has been above the long SMA for at least a few candles
-	trendConfirmBars := 3 // Require short SMA to be above long SMA for the last 3 periods
-	if !bot.isShortAboveLongForBars(shortSMA, longSMA, trendConfirmBars) {
-		return false
-	}
-
-	// 2. SMA Slope Check: Confirm that the short SMA is rising
-	// For simplicity, we can check the slope over the last few candles
-	slopeCheckBars := 3
-	if !bot.isSMAIncreasing(shortSMA, slopeCheckBars) {
-		return false
-	}
-
-	// 3. Price Action Confirmation (Optional): Check if the last few closes are making higher highs
-	// This adds an extra layer of confirmation that price itself is trending upwards.
-	priceCheckBars := 3
-	if !bot.isPriceMakingHigherHighs(candles, priceCheckBars) {
-		return false
-	}
-
-	return true
-}
-
-// Helper function to check if short SMA has been consistently above long SMA for given bars
-func (bot *MultiPairTradingBot) isShortAboveLongForBars(shortSMA, longSMA []float64, bars int) bool {
-	// To compare apples to apples, align arrays by their ending indices
-	minLen := len(longSMA)
-	shortAligned := shortSMA[len(shortSMA)-minLen:]
-	longAligned := longSMA
-
-	if len(shortAligned) < bars {
-		return false
-	}
-	for i := len(shortAligned) - bars; i < len(shortAligned); i++ {
-		if shortAligned[i] <= longAligned[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// Check if SMA is increasing over the last 'bars' periods
-// i.e., each subsequent SMA value should be higher than the previous one
-func (bot *MultiPairTradingBot) isSMAIncreasing(sma []float64, bars int) bool {
-	if len(sma) < bars+1 {
-		return false
-	}
-
-	for i := len(sma) - bars; i < len(sma); i++ {
-		if i == 0 {
-			continue
-		}
-		if sma[i] <= sma[i-1] {
-			return false
-		}
-	}
-	return true
-}
-
-// Check if price is making higher highs for the last 'bars' candles
-// This can help confirm that not only the SMAs are aligned, but price action is also trending up.
-func (bot *MultiPairTradingBot) isPriceMakingHigherHighs(candles []models.CandleStick, bars int) bool {
-	if len(candles) < bars+1 {
-		return false
-	}
-
-	// Check if each subsequent high is greater than the previous one
-	for i := len(candles) - bars; i < len(candles); i++ {
-		if i == len(candles)-bars {
-			continue // Skip the first in the series since we have nothing to compare it to
-		}
-		// Ensure the current candle's close is higher than the previous candle's close
-		if candles[i].Close <= candles[i-1].Close {
-			return false
-		}
-	}
-	return true
-}
-
-// Helper function to calculate SMA
-func (bot *MultiPairTradingBot) calculateSMA(candles []models.CandleStick, period int) []float64 {
-	if len(candles) < period {
-		return nil
-	}
-
-	sma := make([]float64, len(candles)-period+1)
-	for i := 0; i <= len(candles)-period; i++ {
-		sum := 0.0
-		for j := 0; j < period; j++ {
-			sum += candles[i+j].Close
-		}
-		sma[i] = sum / float64(period)
-	}
-	return sma
-}
-
 func (bot *MultiPairTradingBot) calculateTradeAmount(signal int, quoteBalance, baseBalance float64, pair string) float64 {
 	if signal > 0 { // BUY Signal
 		amount := math.Min(quoteBalance*0.25, quoteBalance)
@@ -323,11 +197,11 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, quoteBal
 		maxTradePercentage = 0.5  // Maximum 50% of quote balance
 	)
 
-	// STEP 1: Start with a base position size according to baseline risk
+	//  Start with a base position size according to baseline risk
 	// Base position in currency = quoteBalance * baseRiskPercentage
 	basePosition := quoteBalance * baseRiskPercentage
 
-	// STEP 2: Adjust position size based on trend strength (ADX)
+	// Adjust position size based on trend strength (ADX)
 	// If ADX > adxReference, increase the position size proportionally.
 	// If ADX < adxReference, decrease it.
 	// Example: For every point above 25 ADX, increase position by 1% of the basePosition
@@ -341,7 +215,7 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, quoteBal
 	}
 	adjustedForADX := basePosition * adxMultiplier
 
-	// STEP 3: Adjust position size based on ATR (Volatility)
+	// Adjust position size based on ATR (Volatility)
 	// If ATR is high, reduce size. If ATR is low, increase it.
 	// For example, if ATR is twice the reference, reduce position by half.
 	// If ATR is half the reference, increase by up to 50%.
@@ -355,7 +229,7 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, quoteBal
 	}
 	adjustedForVolatility := adjustedForADX * atrMultiplier
 
-	// STEP 4: Convert the absolute currency amount to a fraction of the quote balance
+	// Convert the absolute currency amount to a fraction of the quote balance
 	tradePercentage := adjustedForVolatility / quoteBalance
 
 	// Ensure the tradePercentage is within our defined min/max bounds
@@ -365,26 +239,21 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, quoteBal
 		tradePercentage = maxTradePercentage
 	}
 
-	// Non-linear adjustment (optional):
-	// If you want a gentler scaling, you could apply a sigmoid function or other non-linear scaling:
-	// tradePercentage = someNonLinearScalingFunction(tradePercentage)
-
-	// STEP 5: Final amount to trade is tradePercentage * quoteBalance for BUY
+	// Final amount to trade is tradePercentage * quoteBalance for BUY
 	// For SELL, we still consider selling all, but you could also scale sells similarly.
 	finalAmount := tradePercentage * quoteBalance
 
 	if signal > 0 { // BUY Signal
 		// Ensure we do not exceed quote balance
 		amount := math.Min(finalAmount, quoteBalance)
-		logger.Infof(
+		logger.Debugf(
 			"BUY %.2f %s | ATR=%.2f, ADX=%.2f, BaseRisk=%.2f%%, ADXMultiplier=%.2f, ATRMultiplier=%.2f, TradePercentage=%.2f%%",
 			amount, pair, atr, adx, baseRiskPercentage*100, adxMultiplier, atrMultiplier, tradePercentage*100,
 		)
 		return amount
 	} else if signal < 0 { // SELL Signal
-		// For simplicity, sell entire base balance
-		// You could also apply similar logic to sell a fraction.
-		logger.Infof(
+		// Sell entire base balance
+		logger.Debugf(
 			"SELL %s: BaseBalance=%.2f, ATR=%.2f, ADX=%.2f, TradePercentage=%.2f%%",
 			pair, baseBalance, atr, adx, tradePercentage*100,
 		)
@@ -574,7 +443,7 @@ func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, tradeAmount,
 // handleSell processes a SELL order
 func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount, currentPrice, baseBalance float64) bool {
 	if tradeAmount*currentPrice < pair.MinNotional {
-		logger.Infof("SELL amount too small for %s. Adjusting to minimum notional.", pair.Symbol)
+		//logger.Infof("SELL amount too small for %s. Adjusting to minimum notional.", pair.Symbol)
 		tradeAmount = pair.MinNotional / currentPrice
 
 		if tradeAmount > baseBalance {
@@ -582,14 +451,6 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 			return false
 		}
 	}
-
-	bot.candlesMu.RLock()
-	candles, exists := bot.candles[pair.Symbol]
-	bot.candlesMu.RUnlock()
-
-	bot.pairsMu.RLock()
-	strategy, hasStrategy := bot.pairStrategies[pair.Symbol]
-	bot.pairsMu.RUnlock()
 
 	// Place Limit SELL Order
 	limitPrice := currentPrice * 0.999 // 0.1% lower than current price
@@ -611,6 +472,14 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 	}
 	profitLoss := (limitPrice - activeTrade.BuyPrice) * activeTrade.Quantity
 
+	bot.candlesMu.RLock()
+	candles, exists := bot.candles[pair.Symbol]
+	bot.candlesMu.RUnlock()
+
+	bot.pairsMu.RLock()
+	strategy, hasStrategy := bot.pairStrategies[pair.Symbol]
+	bot.pairsMu.RUnlock()
+
 	var rsiVal, macdVal, stochasticStr, stochasticSignal, lowerBound, middleBound, upperBound float64 = 0, 0, 0, 0, 0, 0, 0
 	if hasStrategy {
 		// Load the strategy and fetch indicators and save it to the database
@@ -621,7 +490,11 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 				stochasticStr, stochasticSignal, _ = rsiMacdStrategy.GetStochastic(candles)
 				lowerBound, middleBound, upperBound, _ = rsiMacdStrategy.GetBollingerBands(candles)
 			}
+		} else {
+			logger.Errorf("Error getting strategy for %s", pair.Symbol)
 		}
+	} else {
+		logger.Errorf("Error getting strategy for %s", pair.Symbol)
 	}
 
 	// Fetch indicator values
@@ -651,11 +524,19 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 		logger.Infof("Successfully removed atg for %s.", pair.Symbol)
 	}
 
+	// Remove atl trade
+	err = db2.SQLiteDB.RemoveAtl(pair.Symbol)
+	if err != nil {
+		logger.Errorf("Error removing ath for %s: %v", pair.Symbol, err)
+	} else {
+		logger.Infof("Successfully removed atg for %s.", pair.Symbol)
+	}
+
 	return true
 }
 
 func (bot *MultiPairTradingBot) updateMarketAnalysis() {
-	ticker := time.NewTicker(10 * time.Minute)
+	ticker := time.NewTicker(bot.config.AnalysisLoopInterval)
 	defer ticker.Stop()
 
 	for {
@@ -665,6 +546,8 @@ func (bot *MultiPairTradingBot) updateMarketAnalysis() {
 			return
 		case <-ticker.C:
 			logger.Infof("Starting market analysis update...")
+
+			bot.performPairAdjustment()
 
 			bot.pairsMu.RLock()
 			pairsToAnalyze := make([]*models.TradingPair, 0, len(bot.pairs))
@@ -680,20 +563,21 @@ func (bot *MultiPairTradingBot) updateMarketAnalysis() {
 
 				candles, err := bot.exchange.FetchCandles(pair.Symbol, strategy.GetCandleInterval(), 100)
 				if err != nil {
-					logger.Errorf("Error fetching candles for %s | Sleeping for 3 minutes", pair.Symbol)
 					continue
 				}
 
 				marketState, atr, adx := bot.marketAnalyzer.AnalyzeMarket(candles)
-
-				bot.pairsMu.Lock()
-				bot.analysisData[pair.Symbol] = &analysis.PairAnalysis{
+				analysisData := analysis.PairAnalysis{
 					Pair:        pair,
 					MarketState: marketState,
 					LastUpdated: time.Now().Unix(),
 					ATR:         atr,
 					ADX:         adx,
 				}
+				newStrategy := bot.SuggestStrategy(analysisData.MarketState)
+				bot.pairsMu.Lock()
+				bot.analysisData[pair.Symbol] = &analysisData
+				bot.pairStrategies[pair.Symbol] = newStrategy
 				bot.pairsMu.Unlock()
 
 				logger.Infof("Market analysis updated for %s: State=%v", pair.Symbol, marketState)
@@ -931,6 +815,10 @@ func (bot *MultiPairTradingBot) SuggestStrategy(marketState models.MarketState) 
 		return bot.config.Chaotic.Strategy
 	case models.RangeBound:
 		return bot.config.RangeBound.Strategy
+	case models.Transitional:
+		return bot.config.Transitional.Strategy
+	case models.StronglyTrending:
+		return bot.config.StronglyTrending.Strategy
 	default:
 		return bot.config.Default.Strategy
 	}

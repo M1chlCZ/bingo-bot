@@ -6,9 +6,9 @@ import (
 )
 
 type IchimokuStrategy struct {
-	ConversionPeriod int // e.g. 9
-	BasePeriod       int // e.g. 26
-	SpanBPeriod      int // e.g. 52
+	ConversionPeriod int
+	BasePeriod       int
+	SpanBPeriod      int
 }
 
 // IchimokuResult holds computed values for interpretation

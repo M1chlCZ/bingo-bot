@@ -7,6 +7,8 @@ const (
 	Trending
 	Chaotic
 	RangeBound
+	StronglyTrending
+	Transitional
 )
 
 // String converts MarketState to a string representation
@@ -18,6 +20,10 @@ func (m MarketState) String() string {
 		return "Chaotic"
 	case RangeBound:
 		return "Range-Bound"
+	case StronglyTrending:
+		return "Strongly-Trending"
+	case Transitional:
+		return "Transitional"
 	default:
 		return "Default"
 	}
