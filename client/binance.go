@@ -28,20 +28,109 @@ type BinanceClient struct {
 	requestTimes []time.Time
 	maxRequests  int
 	interval     time.Duration
+
+	// Fields for priority queue approach
+	highPriorityQueue chan BinanceRequest
+	normalQueue       chan BinanceRequest
+
+	// Worker fields
+	workerStarted bool
+	workerDone    chan struct{}
+	workerOnce    sync.Once
+}
+
+func (b *BinanceClient) CreateOrder(symbol, orderType, side string, amount string) (float64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+// BinanceRequest is our encapsulation of a single Binance operation
+type BinanceRequest struct {
+	// The function that actually does the work (place order, fetch data, etc.)
+	Do func() (any, error)
+	// Priority = true => goes to highPriorityQueue
+	Priority bool
+	// The channel to send back the result
+	resultChan chan resultWrapper
+}
+
+// resultWrapper carries the returned any plus error
+type resultWrapper struct {
+	data any
+	err  error
 }
 
 // NewBinanceClient creates a new Binance client instance
 func NewBinanceClient(apiKey, apiSecret string) (interfaces.ExchangeClient, error) {
 	client := binance.NewClient(apiKey, apiSecret)
 	logger.Info("Started trading using Binance")
-	return &BinanceClient{
-		client:      client,
-		pairs:       make(map[string]*models.TradingPair),
-		candleCache: make(map[string][]models.CandleStick),
-		maxRequests: 12,              // max requests
-		interval:    2 * time.Second, // time window
-	}, nil
+	b := &BinanceClient{
+		client:            client,
+		pairs:             make(map[string]*models.TradingPair),
+		candleCache:       make(map[string][]models.CandleStick),
+		maxRequests:       10,              // max requests
+		interval:          1 * time.Second, // time window
+		highPriorityQueue: make(chan BinanceRequest, 100),
+		normalQueue:       make(chan BinanceRequest, 500),
+		workerDone:        make(chan struct{}),
+	}
+	// Start the worker goroutine
+	b.startWorker()
+
+	return b, nil
 }
+
+func (b *BinanceClient) startWorker() {
+	b.workerOnce.Do(func() {
+		b.workerStarted = true
+		go b.requestWorker()
+	})
+}
+
+func (b *BinanceClient) requestWorker() {
+	defer close(b.workerDone)
+	for {
+		var req BinanceRequest
+		select {
+		case req = <-b.highPriorityQueue:
+		default:
+			req = <-b.normalQueue
+		}
+
+		// If the request is nil, channels might be closed -> exit worker
+		if req.Do == nil && req.resultChan == nil {
+			logger.Infof("[Worker] Received nil request; shutting down?")
+			return
+		}
+		b.rateLimitWait()
+		data, err := req.Do()
+		req.resultChan <- resultWrapper{data: data, err: err}
+		close(req.resultChan)
+	}
+}
+
+// enqueueRequest is used internally to place a request into one of the queues
+func (b *BinanceClient) enqueueRequest(doFn func() (interface{}, error), priority bool) (interface{}, error) {
+	// Prepare the request object
+	req := BinanceRequest{
+		Do:         doFn,
+		Priority:   priority,
+		resultChan: make(chan resultWrapper, 1),
+	}
+
+	// push into queue
+	if priority {
+		b.highPriorityQueue <- req
+	} else {
+		b.normalQueue <- req
+	}
+
+	// Wait for result
+	r := <-req.resultChan
+	return r.data, r.err
+}
+
+// ==================== Public Methods Implementation ==================== //
 
 func (b *BinanceClient) GetTradingPairs() map[string]*models.TradingPair {
 	return b.pairs
@@ -49,590 +138,411 @@ func (b *BinanceClient) GetTradingPairs() map[string]*models.TradingPair {
 
 // AddTradingPair adds a new trading pair to monitor
 func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
-	b.rateLimitWait()
-	// Fetch exchange info for the trading pair
-	info, err := b.client.NewExchangeInfoService().Do(context.Background())
-	if err != nil {
-		return fmt.Errorf("failed to get exchange info for %s: %v", pair.Symbol, err)
-	}
+	doFunc := func() (any, error) {
+		// Fetch exchange info for the trading pair
+		info, err := b.client.NewExchangeInfoService().Do(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("failed to get exchange info for %s: %w", pair.Symbol, err)
+		}
 
-	// Loop through symbols to find the matching one
-	var symbolFound bool
-	for _, symbol := range info.Symbols {
-		if symbol.Symbol == pair.Symbol {
-			symbolFound = true
-			pair.BaseAsset = symbol.BaseAsset
-			pair.QuoteAsset = symbol.QuoteAsset
-			pair.PricePrecision = symbol.QuotePrecision
-			pair.QtyPrecision = symbol.BaseAssetPrecision
+		// Loop through symbols to find the matching one
+		var symbolFound bool
+		for _, symbol := range info.Symbols {
+			if symbol.Symbol == pair.Symbol {
+				symbolFound = true
+				pair.BaseAsset = symbol.BaseAsset
+				pair.QuoteAsset = symbol.QuoteAsset
+				pair.PricePrecision = symbol.QuotePrecision
+				pair.QtyPrecision = symbol.BaseAssetPrecision
 
-			// Parse filters to extract trading rules
-			for _, filter := range symbol.Filters {
-				switch filter["filterType"] {
-				case "NOTIONAL":
-					// Extract `minNotional`
-					minNotionalStr, ok := filter["minNotional"].(string)
-					if !ok {
-						return fmt.Errorf("invalid minNotional format for %s", pair.Symbol)
-					}
-					pair.MinNotional, err = strconv.ParseFloat(minNotionalStr, 64)
-					if err != nil {
-						return fmt.Errorf("failed to parse minNotional for %s: %v", pair.Symbol, err)
+				// Parse filters to extract trading rules
+				for _, filter := range symbol.Filters {
+					switch filter["filterType"] {
+					case "NOTIONAL":
+						// Extract `minNotional`
+						minNotionalStr, ok := filter["minNotional"].(string)
+						if !ok {
+							return nil, fmt.Errorf("invalid minNotional format for %s", pair.Symbol)
+						}
+						pair.MinNotional, err = strconv.ParseFloat(minNotionalStr, 64)
+						if err != nil {
+							return nil, fmt.Errorf("failed to parse minNotional for %s: %w", pair.Symbol, err)
+						}
 					}
 				}
+
+				// Safely add the pair to the map
+				b.pairsMutex.Lock()
+				b.pairs[pair.Symbol] = &pair
+				b.pairsMutex.Unlock()
+
+				logger.Infof("Successfully added trading pair: %s", pair.Symbol)
+				break
 			}
-
-			// Safely add the pair to the map
-			b.pairsMutex.Lock()
-			b.pairs[pair.Symbol] = &pair
-			b.pairsMutex.Unlock()
-
-			logger.Infof("Successfully added trading pair: %s", pair.Symbol)
-			break
 		}
+
+		if !symbolFound {
+			return nil, fmt.Errorf("symbol %s not found in exchange info", pair.Symbol)
+		}
+
+		return nil, nil
 	}
 
-	if !symbolFound {
-		return fmt.Errorf("symbol %s not found in exchange info", pair.Symbol)
+	data, err := b.enqueueRequest(doFunc, false)
+	if err != nil {
+		return err
 	}
 
+	// Not used
+	_ = data
 	return nil
 }
 
 // GetCurrentPrice fetches the current price for a given symbol
 func (b *BinanceClient) GetCurrentPrice(symbol string) (float64, error) {
-	b.rateLimitWait()
 	// Fetch the price from the Binance API
-	prices, err := b.client.NewListPricesService().Symbol(symbol).Do(context.Background())
+	type Price struct {
+		Value float64 `json:"price"`
+	}
+	doFunc := func() (any, error) {
+		prices, err := b.client.NewListPricesService().Symbol(symbol).Do(context.Background())
+		if err != nil {
+			return Price{Value: 0}, fmt.Errorf("failed to fetch current price for %s: %w", symbol, err)
+		}
+
+		if len(prices) == 0 {
+			return Price{Value: 0}, fmt.Errorf("no price data returned for symbol %s", symbol)
+		}
+
+		// Parse the price as a float
+		price, err := strconv.ParseFloat(prices[0].Price, 64)
+		if err != nil {
+			return Price{Value: 0}, fmt.Errorf("failed to parse price for %s: %w", symbol, err)
+		}
+
+		logger.Infof("Current price for %s: %.8f", symbol, price)
+		return Price{Value: price}, nil
+	}
+
+	data, err := b.enqueueRequest(doFunc, false)
 	if err != nil {
-		return 0, fmt.Errorf("failed to fetch current price for %s: %v", symbol, err)
+		return 0, err
 	}
-
-	if len(prices) == 0 {
-		return 0, fmt.Errorf("no price data returned for symbol %s", symbol)
+	pv, ok := data.(Price)
+	if !ok {
+		return 0, fmt.Errorf("unexpected data type returned from queue")
 	}
-
-	// Parse the price as a float
-	price, err := strconv.ParseFloat(prices[0].Price, 64)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse price for %s: %v", symbol, err)
-	}
-
-	logger.Infof("Current price for %s: %.8f", symbol, price)
-	return price, nil
+	return pv.Value, nil
 }
 
 // FetchCandles implements the Exchange interface
 func (b *BinanceClient) FetchCandles(symbol, interval string, limit int) ([]models.CandleStick, error) {
-	var klines []*binance.Kline
-	err := retry(func() error {
-		b.rateLimitWait()
-		var err error
-		klines, err = b.client.NewKlinesService().
-			Symbol(symbol).
-			Interval(interval).
-			Limit(limit).
-			Do(context.Background())
-		return err
-	}, 3, time.Second)
+	doFunc := func() (any, error) {
+		var klines []*binance.Kline
+		err := retry(func() error {
+			var err error
+			klines, err = b.client.NewKlinesService().
+				Symbol(symbol).
+				Interval(interval).
+				Limit(limit).
+				Do(context.Background())
+			return err
+		}, 3, time.Second)
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch candles: %v", err)
-	}
-
-	candles := make([]models.CandleStick, len(klines))
-	for i, k := range klines {
-		open, _ := strconv.ParseFloat(k.Open, 64)
-		high, _ := strconv.ParseFloat(k.High, 64)
-		low, _ := strconv.ParseFloat(k.Low, 64)
-		cls, _ := strconv.ParseFloat(k.Close, 64)
-		volume, _ := strconv.ParseFloat(k.Volume, 64)
-		candles[i] = models.CandleStick{
-			Timestamp: time.Unix(k.OpenTime/1000, 0),
-			Open:      open,
-			High:      high,
-			Low:       low,
-			Close:     cls,
-			Volume:    volume,
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch candles: %w", err)
 		}
+
+		candles := make([]models.CandleStick, len(klines))
+		for i, k := range klines {
+			open, _ := strconv.ParseFloat(k.Open, 64)
+			high, _ := strconv.ParseFloat(k.High, 64)
+			low, _ := strconv.ParseFloat(k.Low, 64)
+			cls, _ := strconv.ParseFloat(k.Close, 64)
+			volume, _ := strconv.ParseFloat(k.Volume, 64)
+			candles[i] = models.CandleStick{
+				Timestamp: time.Unix(k.OpenTime/1000, 0),
+				Open:      open,
+				High:      high,
+				Low:       low,
+				Close:     cls,
+				Volume:    volume,
+			}
+		}
+
+		b.cacheMutex.Lock()
+		b.candleCache[symbol] = candles
+		b.cacheMutex.Unlock()
+
+		return candles, nil
 	}
 
-	b.cacheMutex.Lock()
-	b.candleCache[symbol] = candles
-	b.cacheMutex.Unlock()
-
+	data, err := b.enqueueRequest(doFunc, false)
+	if err != nil {
+		return nil, err
+	}
+	candles, ok := data.([]models.CandleStick)
+	if !ok {
+		return nil, fmt.Errorf("unexpected data type returned from queue")
+	}
 	return candles, nil
 }
 
 // GetBalance implements the Exchange interface
 func (b *BinanceClient) GetBalance(asset string) (float64, error) {
-	b.rateLimitWait()
-	account, err := b.client.NewGetAccountService().Do(context.Background())
-	if err != nil {
-		return 0, fmt.Errorf("failed to get account info: %v", err)
+	type Price struct {
+		Value float64 `json:"price"`
 	}
-
-	for _, balance := range account.Balances {
-		if balance.Asset == asset {
-			free, _ := strconv.ParseFloat(balance.Free, 64)
-			return free, nil
+	doFunc := func() (any, error) {
+		account, err := b.client.NewGetAccountService().Do(context.Background())
+		if err != nil {
+			return Price{Value: 0}, fmt.Errorf("failed to get account info: %w", err)
 		}
+
+		for _, balance := range account.Balances {
+			if balance.Asset == asset {
+				free, _ := strconv.ParseFloat(balance.Free, 64)
+				return Price{Value: free}, nil
+			}
+		}
+
+		return Price{Value: 0}, fmt.Errorf("asset %s not found", asset)
 	}
 
-	return 0, fmt.Errorf("asset %s not found", asset)
+	data, err := b.enqueueRequest(doFunc, true)
+	if err != nil {
+		return 0, err
+	}
+	pv, ok := data.(Price)
+	if !ok {
+		return 0, fmt.Errorf("unexpected data type returned from queue")
+	}
+	return pv.Value, nil
 }
 
-// CreateOrder implements the Exchange interface
-func (b *BinanceClient) CreateOrder(symbol, orderType, side string, amount string) (float64, error) {
-	b.pairsMutex.RLock()
-	_, exists := b.pairs[symbol]
-	b.pairsMutex.RUnlock()
-
-	if !exists {
-		return 0, fmt.Errorf("trading pair %s not configured", symbol)
-	}
-
-	// Place market order
-	b.rateLimitWait()
-	order, err := b.client.NewCreateOrderService().
-		Symbol(symbol).
-		Side(binance.SideType(side)).
-		Type(binance.OrderType(orderType)).
-		QuoteOrderQty(amount). // Specify the amount in quote asset
-		Do(context.Background())
-
-	if err != nil {
-		return 0, fmt.Errorf("failed to place %s order for %s: %v", side, symbol, err)
-	}
-
-	// Calculate the executed price (for market orders, it's filled)
-	var executedPrice float64
-	for _, fill := range order.Fills {
-		price, err := strconv.ParseFloat(fill.Price, 64)
-		if err != nil {
-			return 0, fmt.Errorf("failed to parse fill price: %v", err)
-		}
-		quantity, err := strconv.ParseFloat(fill.Quantity, 64)
-		if err != nil {
-			return 0, fmt.Errorf("failed to parse fill quantity: %v", err)
-		}
-		executedPrice += price * quantity
-	}
-
-	// Average executed price
-	if executedPrice > 0 {
-		cumQuoteQty, _ := strconv.ParseFloat(order.CummulativeQuoteQuantity, 64)
-		executedPrice /= cumQuoteQty
-	}
-
-	return executedPrice, nil
-}
-
-func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (float64, error) {
+func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64, float64, error) {
 	// Check if the trading pair is configured
-	b.pairsMutex.RLock()
-	_, exists := b.pairs[symbol]
-	b.pairsMutex.RUnlock()
-
-	if !exists {
-		return 0, fmt.Errorf("trading pair %s not configured", symbol)
+	type Result struct {
+		OrderID      int64
+		AveragePrice float64
 	}
-
-	// Place the market order
-	b.rateLimitWait()
-	order, err := b.client.NewCreateOrderService().
-		Symbol(symbol).
-		Side(binance.SideType(side)).
-		Type(binance.OrderTypeMarket). // Market order
-		Quantity(quantity).            // Base asset quantity
-		Do(context.Background())
-
-	if err != nil {
-		return 0, fmt.Errorf("failed to place MARKET %s order for %s: %v", side, symbol, err)
-	}
-
-	// Calculate the executed price based on fills
-	var totalQuoteQty float64
-	var totalBaseQty float64
-
-	for _, fill := range order.Fills {
-		price, err := strconv.ParseFloat(fill.Price, 64)
+	do := func() (any, error) {
+		info, err := b.client.NewExchangeInfoService().Symbol(symbol).Do(context.Background())
 		if err != nil {
-			return 0, fmt.Errorf("failed to parse fill price: %v", err)
+			return Result{}, fmt.Errorf("failed to fetch exchange info for %s: %v", symbol, err)
 		}
-		quantity, err := strconv.ParseFloat(fill.Quantity, 64)
+
+		var minQty, maxQty, stepSize float64
+		for _, filter := range info.Symbols[0].Filters {
+			if filter["filterType"] == "LOT_SIZE" {
+				minQty, err = strconv.ParseFloat(filter["minQty"].(string), 64)
+				if err != nil {
+					return Result{}, fmt.Errorf("failed to parse minQty for %s: %v", symbol, err)
+				}
+				maxQty, err = strconv.ParseFloat(filter["maxQty"].(string), 64)
+				if err != nil {
+					return Result{}, fmt.Errorf("failed to parse maxQty for %s: %v", symbol, err)
+				}
+				stepSize, err = strconv.ParseFloat(filter["stepSize"].(string), 64)
+				if err != nil {
+					return Result{}, fmt.Errorf("failed to parse stepSize for %s: %v", symbol, err)
+				}
+			}
+		}
+
+		// Adjust quantity to comply with LOT_SIZE
+		quantityFloat, err := strconv.ParseFloat(quantity, 64)
 		if err != nil {
-			return 0, fmt.Errorf("failed to parse fill quantity: %v", err)
+			return Result{}, fmt.Errorf("invalid quantity format: %v", err)
 		}
-		totalQuoteQty += price * quantity
-		totalBaseQty += quantity
-	}
 
-	// Calculate the average executed price
-	if totalBaseQty == 0 {
-		return 0, fmt.Errorf("no fills returned for the market order")
-	}
-	averagePrice := totalQuoteQty / totalBaseQty
-
-	return averagePrice, nil
-}
-
-func (b *BinanceClient) CreateLimitOrder(symbol, side, quantity, price string) (int64, error) {
-	// Fetch symbol filters to comply with LOT_SIZE and PRICE_FILTER
-	b.rateLimitWait()
-	info, err := b.client.NewExchangeInfoService().Symbol(symbol).Do(context.Background())
-	if err != nil {
-		return 0, fmt.Errorf("failed to fetch exchange info for %s: %v", symbol, err)
-	}
-
-	var minQty, maxQty, stepSize, tickSize float64
-	for _, filter := range info.Symbols[0].Filters {
-		if filter["filterType"] == "LOT_SIZE" {
-			minQty, err = strconv.ParseFloat(filter["minQty"].(string), 64)
-			if err != nil {
-				return 0, fmt.Errorf("failed to parse minQty for %s: %v", symbol, err)
-			}
-			maxQty, err = strconv.ParseFloat(filter["maxQty"].(string), 64)
-			if err != nil {
-				return 0, fmt.Errorf("failed to parse maxQty for %s: %v", symbol, err)
-			}
-			stepSize, err = strconv.ParseFloat(filter["stepSize"].(string), 64)
-			if err != nil {
-				return 0, fmt.Errorf("failed to parse stepSize for %s: %v", symbol, err)
-			}
-			fmt.Println(minQty, maxQty, stepSize)
+		if quantityFloat < minQty {
+			return Result{}, fmt.Errorf("quantity %.8f is below the minimum allowed %.8f for %s", quantityFloat, minQty, symbol)
 		}
-		if filter["filterType"] == "PRICE_FILTER" {
-			tickSize, err = strconv.ParseFloat(filter["tickSize"].(string), 64)
-			if err != nil {
-				return 0, fmt.Errorf("failed to parse tickSize for %s: %v", symbol, err)
-			}
+
+		if quantityFloat > maxQty {
+			quantityFloat = maxQty // Cap at maxQty
 		}
-	}
 
-	// Adjust quantity to comply with LOT_SIZE
-	quantityFloat, err := strconv.ParseFloat(quantity, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid quantity format: %v", err)
-	}
-
-	if quantityFloat < minQty {
-		return 0, fmt.Errorf("quantity %.8f is below the minimum allowed %.8f for %s", quantityFloat, minQty, symbol)
-	}
-
-	if quantityFloat > maxQty {
-		quantityFloat = maxQty // Cap at maxQty
-	}
-
-	// Ensure stepSize is valid
-	if stepSize <= 0 {
-		logger.Infof("Invalid stepSize for %s: %.8f", symbol, stepSize)
-		return 0, fmt.Errorf("invalid stepSize for %s: %.8f", symbol, stepSize)
-	}
-
-	// Align with StepSize
-	adjustedQty := math.Floor(quantityFloat/stepSize) * stepSize
-	if math.IsNaN(adjustedQty) || adjustedQty <= 0 {
-		logger.Infof("Adjusted Quantity for %s is invalid: Original=%s, Adjusted=NaN or <= 0", symbol, quantity)
-		return 0, fmt.Errorf("adjusted quantity is invalid for %s: Original=%s", symbol, quantity)
-	}
-
-	formattedQty := strconv.FormatFloat(adjustedQty, 'f', -1, 64)
-	logger.Infof("Adjusted Quantity for %s: Original=%s, Adjusted=%s", symbol, quantity, formattedQty)
-
-	// Adjust price using PRICE_FILTER (already implemented in previous steps)
-	priceFloat, err := strconv.ParseFloat(price, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid price format: %v", err)
-	}
-	pricePrecision := 0
-	quantityPrecision := 0
-
-	if side == "BUY" {
-		pricePrecision = info.Symbols[0].QuoteAssetPrecision
-		quantityPrecision = info.Symbols[0].BaseAssetPrecision
-	} else {
-		pricePrecision = info.Symbols[0].QuotePrecision
-		quantityPrecision = info.Symbols[0].BaseAssetPrecision
-	}
-
-	adjustedPrice := math.Floor(priceFloat/tickSize) * tickSize
-	formattedPrice := fmt.Sprintf("%.*f", pricePrecision, adjustedPrice)
-	formattedQty = strconv.FormatFloat(adjustedQty, 'f', quantityPrecision, 64)
-
-	logger.Debug("Price Precision: ", pricePrecision)
-	logger.Debug("Adjusted Price: ", adjustedPrice)
-	logger.Debug("Formatted Price: ", formattedPrice)
-	logger.Debug("Formatted Qty: ", formattedQty)
-	logger.Debug("Amount in USDT: ", adjustedPrice*adjustedQty)
-
-	// Place the limit order
-	b.rateLimitWait()
-	order, err := b.client.NewCreateOrderService().
-		Symbol(symbol).
-		Side(binance.SideType(side)).
-		Type(binance.OrderTypeLimit).
-		TimeInForce(binance.TimeInForceTypeGTC).
-		Quantity(formattedQty).
-		Price(formattedPrice).
-		Do(context.Background())
-
-	if err != nil {
-		return 0, fmt.Errorf("failed to place LIMIT %s order for %s: %v", side, symbol, err)
-	}
-
-	logger.Infof("Successfully placed LIMIT %s order for %s: OrderID=%d", side, symbol, order.OrderID)
-	return order.OrderID, nil
-}
-
-func (b *BinanceClient) CreateStopLossLimitOrder(symbol, side, quantity, price, stopLoss string) (int64, error) {
-	// Fetch symbol filters to comply with LOT_SIZE and PRICE_FILTER
-	b.rateLimitWait()
-	info, err := b.client.NewExchangeInfoService().Symbol(symbol).Do(context.Background())
-	if err != nil {
-		return 0, fmt.Errorf("failed to fetch exchange info for %s: %v", symbol, err)
-	}
-
-	var minQty, maxQty, stepSize, tickSize float64
-	for _, filter := range info.Symbols[0].Filters {
-		if filter["filterType"] == "LOT_SIZE" {
-			minQty, err = strconv.ParseFloat(filter["minQty"].(string), 64)
-			if err != nil {
-				return 0, fmt.Errorf("failed to parse minQty for %s: %v", symbol, err)
-			}
-			maxQty, err = strconv.ParseFloat(filter["maxQty"].(string), 64)
-			if err != nil {
-				return 0, fmt.Errorf("failed to parse maxQty for %s: %v", symbol, err)
-			}
-			stepSize, err = strconv.ParseFloat(filter["stepSize"].(string), 64)
-			if err != nil {
-				return 0, fmt.Errorf("failed to parse stepSize for %s: %v", symbol, err)
-			}
-			fmt.Println(minQty, maxQty, stepSize)
+		// Ensure stepSize is valid
+		if stepSize <= 0 {
+			logger.Infof("Invalid stepSize for %s: %.8f", symbol, stepSize)
+			return Result{}, fmt.Errorf("invalid stepSize for %s: %.8f", symbol, stepSize)
 		}
-		if filter["filterType"] == "PRICE_FILTER" {
-			tickSize, err = strconv.ParseFloat(filter["tickSize"].(string), 64)
-			if err != nil {
-				return 0, fmt.Errorf("failed to parse tickSize for %s: %v", symbol, err)
-			}
+
+		// Align with StepSize
+		adjustedQty := math.Floor(quantityFloat/stepSize) * stepSize
+		if math.IsNaN(adjustedQty) || adjustedQty <= 0 {
+			logger.Infof("Adjusted Quantity for %s is invalid: Original=%s, Adjusted=NaN or <= 0", symbol, quantity)
+			return Result{}, fmt.Errorf("adjusted quantity is invalid for %s: Original=%s", symbol, quantity)
 		}
-	}
 
-	// Adjust quantity to comply with LOT_SIZE
-	quantityFloat, err := strconv.ParseFloat(quantity, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid quantity format: %v", err)
-	}
+		formattedQty := strconv.FormatFloat(adjustedQty, 'f', -1, 64)
+		logger.Infof("Adjusted Quantity for %s: Original=%s, Adjusted=%s", symbol, quantity, formattedQty)
 
-	if quantityFloat < minQty {
-		return 0, fmt.Errorf("quantity %.8f is below the minimum allowed %.8f for %s", quantityFloat, minQty, symbol)
-	}
-	if quantityFloat > maxQty {
-		quantityFloat = maxQty // Cap at maxQty
-	}
+		quantityPrecision := 0
 
-	// Ensure stepSize is valid
-	if stepSize <= 0 {
-		logger.Infof("Invalid stepSize for %s: %.8f", symbol, stepSize)
-		return 0, fmt.Errorf("invalid stepSize for %s: %.8f", symbol, stepSize)
-	}
+		if side == "BUY" {
+			quantityPrecision = info.Symbols[0].BaseAssetPrecision
+		} else {
+			quantityPrecision = info.Symbols[0].BaseAssetPrecision
+		}
 
-	// Align with StepSize
-	adjustedQty := math.Floor(quantityFloat/stepSize) * stepSize
-	if math.IsNaN(adjustedQty) || adjustedQty <= 0 {
-		logger.Infof("Adjusted Quantity for %s is invalid: Original=%s, Adjusted=NaN or <= 0", symbol, quantity)
-		return 0, fmt.Errorf("adjusted quantity is invalid for %s: Original=%s", symbol, quantity)
-	}
+		formattedQty = strconv.FormatFloat(adjustedQty, 'f', quantityPrecision, 64)
 
-	formattedQty := strconv.FormatFloat(adjustedQty, 'f', -1, 64)
-	logger.Infof("Adjusted Quantity for %s: Original=%s, Adjusted=%s", symbol, quantity, formattedQty)
+		logger.Debug("Formatted Qty: ", formattedQty)
 
-	// Adjust price using PRICE_FILTER (already implemented in previous steps)
-	priceFloat, err := strconv.ParseFloat(price, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid price format: %v", err)
-	}
-	pricePrecision := info.Symbols[0].QuotePrecision
-	adjustedPrice := math.Floor(priceFloat/tickSize) * tickSize
-	formattedPrice := strconv.FormatFloat(adjustedPrice, 'f', pricePrecision, 64)
-
-	logger.Debug("Price Precision: ", pricePrecision)
-	logger.Debug("Adjusted Price: ", adjustedPrice)
-	logger.Debug("Formatted Price: ", formattedPrice)
-
-	// Adjust price using PRICE_FILTER (already implemented in previous steps)
-	priceStopLossFloat, err := strconv.ParseFloat(stopLoss, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid price format: %v", err)
-	}
-	adjustedStopLossPrice := math.Floor(priceStopLossFloat/tickSize) * tickSize
-	formattedStopLossPrice := strconv.FormatFloat(adjustedStopLossPrice, 'f', pricePrecision, 64)
-
-	logger.Debug("Stop Loss Price Precision: ", pricePrecision)
-	logger.Debug("Stop Loss Adjusted Price: ", adjustedStopLossPrice)
-	logger.Debug("Stop Loss Formatted Price: ", formattedStopLossPrice)
-
-	// Place the limit order
-	b.rateLimitWait()
-	order, err := b.client.NewCreateOrderService().
-		Symbol(symbol).
-		Side(binance.SideType(side)).
-		Type(binance.OrderTypeStopLossLimit).
-		TimeInForce(binance.TimeInForceTypeGTC).
-		Quantity(formattedQty).
-		Price(formattedPrice).
-		StopPrice(formattedStopLossPrice).
-		Do(context.Background())
-
-	if err != nil {
-		return 0, fmt.Errorf("failed to place LIMIT %s order for %s: %v", side, symbol, err)
-	}
-
-	logger.Infof("Successfully placed LIMIT %s order for %s: OrderID=%d", side, symbol, order.OrderID)
-	return order.OrderID, nil
-}
-
-// MonitorOrder TODO: USE THIS FUNCTION
-func (b *BinanceClient) MonitorOrder(symbol string, orderID int64) (bool, error) {
-	logger.Infof("Monitoring order %d for %s", orderID, symbol)
-
-	for {
-		// Fetch order status
-		b.rateLimitWait()
-		order, err := b.client.NewGetOrderService().
+		// Place the market order
+		order, err := b.client.NewCreateOrderService().
 			Symbol(symbol).
-			OrderID(orderID).
+			Side(binance.SideType(side)).
+			Type(binance.OrderTypeMarket). // Market order
+			Quantity(formattedQty).        // Base asset quantity
 			Do(context.Background())
+
 		if err != nil {
-			return false, fmt.Errorf("failed to fetch order status for %s: %v", symbol, err)
+			return Result{}, fmt.Errorf("failed to place MARKET %s order for %s: %w", side, symbol, err)
 		}
 
-		logger.Infof("Order %d status: %s (Filled Quantity: %s)", orderID, order.Status, order.ExecutedQuantity)
+		// Calculate the executed price based on fills
+		var totalQuoteQty float64
+		var totalBaseQty float64
 
-		// Check if the order is fully filled
-		if order.Status == binance.OrderStatusTypeFilled {
-			return true, nil
+		for _, fill := range order.Fills {
+			price, err := strconv.ParseFloat(fill.Price, 64)
+			if err != nil {
+				return Result{}, fmt.Errorf("failed to parse fill price: %w", err)
+			}
+			quantity, err := strconv.ParseFloat(fill.Quantity, 64)
+			if err != nil {
+				return Result{}, fmt.Errorf("failed to parse fill quantity: %v", err)
+			}
+			totalQuoteQty += price * quantity
+			totalBaseQty += quantity
 		}
 
-		// Break the loop if the order is canceled or rejected
-		if order.Status == binance.OrderStatusTypeCanceled || order.Status == binance.OrderStatusTypeRejected {
-			return false, nil
+		// Calculate the average executed price
+		if totalBaseQty == 0 {
+			return Result{}, fmt.Errorf("no fills returned for the market order")
 		}
+		averagePrice := totalQuoteQty / totalBaseQty
 
-		// Wait before the next status check
-		time.Sleep(5 * time.Second)
+		return Result{OrderID: order.OrderID, AveragePrice: averagePrice}, nil
 	}
-}
 
-func (b *BinanceClient) CancelOrder(symbol string, orderID int64) error {
-	logger.Infof("Canceling order %d for %s", orderID, symbol)
-
-	b.rateLimitWait()
-	_, err := b.client.NewCancelOrderService().
-		Symbol(symbol).
-		OrderID(orderID).
-		Do(context.Background())
-
+	data, err := b.enqueueRequest(do, true)
 	if err != nil {
-		return fmt.Errorf("failed to cancel order %d for %s: %v", orderID, symbol, err)
+		return 0, 0, err
 	}
-
-	logger.Infof("Successfully canceled order %d for %s", orderID, symbol)
-	return nil
-}
-
-func (b *BinanceClient) GetFeeRate() (float64, error) {
-	b.rateLimitWait()
-	accountInfo, err := b.client.NewGetAccountService().Do(context.Background())
-	if err != nil {
-		return 0, fmt.Errorf("failed to fetch account info: %v", err)
+	res, ok := data.(Result)
+	if !ok {
+		return 0, 0, fmt.Errorf("unexpected data type returned from queue")
 	}
-
-	// Default spot trading fee (if using BNB discounts, adjust this value)
-	feeRate := 0.001 // Default 0.1%
-	if accountInfo.MakerCommission > 0 {
-		feeRate = float64(accountInfo.MakerCommission) / 10000 // Convert commission to decimal
-	}
-	return feeRate, nil
+	return res.OrderID, res.AveragePrice, nil
 }
 
 // FetchMarkets retrieves all trading pairs matching the provided ticker (e.g., "USDT").
 func (b *BinanceClient) FetchMarkets(tickers []string, excludedMarkets []string, excludedTradingPairs []models.TradingPair) ([]models.TradingPair, error) {
-	log.Printf("[INFO] Fetching all markets matching ticker: %v", tickers)
+	logger.Infof("Fetching all markets matching ticker: %v", tickers)
 
-	// Fetch exchange information
-	b.rateLimitWait()
-	exchangeInfo, err := b.client.NewExchangeInfoService().Do(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch exchange info: %v", err)
-	}
-
-	// Filter symbols that end with the specified ticker
-	tradingPairs := make([]models.TradingPair, 0)
-
-	for _, symbol := range exchangeInfo.Symbols {
-		// Check if the symbol is excluded
-		if isExcludedMarket(symbol.Symbol, excludedMarkets) {
-			logger.Infof("Excluded quote market: %s", symbol.Symbol)
-			continue
+	doFunc := func() (any, error) {
+		// Fetch exchange information
+		exchangeInfo, err := b.client.NewExchangeInfoService().Do(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch exchange info: %v", err)
 		}
 
-		if isExcludedTradingPair(models.TradingPair{Symbol: symbol.Symbol}, excludedTradingPairs) {
-			logger.Infof("Excluded trading pair: %s", symbol.Symbol)
-			continue
-		}
+		// Filter symbols that end with the specified ticker
+		tradingPairs := make([]models.TradingPair, 0)
 
-		if symbol.Status != "TRADING" {
-			logger.Debugf("Trading is not allowed for %s", symbol.Symbol)
-			continue
-		}
-		if isIncludedMarket(symbol.Symbol, tickers) {
-			if !symbol.IsSpotTradingAllowed {
-				logger.Warnf("Spot trading is not allowed for %s", symbol.Symbol)
+		for _, symbol := range exchangeInfo.Symbols {
+			// Check if the symbol is excluded
+			if isExcludedMarket(symbol.Symbol, excludedMarkets) {
+				logger.Infof("Excluded quote market: %s", symbol.Symbol)
 				continue
 			}
-			var minNotional float64
-			for _, filter := range symbol.Filters {
-				switch filter["filterType"] {
-				case "NOTIONAL":
-					// Extract `minNotional`
-					minNotionalStr, ok := filter["minNotional"].(string)
-					if !ok {
-						logger.Errorf("Invalid minNotional format for %s", symbol.Symbol)
-						continue
-					}
-					minNotional, err = strconv.ParseFloat(minNotionalStr, 64)
-					if err != nil {
-						logger.Errorf("Failed to parse minNotional for %s: %v", symbol.Symbol, err)
-						continue
+
+			if isExcludedTradingPair(models.TradingPair{Symbol: symbol.Symbol}, excludedTradingPairs) {
+				logger.Infof("Excluded trading pair: %s", symbol.Symbol)
+				continue
+			}
+
+			if symbol.Status != "TRADING" {
+				logger.Debugf("Trading is not allowed for %s", symbol.Symbol)
+				continue
+			}
+			if isIncludedMarket(symbol.Symbol, tickers) {
+				if !symbol.IsSpotTradingAllowed {
+					logger.Warnf("Spot trading is not allowed for %s", symbol.Symbol)
+					continue
+				}
+				var minNotional float64
+				for _, filter := range symbol.Filters {
+					switch filter["filterType"] {
+					case "NOTIONAL":
+						// Extract `minNotional`
+						minNotionalStr, ok := filter["minNotional"].(string)
+						if !ok {
+							logger.Errorf("Invalid minNotional format for %s", symbol.Symbol)
+							continue
+						}
+						minNotional, err = strconv.ParseFloat(minNotionalStr, 64)
+						if err != nil {
+							logger.Errorf("Failed to parse minNotional for %s: %v", symbol.Symbol, err)
+							continue
+						}
 					}
 				}
+				tp := models.TradingPair{
+					Symbol:         symbol.Symbol,
+					BaseAsset:      symbol.BaseAsset,
+					QuoteAsset:     symbol.QuoteAsset,
+					PricePrecision: symbol.QuotePrecision,
+					QtyPrecision:   symbol.BaseAssetPrecision,
+					MinNotional:    minNotional,
+				}
+				logger.Infof("Found trading pair: %s", tp.Symbol)
+				logger.Debugf("Found trading pair: %s Base Assets %s Quote Asset %s MinNotional %.2f", tp.Symbol, tp.BaseAsset, tp.QuoteAsset, tp.MinNotional)
+				tradingPairs = append(tradingPairs, tp)
 			}
-			tp := models.TradingPair{
-				Symbol:         symbol.Symbol,
-				BaseAsset:      symbol.BaseAsset,
-				QuoteAsset:     symbol.QuoteAsset,
-				PricePrecision: symbol.QuotePrecision,
-				QtyPrecision:   symbol.BaseAssetPrecision,
-				MinNotional:    minNotional,
-			}
-			logger.Infof("Found trading pair: %s", tp.Symbol)
-			logger.Debugf("Found trading pair: %s Base Assets %s Quote Asset %s MinNotional %.2f", tp.Symbol, tp.BaseAsset, tp.QuoteAsset, tp.MinNotional)
-			tradingPairs = append(tradingPairs, tp)
 		}
-	}
-	log.Printf("[INFO] Found %d markets matching tickers: %s", len(tradingPairs), tickers)
+		log.Printf("[INFO] Found %d markets matching tickers: %s", len(tradingPairs), tickers)
 
-	return tradingPairs, nil
+		return tradingPairs, nil
+	}
+
+	data, err := b.enqueueRequest(doFunc, false)
+	if err != nil {
+		return nil, err
+	}
+	tps, ok := data.([]models.TradingPair)
+	if !ok {
+		return nil, fmt.Errorf("unexpected data type returned from queue")
+	}
+	return tps, nil
 }
 
 // FetchActiveTrades from the Binance client
 func (b *BinanceClient) FetchActiveTrades(symbol string) ([]*binance.TradeV3, error) {
-	trades, err := b.client.NewListTradesService().Symbol(symbol).Do(context.Background())
+
+	doFunc := func() (any, error) {
+
+		trades, err := b.client.NewListTradesService().Symbol(symbol).Do(context.Background())
+		if err != nil {
+			return nil, err
+		}
+
+		return trades, nil
+	}
+
+	data, err := b.enqueueRequest(doFunc, false)
 	if err != nil {
 		return nil, err
 	}
-
+	trades, ok := data.([]*binance.TradeV3)
+	if !ok {
+		return nil, fmt.Errorf("unexpected data type returned from queue")
+	}
 	return trades, nil
 }
 
@@ -674,22 +584,22 @@ func toFloat(value string) float64 {
 // Retry helper for API calls
 func retry(fn func() error, retries int, delay time.Duration) error {
 	for i := 0; i < retries; i++ {
-		if err := fn(); err == nil {
+		err := fn()
+		if err == nil {
 			return nil
-		} else {
-			logger.Error(err.Error())
 		}
+		logger.Error(err.Error())
 		time.Sleep(delay)
 	}
 	return fmt.Errorf("operation failed after %d retries", retries)
 }
 
+// rateLimitWait enforces request/s rate limiting
 func (b *BinanceClient) rateLimitWait() {
 	b.requestsMu.Lock()
 	defer b.requestsMu.Unlock()
 
 	now := time.Now()
-	// Remove timestamps older than b.interval
 	cutoff := now.Add(-b.interval)
 	filtered := b.requestTimes[:0]
 	for _, t := range b.requestTimes {
@@ -699,18 +609,15 @@ func (b *BinanceClient) rateLimitWait() {
 	}
 	b.requestTimes = filtered
 
-	// Check how many requests in this interval
 	if len(b.requestTimes) >= b.maxRequests {
-		// We are at the limit, wait until the oldest request is out of the window
 		oldest := b.requestTimes[0]
 		waitDuration := oldest.Add(b.interval).Sub(now)
 		if waitDuration > 0 {
 			logger.Debugf("Rate limit reached, waiting for %s", waitDuration)
 			time.Sleep(waitDuration)
 		}
-
-		// Clean up again after sleep
 		newNow := time.Now()
+
 		newCutoff := newNow.Add(-b.interval)
 		newFiltered := b.requestTimes[:0]
 		for _, t := range b.requestTimes {
@@ -721,6 +628,5 @@ func (b *BinanceClient) rateLimitWait() {
 		b.requestTimes = newFiltered
 	}
 
-	// Record the current request
 	b.requestTimes = append(b.requestTimes, time.Now())
 }
