@@ -23,7 +23,7 @@ func calculatePerformance(db *sql.DB, binanceClient interfaces.ExchangeClient) (
 	var totalProfitLoss float64
 	err := db.QueryRow(queryCompleted).Scan(&totalProfitLoss)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("error calculating completed trades profit/loss: %v", err)
+		return 0, 0, 0, fmt.Errorf("error calculating completed trades profit/loss: %w", err)
 	}
 
 	// Query active trades
@@ -33,9 +33,14 @@ func calculatePerformance(db *sql.DB, binanceClient interfaces.ExchangeClient) (
 		FROM active_trades`
 	rows, err := db.Query(queryActive)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("error querying active trades: %v", err)
+		return 0, 0, 0, fmt.Errorf("error querying active trades: %w", err)
 	}
-	defer rows.Close()
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			logger.Errorf("Failed to close rows: %v", err)
+		}
+	}(rows)
 
 	var unrealizedProfit, unrealizedLoss float64
 	for rows.Next() {
@@ -44,7 +49,7 @@ func calculatePerformance(db *sql.DB, binanceClient interfaces.ExchangeClient) (
 
 		err := rows.Scan(&symbol, &buyPrice, &quantity)
 		if err != nil {
-			return 0, 0, 0, fmt.Errorf("error scanning active trades: %v", err)
+			return 0, 0, 0, fmt.Errorf("error scanning active trades: %w", err)
 		}
 
 		// Fetch the current price dynamically
@@ -105,10 +110,8 @@ func MonitorPerformance(binanceClient interfaces.ExchangeClient) {
 			logger.Infof("Unrealized Loss from Active Trades: %.2f USDT", unrealizedLoss)
 			logger.Infof("=========================================")
 			logger.Infof("\n")
-
 		case <-ctx.Done():
 			return
 		}
-
 	}
 }

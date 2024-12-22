@@ -75,6 +75,11 @@ func (c *ConfigMultiTrading) UpdateStrategy(state models.MarketState, strategy t
 		c.Trending = strategy
 	case models.RangeBound:
 		c.RangeBound = strategy
+	case models.Transitional:
+		c.Transitional = strategy
+	case models.StronglyTrending:
+		c.StronglyTrending = strategy
+
 	}
 }
 

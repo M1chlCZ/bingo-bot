@@ -106,7 +106,6 @@ func (bot *MultiPairTradingBot) AddPair(pair *models.TradingPair) {
 	}
 
 	// Suggest a strategy based on the market state
-
 	bot.pairStrategies[pair.Symbol] = strategy
 	logger.Infof("Strategy assigned for %s:| Market State: %s", pair.Symbol, anls.String())
 }
@@ -382,11 +381,13 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				logger.Infof("BUY signal for %s | Amount: %.4f | Price: %.4f | Quote Balance: %.4f",
 					pair.Symbol, tradeAmount/currentPrice, currentPrice, quoteBalance)
 
-				if !bot.handleBuy(pair, tradeAmount/currentPrice, currentPrice, quoteBalance) {
-					//logger.Errorf("Error handling BUY for %s", pair.Symbol)
-					continue
-				}
-				tradesToday++
+				go func(pair *models.TradingPair, tradeAmount, currentPrice, quoteBalance float64) {
+					if !bot.handleBuy(pair, tradeAmount/currentPrice, currentPrice, quoteBalance) {
+						//logger.Errorf("Error handling BUY for %s", pair.Symbol)
+						return
+					}
+					tradesToday++
+				}(pair, tradeAmount, currentPrice, quoteBalance)
 			}
 			if sngl < 0 { // SELL
 				// Check if the market is in an uptrend before selling
@@ -396,11 +397,12 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				}
 				logger.Infof("SELL signal for %s | Amount: %.4f | Price: %.4f | Base Balance: %.4f",
 					pair.Symbol, tradeAmount, currentPrice, baseBalance)
-
-				if !bot.handleSell(pair, tradeAmount, currentPrice, baseBalance) {
-					logger.Errorf("Error handling SELL for %s", pair.Symbol)
-					continue
-				}
+				go func(pair *models.TradingPair, tradeAmount, currentPrice, baseBalance float64) {
+					if !bot.handleSell(pair, tradeAmount, currentPrice, baseBalance) {
+						logger.Errorf("Error handling SELL for %s", pair.Symbol)
+						return
+					}
+				}(pair, tradeAmount, currentPrice, baseBalance)
 			} else {
 				logger.Debugf("UPTREND signal for %s, cancelling sell", pair.Symbol)
 			}
@@ -414,25 +416,26 @@ func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, tradeAmount,
 		tradeAmount = pair.MinNotional / currentPrice
 
 		if tradeAmount*currentPrice > quoteBalance {
-			//logger.Infof("Skipping BUY for %s: Insufficient USDT balance. Need %.2f Have %.2f", pair.Symbol, tradeAmount, quoteBalance)
+			logger.Infof("Skipping BUY for %s: Insufficient USDT balance. Need %.4f Have %.4f", pair.Symbol, tradeAmount, quoteBalance)
 			return false
 		}
 	}
 
 	// Place Limit BUY Order
-	limitPrice := currentPrice * 1.001 // 0.01% higher than current price
-	limitOrderPrice := strconv.FormatFloat(limitPrice, 'f', pair.PricePrecision, 64)
+	limitPrice := currentPrice * 1.000
+	// 0.01% higher than current price
+	//limitOrderPrice := strconv.FormatFloat(limitPrice, 'f', pair.PricePrecision, 64)
 	executedVolume := strconv.FormatFloat(tradeAmount, 'f', pair.QtyPrecision, 64)
 
 	logger.Infof("Placing LIMIT BUY order for %s: Quantity=%.2f, Limit Price=%.2f, Base amount %.4f", pair.Symbol, tradeAmount, limitPrice, tradeAmount*currentPrice)
-	orderID, err := bot.exchange.CreateLimitOrder(pair.Symbol, "BUY", executedVolume, limitOrderPrice)
+	orderID, price, err := bot.exchange.CreateMarketOrder(pair.Symbol, "BUY", executedVolume)
 	if err != nil {
 		logger.Infof("Error placing LIMIT BUY order for %s: %v", pair.Symbol, err)
 		return false
 	}
 
 	// Log trade in database
-	err = db2.SQLiteDB.LogActiveTrade(pair.Symbol, limitPrice, tradeAmount, orderID)
+	err = db2.SQLiteDB.LogActiveTrade(pair.Symbol, price, tradeAmount, orderID)
 	if err != nil {
 		logger.Infof("Error logging BUY trade for %s: %v", pair.Symbol, err)
 	}
@@ -454,11 +457,11 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 
 	// Place Limit SELL Order
 	limitPrice := currentPrice * 0.999 // 0.1% lower than current price
-	limitOrderPrice := strconv.FormatFloat(limitPrice, 'f', pair.PricePrecision, 64)
+	//limitOrderPrice := strconv.FormatFloat(limitPrice, 'f', pair.PricePrecision, 64)
 	executedVolume := strconv.FormatFloat(tradeAmount, 'f', pair.QtyPrecision, 64)
 
 	logger.Infof("Placing LIMIT SELL order for %s: Quantity=%.4f, Limit Price=%.4f, Quote Amount %.4f, MinNotional %.4f", pair.Symbol, tradeAmount, limitPrice, tradeAmount*currentPrice, pair.MinNotional)
-	orderID, err := bot.exchange.CreateLimitOrder(pair.Symbol, "SELL", executedVolume, limitOrderPrice)
+	orderID, price, err := bot.exchange.CreateMarketOrder(pair.Symbol, "SELL", executedVolume)
 	if err != nil {
 		logger.Infof("Error placing LIMIT SELL order for %s: %v", pair.Symbol, err)
 		return false
@@ -470,7 +473,7 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 		logger.Infof("Error fetching active trade for %s: %v", pair.Symbol, err)
 		return false
 	}
-	profitLoss := (limitPrice - activeTrade.BuyPrice) * activeTrade.Quantity
+	profitLoss := (price - activeTrade.BuyPrice) * activeTrade.Quantity
 
 	bot.candlesMu.RLock()
 	candles, exists := bot.candles[pair.Symbol]
@@ -501,7 +504,7 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 	logger.Debugf("Trade Indicators: RSI=%.2f, MACD=%.2f, Stochastic=%.2f (Signal=%.2f) OrderID %d", rsiVal, macdVal, stochasticStr, stochasticSignal, orderID)
 
 	// Log the trade
-	err = db2.SQLiteDB.LogCompletedTrade(pair.Symbol, activeTrade.BuyPrice, limitPrice, activeTrade.Quantity, profitLoss, rsiVal, macdVal, stochasticSignal, lowerBound, middleBound, upperBound)
+	err = db2.SQLiteDB.LogCompletedTrade(pair.Symbol, activeTrade.BuyPrice, price, activeTrade.Quantity, profitLoss, rsiVal, macdVal, stochasticSignal, lowerBound, middleBound, upperBound)
 	if err != nil {
 		logger.Errorf("Error logging completed trade (SELL) for %s: %v", pair.Symbol, err)
 	} else {

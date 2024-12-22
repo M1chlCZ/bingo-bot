@@ -12,7 +12,7 @@ import (
 	"sync"
 )
 
-const dbVersion = 8 // Increment this whenever a new schema change is added
+const dbVersion = 9 // Increment this whenever a new schema change is added
 
 type Database interface {
 	InitDB() (*sql.DB, error)
@@ -105,11 +105,12 @@ func GetVersionDB(db *sql.DB) (int, error) {
 	var version int
 	err := db.QueryRow("PRAGMA user_version;").Scan(&version)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get database version: %v", err)
+		return 0, fmt.Errorf("failed to get database version: %w", err)
 	}
 	return version, nil
 }
 
+//nolint:funlen, it's ok
 func UpdateSchema(db *sql.DB, targetVersion int) error {
 	currentVersion, err := GetVersionDB(db)
 	if err != nil {
@@ -128,7 +129,7 @@ func UpdateSchema(db *sql.DB, targetVersion int) error {
 			ALTER TABLE completed_trades ADD COLUMN stochastic REAL;
 			`
 			if _, err := db.Exec(query); err != nil {
-				return fmt.Errorf("failed to apply migration for version 1: %v", err)
+				return fmt.Errorf("failed to apply migration for version 1: %w", err)
 			}
 		case 2:
 			// Example migration for version 2
@@ -197,6 +198,19 @@ func UpdateSchema(db *sql.DB, targetVersion int) error {
     				  symbol TEXT NOT NULL,
     				  atl_price REAL NOT NULL,
                       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP);`
+			_, err := db.Exec(query)
+			if err != nil {
+				logger.Infof("Error creating pair_atl table: %v", err)
+				return err
+			}
+		case 9:
+			query := `DROP TABLE IF EXISTS pair_atl;
+				CREATE TABLE pair_atl (
+					symbol TEXT PRIMARY KEY,
+					atl_price REAL NOT NULL,
+					timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+				);`
+
 			_, err := db.Exec(query)
 			if err != nil {
 				logger.Infof("Error creating pair_atl table: %v", err)
@@ -371,10 +385,11 @@ func (s *SQLite) RemoveAth(symbol string) error {
 func (s *SQLite) GetAtl(symbol string) (float64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	query := `SELECT ath_price FROM pair_atl WHERE symbol = ?`
+	query := `SELECT atl_price FROM pair_atl WHERE symbol = ?`
 	var ath float64
 	err := s.DB.QueryRow(query, symbol).Scan(&ath)
 	if err != nil {
+		logger.Errorf("Error fetching ATL for %s: %v", symbol, err)
 		return 0, err
 	}
 	return ath, nil
@@ -383,7 +398,7 @@ func (s *SQLite) GetAtl(symbol string) (float64, error) {
 func (s *SQLite) SetUpdateAtl(symbol string, ath float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `INSERT INTO pair_atl (symbol, ath_price) VALUES (?, ?) ON CONFLICT(symbol) DO UPDATE SET ath_price = excluded.ath_price;`
+	query := `INSERT INTO pair_atl (symbol, atl_price) VALUES (?, ?) ON CONFLICT(symbol) DO UPDATE SET atl_price = excluded.atl_price;`
 	_, err := s.DB.Exec(query, symbol, ath)
 	if err != nil {
 		return err
@@ -394,7 +409,7 @@ func (s *SQLite) SetUpdateAtl(symbol string, ath float64) error {
 func (s *SQLite) RemoveAtl(symbol string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `DELETE FROM pair_ath WHERE symbol = ?`
+	query := `DELETE FROM pair_atl WHERE symbol = ?`
 	_, err := s.DB.Exec(query, symbol)
 	if err != nil {
 		return err

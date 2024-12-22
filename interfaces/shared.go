@@ -31,12 +31,12 @@ type ExchangeClient interface {
 	FetchCandles(symbol, interval string, limit int) ([]models.CandleStick, error)
 	GetBalance(asset string) (float64, error)
 	CreateOrder(symbol, orderType, side string, amount string) (float64, error)
-	CreateMarketOrder(symbol, side, quantity string) (float64, error)
-	CreateLimitOrder(symbol, side, quantity, price string) (int64, error)
-	CreateStopLossLimitOrder(symbol, side, quantity, price, stopLoss string) (int64, error)
-	MonitorOrder(symbol string, orderID int64) (bool, error)
-	CancelOrder(symbol string, orderID int64) error
-	GetFeeRate() (float64, error)
+	CreateMarketOrder(symbol, side, quantity string) (int64, float64, error)
+	// CreateLimitOrder(symbol, side, quantity, price string) (int64, error)
+	// CreateStopLossLimitOrder(symbol, side, quantity, price, stopLoss string) (int64, error)
+	// MonitorOrder(symbol string, orderID int64) (bool, error)
+	// CancelOrder(symbol string, orderID int64) error
+	// GetFeeRate() (float64, error)
 	GetTradingPairs() map[string]*models.TradingPair
 	FetchMarkets(tickers []string, excludedMarkets []string, excludedTradingPairs []models.TradingPair) ([]models.TradingPair, error)
 	FetchActiveTrades(symbol string) ([]*binance.TradeV3, error)

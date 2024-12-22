@@ -5,52 +5,8 @@ import (
 	db2 "binance_bot/db"
 	"binance_bot/logger"
 	"binance_bot/models"
-	"fmt"
 	"github.com/go-playground/validator/v10"
 )
-
-const (
-	Reset   = "\033[0m"
-	Black   = "\033[30m"
-	Red     = "\033[31m"
-	Green   = "\033[32m"
-	Yellow  = "\033[33m"
-	Blue    = "\033[34m"
-	Magenta = "\033[35m"
-	Cyan    = "\033[36m"
-	White   = "\033[37m"
-
-	BrightBlack   = "\033[90m"
-	BrightRed     = "\033[91m"
-	BrightGreen   = "\033[92m"
-	BrightYellow  = "\033[93m"
-	BrightBlue    = "\033[94m"
-	BrightMagenta = "\033[95m"
-	BrightCyan    = "\033[96m"
-	BrightWhite   = "\033[97m"
-)
-
-// Color helpers
-func colorGreen(s string) string  { return Green + s + Reset }
-func colorRed(s string) string    { return Red + s + Reset }
-func colorYellow(s string) string { return Yellow + s + Reset }
-func colorCyan(s string) string   { return Cyan + s + Reset }
-
-func colorGreenF(s string, params ...any) string  { return Green + fmt.Sprintf(s, params) + Reset }
-func colorRedF(s string, params ...any) string    { return Red + fmt.Sprintf(s, params) + Reset }
-func colorYellowF(s string, params ...any) string { return Yellow + fmt.Sprintf(s, params) + Reset }
-func colorCyanF(s string, params ...any) string   { return Cyan + fmt.Sprintf(s, params) + Reset }
-
-// highlightRR returns the RR value as a colored string depending on how close it is
-// to the threshold.
-func (cs *CompoundStrategy) highlightRR(rr float64) string {
-	if rr > cs.RiskRewardThreshold {
-		return colorGreen(fmt.Sprintf("%.2f", rr))
-	} else if rr > cs.RiskRewardThreshold*0.8 {
-		return colorYellow(fmt.Sprintf("%.2f", rr))
-	}
-	return colorRed(fmt.Sprintf("%.2f", rr))
-}
 
 type CompoundStrategy struct {
 	StrategyType              StrategyType                `validate:"required"`
@@ -77,7 +33,7 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 	}
 
 	currentPrice := candles[len(candles)-1].Close
-	logger.Debugf("%sState: %v, Pair: %s, CurrentPrice: %.2f%s", colorCyan("["), marketState, pair, currentPrice, Reset)
+	logger.DebugColorf(logger.Cyan, "State: %s, Pair: %s, CurrentPrice: %.2f", marketState.String(), pair, currentPrice)
 
 	trade, _ := db2.SQLiteDB.GetActiveTrade(pair)
 	isActive, err := db2.SQLiteDB.IsCurrentlyActiveTrade(pair)
@@ -89,7 +45,7 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 	// Calculate Indicators
 	rsiVal, _, err := cs.RSI.Calculate(candles, pair)
 	if err != nil {
-		logger.Errorf("Error calculating RSI: %v", err)
+		logger.Errorf("Error calculating RSI: %w", err)
 		return 0, err
 	}
 
@@ -124,21 +80,19 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 
 		athPrice, err := db2.SQLiteDB.GetAth(trade.Symbol)
 		if err != nil || currentPrice > athPrice {
-			logger.Infof("Setting new HIGH price for %s: %.2f", trade.Symbol, currentPrice)
+			logger.Infof("Setting new HIGH price for %s: %.8f", trade.Symbol, currentPrice)
 			if e := db2.SQLiteDB.SetUpdateAth(trade.Symbol, currentPrice); e != nil {
 				logger.Errorf("Error updating ATH price for %s: %v", trade.Symbol, e)
-			} else {
-				athPrice = currentPrice
 			}
+			athPrice = currentPrice
 		}
 		atlPrice, err := db2.SQLiteDB.GetAtl(trade.Symbol)
 		if err != nil || currentPrice < atlPrice {
-			logger.Infof("Setting new LOW price for %s: %.2f", trade.Symbol, currentPrice)
+			logger.Infof("Setting new LOW price for %s: %.8f", trade.Symbol, currentPrice)
 			if e := db2.SQLiteDB.SetUpdateAtl(trade.Symbol, currentPrice); e != nil {
 				logger.Errorf("Error updating ATL price for %s: %v", trade.Symbol, e)
-			} else {
-				atlPrice = currentPrice
 			}
+			atlPrice = currentPrice
 		}
 
 		profitMarginATH := (currentPrice - athPrice) / athPrice * 100
@@ -147,26 +101,26 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		logger.Infof("[Trade Monitoring] %s | Buy=%.2f | Current=%.2f | PM=%.2f%% | ATH=%.2f | PM ATH=%.2f%%",
 			pair, trade.BuyPrice, currentPrice, profitMargin, athPrice, profitMarginATH)
 
-		if profitMargin < 0 && atlPrice < currentPrice {
-			logger.InfoColorf(BrightYellow, "[ CurrentPrice is above ATL ] %s: Uplift from ATL (%.4f%%)", pair, upliftFromAtl)
+		if profitMargin < 0 && currentPrice > atlPrice {
+			logger.InfoColorf(logger.BrightYellow, "[ CurrentPrice is above ATL ] %s: Uplift from ATL (%.2f%%)", pair, upliftFromAtl)
 		}
 
 		if profitMargin < -cs.HighestPriceFallOffMargin {
-			logger.InfoColorf(BrightRed, "[PANIC SELL] %s: Price dropped below margin %.2f", pair, profitMargin)
+			logger.InfoColorf(logger.BrightRed, "[PANIC SELL] %s: Price dropped below margin %.2f", pair, profitMargin)
 			return -1, nil
 		}
 
 		if currentPrice < breakevenPrice {
-			logger.InfoColorf(BrightYellow, "[HOLD] %s: Below breakeven. Profit=%.2f%%", pair, profitMargin)
+			logger.InfoColorf(logger.BrightYellow, "[HOLD] %s: Below breakeven. Profit=%.2f%%", pair, profitMargin)
 			return 0, nil
 		}
 
 		if profitMargin > cs.DesiredProfit {
-			logger.InfoColorf(BrightGreen, "[SELL] %s: Desired profit reached (%.2f%%)", pair, profitMargin)
+			logger.InfoColorf(logger.BrightGreen, "[SELL] %s: Desired profit reached (%.2f%%)", pair, profitMargin)
 			return -1, nil
 		}
 
-		logger.InfoColorf(BrightBlack, "[HOLD] %s: PM=%.2f%% < Desired=%.2f%%", pair, profitMargin, cs.DesiredProfit)
+		logger.InfoColorf(logger.BrightBlack, "[HOLD] %s: PM=%.2f%% < Desired=%.2f%%", pair, profitMargin, cs.DesiredProfit)
 		return 0, nil
 	}
 
@@ -183,7 +137,7 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 	//	signalColor = Yellow
 	//}
 
-	logger.DebugColorf(BrightBlack, "%s | %s | Ichimoku=(B:%t, Br:%t), MACD=%d, RSIVal=%.2f, StochK=%.2f", pair, marketState.String(), ichimokuRes.Bullish, ichimokuRes.Bearish, macdIndicatorSignal, rsiVal, stochasticK)
+	logger.DebugColorf(logger.BrightBlack, "%s | %s | Ichimoku=(B:%t, Br:%t), MACD=%d, RSIVal=%.2f, StochK=%.2f", pair, marketState.String(), ichimokuRes.Bullish, ichimokuRes.Bearish, macdIndicatorSignal, rsiVal, stochasticK)
 
 	// Market-state based logic
 	switch marketState {
@@ -195,8 +149,7 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 				rr := cs.calcRR(currentPrice, stop, target, pair)
 				logger.InfoColorf(logger.BrightBlue, "[ %s STRONGLY TREDING RR=%.2f ]", pair, rr)
 				if rr > cs.RiskRewardThreshold {
-					logger.Infof("%s %s: Uptrend confirmed, RR=%s",
-						colorGreen("[StronglyTrending BUY]"), pair, cs.highlightRR(rr))
+					logger.InfoColorf(logger.BrightGreen, "[ %s STRONGLY TREDING | UPTREND CONFIRMED RR=%.2f ]", pair, rr)
 					return 1, nil
 				}
 			}
@@ -208,15 +161,13 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 				stop := upperBand * 1.02
 				rr := cs.calcRRForSell(currentPrice, stop, target, pair)
 				if rr > cs.RiskRewardThreshold {
-					logger.Infof("%s %s: Downtrend confirmed, RR=%s",
-						colorRed("[StronglyTrending SELL]"), pair, cs.highlightRR(rr))
+					logger.InfoColorf(logger.BrightRed, "[ %s Strongly Trending SELL| DOWNTREND CONFIRMED RR=%.2f ]", pair, rr)
 					return -1, nil
 				}
 			}
 		}
+		logger.DebugColorf(logger.BrightMagenta, "[ Strongly Trending HOLD ] %s", pair)
 
-		logger.Debugf("%s %s: No ideal setup found.",
-			colorYellow("[StronglyTrending HOLD]"), pair)
 		return 0, nil
 
 	case models.Transitional:
@@ -226,8 +177,7 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			rr := cs.calcRR(currentPrice, stop, target, pair)
 			logger.InfoColorf(logger.BrightMagenta, "[ %s TRANSITIONAL RR=%.2f ]", pair, rr)
 			if rr > (cs.RiskRewardThreshold * 0.8) {
-				logger.Infof("%s %s: Uptrend confirmed, RR=%s",
-					colorGreen("[Transitional BUY]"), pair, cs.highlightRR(rr))
+				logger.InfoColorf(logger.BrightMagenta, "[ %s TRANSITIONAL BUY RR=%.2f ]", pair, rr)
 				return 1, nil
 			}
 		}
@@ -237,13 +187,12 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			stop := currentPrice * 1.02
 			rr := cs.calcRRForSell(currentPrice, stop, target, pair)
 			if rr > (cs.RiskRewardThreshold * 0.8) {
-				logger.Infof("%s %s: Downtrend confirmed, RR=%s",
-					colorRed("[Transitional SELL]"), pair, cs.highlightRR(rr))
+				logger.InfoColorf(logger.Red, "[ TRANSITIONAL SELL ] Downtrend confirmed, RR=%.2f %s ", rr, pair)
 				return -1, nil
 			}
 		}
 
-		logger.Debugf("%s[Transitional HOLD]%s %s: No extreme condition found.", colorYellow("["), Reset, pair)
+		logger.DebugColorf(logger.BrightYellow, "[Transitional HOLD]%s: No extreme condition found.", pair)
 		return 0, nil
 
 	case models.Trending:
@@ -252,10 +201,8 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			stop := lowerBand
 			rr := cs.calcRR(currentPrice, stop, target, pair)
 			logger.InfoColorf(logger.Cyan, "[ %s TRENDING RR=%.2f ]", pair, rr)
-
 			if rr > cs.RiskRewardThreshold {
-				logger.Infof("%s %s: Good conditions, RR=%s",
-					colorGreen("[Trending BUY]"), pair, cs.highlightRR(rr))
+				logger.InfoColorf(logger.BrightMagenta, "[ %s TRENDING BUY RR=%.2f ]", pair, rr)
 				return 1, nil
 			}
 		}
@@ -265,27 +212,26 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			stop := upperBand
 			rr := cs.calcRRForSell(currentPrice, stop, target, pair)
 			if rr > cs.RiskRewardThreshold {
-				logger.Infof("%s %s: Trend down continuation, RR=%s",
-					colorRed("[Trending SELL]"), pair, cs.highlightRR(rr))
+				logger.InfoColorf(logger.Red, "[ TRENDING SELL ] Downtrend confirmed, RR=%.2f %s ", rr, pair)
 				return -1, nil
 			}
 		}
 
-		logger.Debugf("%s %s: No optimal trend trade found.", colorYellow("[Trending HOLD]"), pair)
+		logger.DebugColorf(logger.Yellow, "%s: No optimal trend trade found.", pair)
 		return 0, nil
 
 	case models.Chaotic:
 		if currentPrice > upperBand && int(stochasticK) > cs.Stochastic.Overbought && rsiVal > float64(cs.RSI.Overbought) {
-			logger.Infof("%s %s: Overbought mean-reversion attempt %s",
-				colorRed("[Chaotic SELL]"), pair, Reset)
+			logger.InfoColorf(logger.Red, "[ CHAOTIC SELL ] Downtrend confirmed, RR=%.2f %s ", 0.0, pair)
+
 			return -1, nil
 		}
 		if currentPrice < lowerBand && int(stochasticK) < cs.Stochastic.Oversold && rsiVal < float64(cs.RSI.Oversold) {
-			logger.Infof("%s %s: Overbought mean-reversion attempt %s",
-				colorGreen("[Chaotic BUY]"), pair, Reset)
+			logger.InfoColorf(logger.BrightMagenta, "[ %s CHAOTIC BUY ]", pair)
+
 			return 1, nil
 		}
-		logger.Debugf("%s %s: No mean reversion opportunity. %s", colorYellow("[Chaotic HOLD]"), pair, Reset)
+		logger.DebugColorf(logger.Yellow, "[ CHAOTIC HOLD ]%s: No optimal trend trade found.", pair)
 		return 0, nil
 
 	case models.RangeBound:
@@ -296,8 +242,7 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			rr := cs.calcRR(currentPrice, stop, target, pair)
 			logger.InfoColorf(logger.Cyan, "[ %s RANGE BOUND RR=%.2f ]", pair, rr)
 			if rr > relaxedRR {
-				logger.Infof("%s %s: Range low buy, RR=%s",
-					colorGreen("[RangeBound BUY]"), pair, cs.highlightRR(rr))
+				logger.InfoColorf(logger.BrightMagenta, "[ %s RANGE-BOUND BUY RR=%.2f ]", pair, rr)
 				return 1, nil
 			}
 		}
@@ -307,12 +252,11 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			stop := upperBand * 1.01
 			rr := cs.calcRRForSell(currentPrice, stop, target, pair)
 			if rr > relaxedRR {
-				logger.Infof("%s %s: Range high sell, RR=%s",
-					colorRed("[RangeBound SELL]"), pair, cs.highlightRR(rr))
+				logger.InfoColorf(logger.Red, "[ RANGE-BOUND SELL ] Downtrend confirmed, RR=%.2f %s ", 0.0, pair)
 				return -1, nil
 			}
 		}
-		logger.Debugf("%s %s: No clear range trade. %s", colorYellow("[RangeBound HOLD]"), pair, Reset)
+		logger.DebugColorf(logger.Yellow, "[ RANGE-BOUND HOLD ]%s: No optimal trend trade found.", pair)
 		return 0, nil
 
 	default:
@@ -320,10 +264,11 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			target := upperBand
 			stop := lowerBand
 			rr := cs.calcRR(currentPrice, stop, target, pair)
-			logger.Infof(colorCyanF("[ DEFAULT RR=%s ]", rr))
+			logger.InfoColorf(logger.Cyan, "[ %s DEFAULT RR=%.2f ]", pair, rr)
+
 			if rr > cs.RiskRewardThreshold {
-				logger.Infof("%s %s: Balanced conditions, RR=%s",
-					colorGreen("[Default BUY]"), pair, cs.highlightRR(rr))
+				logger.InfoColorf(logger.BrightMagenta, "[ %s DEFAULT BUY RR=%.2f ]", pair, rr)
+
 				return 1, nil
 			}
 		}
@@ -333,18 +278,18 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			stop := upperBand
 			rr := cs.calcRRForSell(currentPrice, stop, target, pair)
 			if rr > cs.RiskRewardThreshold {
-				logger.Infof("%s %s: Balanced conditions, RR=%s",
-					colorRed("[Default SELL]"), pair, cs.highlightRR(rr))
+				logger.InfoColorf(logger.Red, "[ DEFAULT SELL ] Downtrend confirmed, RR=%.2f %s ", 0.0, pair)
+
 				return -1, nil
 			}
 		}
 
-		logger.Debugf("%s %s: No strong signal met RR criteria. %s", colorYellow("[Default HOLD]"), pair, Reset)
+		logger.DebugColorf(logger.Yellow, "[ DEFAULT HOLD ]%s: No optimal trend trade found.", pair)
 		return 0, nil
 	}
 }
 
-func (cs *CompoundStrategy) calcRR(currentPrice, stop, target float64, pair string) float64 {
+func (cs *CompoundStrategy) calcRR(currentPrice, stop, target float64, _ string) float64 {
 	risk := (currentPrice - stop) / currentPrice
 	reward := (target - currentPrice) / currentPrice
 	if risk <= 0 || reward <= 0 {
@@ -354,7 +299,7 @@ func (cs *CompoundStrategy) calcRR(currentPrice, stop, target float64, pair stri
 	return rr
 }
 
-func (cs *CompoundStrategy) calcRRForSell(currentPrice, stop, target float64, pair string) float64 {
+func (cs *CompoundStrategy) calcRRForSell(currentPrice, stop, target float64, _ string) float64 {
 	risk := (stop - currentPrice) / currentPrice
 	reward := (currentPrice - target) / currentPrice
 	if risk <= 0 || reward <= 0 {

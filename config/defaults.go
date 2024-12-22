@@ -11,35 +11,35 @@ import (
 // Adjusted intervals, thresholds, and periods to be more lenient.
 
 var (
-	// Default: A neutral baseline, now more willing to trade
+	// DefaultMarketState : A neutral baseline, now more willing to trade
 	DefaultMarketState = types.MarketStateStrategy{
 		Enabled: true,
 		Strategy: &strategies.CompoundStrategy{
 			RiskRewardThreshold: 0.5, // Lower RR threshold to accept more trades
 			StrategyType:        strategies.RSIMACDStrategyType,
 			RSI: &algos.RSIStrategy{
-				Overbought: 68, // Slightly lower overbought to generate SELL signals sooner
-				Oversold:   32, // Slightly higher oversold to generate BUY signals sooner
-				Period:     14,
+				Overbought: 65, // Slightly lower overbought to generate SELL signals sooner
+				Oversold:   28, // Slightly higher oversold to generate BUY signals sooner
+				Period:     12,
 			},
 			MACD: &algos.MACDStrategy{
-				FastPeriod:   8,  // Faster MACD for quicker signals
-				SlowPeriod:   17, // Shorter slow period
-				SignalPeriod: 5,  // Quicker signal line
+				FastPeriod:   6,  // Faster MACD for quicker signals
+				SlowPeriod:   15, // Shorter slow period
+				SignalPeriod: 3,  // Quicker signal line
 			},
 			BollingerBands: &algos.BollingerBands{
-				Period: 15,
-				Width:  2.5, // Narrower than 3.5 to see more band touches
+				Period: 12,
+				Width:  2.2, // Narrower than 3.5 to see more band touches
 			},
 			Stochastic: &algos.StochasticOscillator{
-				Overbought: 75, // Lower overbought, more frequent sells
-				Oversold:   25, // Higher oversold, more frequent buys
-				Period:     14,
+				Overbought: 65, // Lower overbought, more frequent sells
+				Oversold:   28, // Higher oversold, more frequent buys
+				Period:     10,
 			},
 			Ichimoku: &algos.IchimokuStrategy{
-				ConversionPeriod: 9,
-				BasePeriod:       26,
-				SpanBPeriod:      52,
+				ConversionPeriod: 7,
+				BasePeriod:       24,
+				SpanBPeriod:      44,
 			},
 			CandleInterval:            "6h", // More frequent checks than 12h
 			DesiredProfit:             1.0,  // Lower profit target to secure quick wins
@@ -49,7 +49,7 @@ var (
 		},
 	}
 
-	// Chaotic: Very short intervals and very permissive conditions to trade mean-reversions often
+	// ChaoticMarketState : Very short intervals and very permissive conditions to trade mean-reversions often
 	ChaoticMarketState = types.MarketStateStrategy{
 		Enabled: true,
 		Strategy: &strategies.CompoundStrategy{
@@ -79,14 +79,14 @@ var (
 				SpanBPeriod:      44,
 			},
 			CandleInterval:            "1h", // Faster interval for quick trades
-			DesiredProfit:             2.0,  // Slight profit target
+			DesiredProfit:             1.0,  // Slight profit target
 			HighestPriceFallOffMargin: 1.0,
 			FeeRate:                   0.001,
 			MarketState:               models.Chaotic,
 		},
 	}
 
-	// Trending: Slightly less strict to allow more trades in confirmed trends
+	// TrendingMarketState : Slightly less strict to allow more trades in confirmed trends
 	TrendingMarketState = types.MarketStateStrategy{
 		Enabled: true,
 		Strategy: &strategies.CompoundStrategy{
@@ -123,7 +123,7 @@ var (
 		},
 	}
 
-	// RangeBound: More frequent trades at band extremes
+	// RangeBoundMarketState : More frequent trades at band extremes
 	RangeBoundMarketState = types.MarketStateStrategy{
 		Enabled: true,
 		Strategy: &strategies.CompoundStrategy{
@@ -160,7 +160,7 @@ var (
 		},
 	}
 
-	// StronglyTrending: Quickly capitalize on strong trends with somewhat relaxed conditions
+	// StronglyTrendingMarketState : Quickly capitalize on strong trends with somewhat relaxed conditions
 	StronglyTrendingMarketState = types.MarketStateStrategy{
 		Enabled: true,
 		Strategy: &strategies.CompoundStrategy{
@@ -197,7 +197,7 @@ var (
 		},
 	}
 
-	// Transitional: Very low threshold to encourage taking contrarian trades
+	// TransitionalMarketState : Very low threshold to encourage taking contrarian trades
 	TransitionalMarketState = types.MarketStateStrategy{
 		Enabled: true,
 		Strategy: &strategies.CompoundStrategy{
