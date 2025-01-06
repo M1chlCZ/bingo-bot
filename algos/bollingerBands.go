@@ -16,7 +16,7 @@ func (bb *BollingerBands) Calculate(candles []models.CandleStick) (lowerBand, mi
 		return 0, 0, 0, fmt.Errorf("not enough data to calculate Bollinger Bands")
 	}
 
-	// 1. Calculate the typical prices (TP) for the last N candles
+	// Calculate the typical prices (TP) for the last N candles
 	var tps []float64
 	startIndex := len(candles) - bb.Period
 	for i := startIndex; i < len(candles); i++ {
@@ -25,14 +25,14 @@ func (bb *BollingerBands) Calculate(candles []models.CandleStick) (lowerBand, mi
 		tps = append(tps, tp)
 	}
 
-	// 2. Calculate the SMA of the TP
+	// Calculate the SMA of the TP
 	sum := 0.0
 	for _, tp := range tps {
 		sum += tp
 	}
 	middleBand = sum / float64(bb.Period)
 
-	// 3. Calculate the standard deviation of the TP
+	// Calculate the standard deviation of the TP
 	// Using sample standard deviation: sqrt(sum((x - mean)^2)/(N-1))
 	var varianceSum float64
 	for _, tp := range tps {
@@ -42,7 +42,7 @@ func (bb *BollingerBands) Calculate(candles []models.CandleStick) (lowerBand, mi
 	// Note: if you prefer population std dev, use N instead of (N-1)
 	stdDev := math.Sqrt(varianceSum / float64(bb.Period-1))
 
-	// 4. Calculate upper and lower bands
+	// Calculate upper and lower bands
 	upperBand = middleBand + bb.Width*stdDev
 	lowerBand = middleBand - bb.Width*stdDev
 

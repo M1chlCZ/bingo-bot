@@ -6,13 +6,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // Import go-sqlite3 library
 	"log"
 	"os"
 	"sync"
 )
 
-const dbVersion = 9 // Increment this whenever a new schema change is added
+const dbVersion = 13 // Increment this whenever a new schema change is added
 
 type Database interface {
 	InitDB() (*sql.DB, error)
@@ -30,7 +30,7 @@ var SQLiteDB SQLite
 func InitDB() error {
 	dbPath := "/app/data/trades.db" // Adjusted to match the Docker mount
 
-	//folder exists
+	// folder exists
 	if _, err := os.Stat("/app/data"); os.IsNotExist(err) {
 		logger.Warnf("Running without docker, using local db file")
 		dbPath = "./trades.db"
@@ -92,7 +92,7 @@ func InitDB() error {
 	// Update the database schema to the latest version
 
 	if err := UpdateSchema(db, dbVersion); err != nil {
-		return fmt.Errorf("failed to update database schema: %v", err)
+		return fmt.Errorf("failed to update database schema: %w", err)
 	}
 
 	log.Println("Database initialized successfully.")
@@ -205,7 +205,7 @@ func UpdateSchema(db *sql.DB, targetVersion int) error {
 			}
 		case 9:
 			query := `DROP TABLE IF EXISTS pair_atl;
-				CREATE TABLE pair_atl (
+				CREATE TABLE IF NOT EXISTS pair_atl (
 					symbol TEXT PRIMARY KEY,
 					atl_price REAL NOT NULL,
 					timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -215,6 +215,47 @@ func UpdateSchema(db *sql.DB, targetVersion int) error {
 			if err != nil {
 				logger.Infof("Error creating pair_atl table: %v", err)
 				return err
+			}
+		case 10:
+			query := `ALTER TABLE completed_trades ADD COLUMN buy_timestamp DATETIME;`
+			_, err := db.Exec(query)
+			if err != nil {
+				logger.Infof("Error creating pair_atl table: %v", err)
+				return err
+			}
+		case 11:
+			// Example migration for version 1
+			query := `
+			ALTER TABLE completed_trades ADD COLUMN mfi REAL;
+			ALTER TABLE completed_trades ADD COLUMN cci REAL;
+			ALTER TABLE completed_trades ADD COLUMN ichimoku_kijun REAL;
+			ALTER TABLE completed_trades ADD COLUMN ichimoku_tenkan REAL;
+			`
+			if _, err := db.Exec(query); err != nil {
+				return fmt.Errorf("failed to apply migration for version 1: %w", err)
+			}
+		case 12:
+			query := `
+			ALTER TABLE active_trades ADD COLUMN rsi REAL DEFAULT 0;
+			ALTER TABLE active_trades ADD COLUMN macd REAL DEFAULT 0;
+			ALTER TABLE active_trades ADD COLUMN stochastic REAL DEFAULT 0;
+			ALTER TABLE active_trades ADD COLUMN lowerBound REAL DEFAULT 0;
+			ALTER TABLE active_trades ADD COLUMN middleBound REAL DEFAULT 0;
+			ALTER TABLE active_trades ADD COLUMN upperBound REAL DEFAULT 0;
+			ALTER TABLE active_trades ADD COLUMN mfi REAL DEFAULT 0;
+			ALTER TABLE active_trades ADD COLUMN cci REAL DEFAULT 0;
+			ALTER TABLE active_trades ADD COLUMN ichimoku_kijun REAL DEFAULT 0;
+			ALTER TABLE active_trades ADD COLUMN ichimoku_tenkan REAL DEFAULT 0;
+			`
+			if _, err := db.Exec(query); err != nil {
+				return fmt.Errorf("failed to apply migration for version 1: %w", err)
+			}
+		case 13:
+			query := `
+			ALTER TABLE completed_trades ADD COLUMN order_id INTEGER;
+			`
+			if _, err := db.Exec(query); err != nil {
+				return fmt.Errorf("failed to apply migration for version 1: %v", err)
 			}
 		// Add more cases here for future versions
 		default:
@@ -240,11 +281,11 @@ func (s *SQLite) LogTrade(symbol, side string, amount, price float64) error {
 }
 
 // LogActiveTrade logs an active trade to the SQLite database
-func (s *SQLite) LogActiveTrade(symbol string, buyPrice, quantity float64, orderID int64) error {
+func (s *SQLite) LogActiveTrade(symbol string, buyPrice, quantity float64, orderID int64, rsi, macd, stochastic, lowerBound, middleBound, upperBound, mfi, cci, ichimokuTenkan, ichimokuKijun float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `INSERT INTO active_trades (symbol, buy_price, quantity, order_id) VALUES (?, ?, ?, ?)`
-	result, err := s.DB.Exec(query, symbol, buyPrice, quantity, orderID)
+	query := `INSERT INTO active_trades (symbol, buy_price, quantity, order_id, rsi, macd, stochastic, lowerBound, middleBound, upperBound, mfi, cci, ichimoku_kijun, ichimoku_tenkan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	result, err := s.DB.Exec(query, symbol, buyPrice, quantity, orderID, rsi, macd, stochastic, lowerBound, middleBound, upperBound, mfi, cci, ichimokuKijun, ichimokuTenkan)
 	if err != nil {
 		logger.Infof("Error inserting active trade: %v", err)
 		return err
@@ -256,14 +297,14 @@ func (s *SQLite) LogActiveTrade(symbol string, buyPrice, quantity float64, order
 }
 
 // LogCompletedTrade logs a completed trade to the SQLite database
-func (s *SQLite) LogCompletedTrade(symbol string, buyPrice, sellPrice, quantity, profitLoss, rsi, macd, stochastic, lowerBound, middleBound, upperBound float64) error {
+func (s *SQLite) LogCompletedTrade(symbol string, buyPrice, sellPrice, quantity, profitLoss, rsi, macd, stochastic, lowerBound, middleBound, upperBound, mfi, cci, ichimokuTenkan, ichimokuKijun float64, buyTimestamp, orderID int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	query := `
-        INSERT INTO completed_trades (symbol, buy_price, sell_price, quantity, profit_loss, rsi, macd, stochastic, lowerBound, middleBound, upperBound)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO completed_trades (symbol, buy_price, sell_price, quantity, profit_loss, rsi, macd, stochastic, lowerBound, middleBound, upperBound, mfi, cci, ichimoku_kijun, ichimoku_tenkan, buy_timestamp, order_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
-	_, err := s.DB.Exec(query, symbol, buyPrice, sellPrice, quantity, profitLoss, rsi, macd, stochastic, lowerBound, middleBound, upperBound)
+	_, err := s.DB.Exec(query, symbol, buyPrice, sellPrice, quantity, profitLoss, rsi, macd, stochastic, lowerBound, middleBound, upperBound, mfi, cci, ichimokuKijun, ichimokuTenkan, buyTimestamp, orderID)
 	if err != nil {
 		return fmt.Errorf("failed to log completed trade: %v", err)
 	}
@@ -274,11 +315,11 @@ func (s *SQLite) LogCompletedTrade(symbol string, buyPrice, sellPrice, quantity,
 func (s *SQLite) GetActiveTrade(symbol string) (*models.ActiveTrade, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	query := `SELECT id, order_id, symbol, buy_price, quantity FROM active_trades WHERE symbol = ? LIMIT 1`
+	query := `SELECT id, order_id, symbol, buy_price, quantity, timestamp, rsi, macd, stochastic, lowerBound, middleBound, upperBound, mfi, cci, ichimoku_kijun, ichimoku_tenkan FROM active_trades WHERE symbol = ? LIMIT 1`
 	row := s.DB.QueryRow(query, symbol)
 
 	var trade models.ActiveTrade
-	err := row.Scan(&trade.ID, &trade.OrderID, &trade.Symbol, &trade.BuyPrice, &trade.Quantity)
+	err := row.Scan(&trade.ID, &trade.OrderID, &trade.Symbol, &trade.BuyPrice, &trade.Quantity, &trade.Timestamp, &trade.RSI, &trade.Macd, &trade.Stochastic, &trade.LowerBound, &trade.MiddleBound, &trade.UpperBound, &trade.MFI, &trade.CCI, &trade.IchimokuKijun, &trade.IchimokuTenkan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("no active trade found for symbol: %s", symbol)
@@ -293,7 +334,7 @@ func (s *SQLite) GetActiveTrade(symbol string) (*models.ActiveTrade, error) {
 func (s *SQLite) GetActiveTrades(symbol string) ([]*models.ActiveTrade, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	query := `SELECT id,order_id, symbol, buy_price, quantity FROM active_trades WHERE symbol = ?`
+	query := `SELECT id,order_id, symbol, buy_price, quantity, timestamp FROM active_trades WHERE symbol = ?`
 	rows, err := s.DB.Query(query, symbol)
 	if err != nil {
 		return nil, err
@@ -303,7 +344,7 @@ func (s *SQLite) GetActiveTrades(symbol string) ([]*models.ActiveTrade, error) {
 	var trades []*models.ActiveTrade
 	for rows.Next() {
 		var trade models.ActiveTrade
-		err := rows.Scan(&trade.ID, &trade.OrderID, &trade.Symbol, &trade.BuyPrice, &trade.Quantity)
+		err := rows.Scan(&trade.ID, &trade.OrderID, &trade.Symbol, &trade.BuyPrice, &trade.Quantity, &trade.Timestamp)
 		if err != nil {
 			return nil, err
 		}
@@ -316,7 +357,7 @@ func (s *SQLite) GetActiveTrades(symbol string) ([]*models.ActiveTrade, error) {
 func (s *SQLite) GetAllActiveTrades() ([]*models.ActiveTrade, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	query := `SELECT id, order_id, symbol, buy_price, quantity FROM active_trades WHERE 1`
+	query := `SELECT id, order_id, symbol, buy_price, quantity, timestamp FROM active_trades WHERE 1`
 	rows, err := s.DB.Query(query)
 	if err != nil {
 		return nil, err
@@ -326,7 +367,7 @@ func (s *SQLite) GetAllActiveTrades() ([]*models.ActiveTrade, error) {
 	var trades []*models.ActiveTrade
 	for rows.Next() {
 		var trade models.ActiveTrade
-		err := rows.Scan(&trade.ID, &trade.OrderID, &trade.Symbol, &trade.BuyPrice, &trade.Quantity)
+		err := rows.Scan(&trade.ID, &trade.OrderID, &trade.Symbol, &trade.BuyPrice, &trade.Quantity, &trade.Timestamp)
 		if err != nil {
 			return nil, err
 		}

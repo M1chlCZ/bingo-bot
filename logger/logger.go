@@ -178,3 +178,7 @@ func Errorf(format string, v ...interface{}) {
 		logger.Println(colorize(Red, format, v...))
 	}
 }
+
+func Fatalf(s string, err error) {
+	logger.Fatalf(s, err)
+}

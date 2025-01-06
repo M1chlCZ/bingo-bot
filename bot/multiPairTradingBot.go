@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"binance_bot/algos"
 	"binance_bot/analysis"
 	"binance_bot/config"
 	db2 "binance_bot/db"
@@ -32,11 +33,11 @@ type MultiPairTradingBot struct {
 	candlesMu      sync.RWMutex
 	wg             sync.WaitGroup
 	stopCh         chan struct{}
-	config         config.ConfigMultiTrading
+	config         config.MultiTrading
 }
 
 // NewMultiPairTradingBot creates a new instance of MultiPairTradingBot
-func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, config *config.ConfigMultiTrading) *MultiPairTradingBot {
+func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, config *config.MultiTrading) *MultiPairTradingBot {
 	if exchange == nil {
 		log.Fatal("Exchange must be provided")
 	}
@@ -129,7 +130,7 @@ func (bot *MultiPairTradingBot) StartTrading() {
 	go bot.updateMarketAnalysis()
 
 	// Fetch all trading pairs from the exchange and add them (TODO only for manually added pairs)
-	//var wg sync.WaitGroup
+	// var wg sync.WaitGroup
 	//tradingPairs := bot.exchange.GetTradingPairs()
 	//for _, pair := range tradingPairs {
 	//	wg.Add(1)
@@ -186,26 +187,23 @@ func (bot *MultiPairTradingBot) calculateTradeAmount(signal int, quoteBalance, b
 	return 0
 }
 
-func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, quoteBalance, baseBalance float64, pair string, atr, adx float64) float64 {
+func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional, quoteBalance, baseBalance float64, pair string, atr, adx float64) float64 {
 	// Define baseline risk parameters
 	const (
-		baseRiskPercentage = 0.01 // Risk 1% of quote balance as baseline risk per trade
-		atrReference       = 1.0  // ATR reference level (e.g., average ATR you'd consider "normal")
-		adxReference       = 25.0 // ADX reference for a "moderate" trend
-		minTradePercentage = 0.05 // Minimum 5% of quote balance
+		baseRiskPercentage = 0.08 // Risk 5% of quote balance as baseline risk per trade
+		atrReference       = 1.0  // ATR reference level
+		adxReference       = 25.0 // ADX reference for "moderate" trend
+		minTradePercentage = 0.16 // Minimum 15% of quote balance
 		maxTradePercentage = 0.5  // Maximum 50% of quote balance
+
+		// We want at least 5% above that notional
+		extraPercent = 0.05 // 5%
 	)
 
-	//  Start with a base position size according to baseline risk
-	// Base position in currency = quoteBalance * baseRiskPercentage
+	//  Start with base position in quote currency = quoteBalance * baseRiskPercentage
 	basePosition := quoteBalance * baseRiskPercentage
 
-	// Adjust position size based on trend strength (ADX)
-	// If ADX > adxReference, increase the position size proportionally.
-	// If ADX < adxReference, decrease it.
-	// Example: For every point above 25 ADX, increase position by 1% of the basePosition
-	// For every point below 25 ADX, decrease accordingly.
-	// Clamp this to a range [0.5x basePosition, 2x basePosition] for safety.
+	// 1) Adjust position size based on ADX
 	adxMultiplier := 1.0 + (adx-adxReference)*0.02
 	if adxMultiplier < 0.5 {
 		adxMultiplier = 0.5
@@ -214,44 +212,52 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, quoteBal
 	}
 	adjustedForADX := basePosition * adxMultiplier
 
-	// Adjust position size based on ATR (Volatility)
-	// If ATR is high, reduce size. If ATR is low, increase it.
-	// For example, if ATR is twice the reference, reduce position by half.
-	// If ATR is half the reference, increase by up to 50%.
+	// 2) Adjust position size based on ATR (Volatility)
 	atrMultiplier := atrReference / atr
 	if atrMultiplier < 0.5 {
-		// Very high ATR → reduce even more
 		atrMultiplier = 0.5
 	} else if atrMultiplier > 1.5 {
-		// Very low ATR → cap the increase
 		atrMultiplier = 1.5
 	}
 	adjustedForVolatility := adjustedForADX * atrMultiplier
 
-	// Convert the absolute currency amount to a fraction of the quote balance
+	// 3) Convert the absolute currency amount to fraction of the quote balance
 	tradePercentage := adjustedForVolatility / quoteBalance
 
-	// Ensure the tradePercentage is within our defined min/max bounds
+	// 4) Ensure the tradePercentage is within our min/max
 	if tradePercentage < minTradePercentage {
 		tradePercentage = minTradePercentage
 	} else if tradePercentage > maxTradePercentage {
 		tradePercentage = maxTradePercentage
 	}
 
-	// Final amount to trade is tradePercentage * quoteBalance for BUY
-	// For SELL, we still consider selling all, but you could also scale sells similarly.
+	// 5) Final amount to trade
 	finalAmount := tradePercentage * quoteBalance
 
+	// 6) Enforce an absolute minimum buy: (exchangeMinNotional * (1 + extraPercent))
+	// so we don't get a NOTIONAL error. E.g., if min notional is $10, we want $10.50 as minimum.
+	minBuyAbsolute := notional * (1 + extraPercent)
+
+	// Proceed with BUY or SELL logic
 	if signal > 0 { // BUY Signal
-		// Ensure we do not exceed quote balance
-		amount := math.Min(finalAmount, quoteBalance)
+		// If finalAmount is below that absolute minBuy, clamp it
+		if finalAmount < minBuyAbsolute {
+			finalAmount = minBuyAbsolute
+		}
+
+		// Still can't exceed the actual quoteBalance
+		if finalAmount > quoteBalance {
+			finalAmount = quoteBalance
+		}
+
 		logger.Debugf(
-			"BUY %.2f %s | ATR=%.2f, ADX=%.2f, BaseRisk=%.2f%%, ADXMultiplier=%.2f, ATRMultiplier=%.2f, TradePercentage=%.2f%%",
-			amount, pair, atr, adx, baseRiskPercentage*100, adxMultiplier, atrMultiplier, tradePercentage*100,
+			"BUY %.2f %s | ATR=%.2f, ADX=%.2f, BaseRisk=%.2f%%, ADXMultiplier=%.2f, ATRMultiplier=%.2f, TradePercentage=%.2f%%, MinBuy=%.2f",
+			finalAmount, pair, atr, adx, baseRiskPercentage*100, adxMultiplier, atrMultiplier, tradePercentage*100, minBuyAbsolute,
 		)
-		return amount
+		return finalAmount
+
 	} else if signal < 0 { // SELL Signal
-		// Sell entire base balance
+		// If we are selling, typically we sell all base balance or handle partial logic
 		logger.Debugf(
 			"SELL %s: BaseBalance=%.2f, ATR=%.2f, ADX=%.2f, TradePercentage=%.2f%%",
 			pair, baseBalance, atr, adx, tradePercentage*100,
@@ -352,7 +358,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			currentPrice := candles[len(candles)-1].Close
 
 			// Determine trade size
-			tradeAmount := bot.calculateTradeAmountAdvance(sngl, quoteBalance, baseBalance, pair.Symbol, anls.ATR, anls.ADX)
+			tradeAmount := bot.calculateTradeAmountAdvance(sngl, pair.MinNotional, quoteBalance, baseBalance, pair.Symbol, anls.ATR, anls.ADX)
 			if tradeAmount == 0 {
 				logger.Warnf("Insufficient balance for %s trade. Skipping trade.", pair.Symbol)
 				continue
@@ -382,7 +388,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 					pair.Symbol, tradeAmount/currentPrice, currentPrice, quoteBalance)
 
 				go func(pair *models.TradingPair, tradeAmount, currentPrice, quoteBalance float64) {
-					if !bot.handleBuy(pair, tradeAmount/currentPrice, currentPrice, quoteBalance) {
+					if !bot.handleBuy(pair, strategy, tradeAmount/currentPrice, currentPrice, quoteBalance) {
 						//logger.Errorf("Error handling BUY for %s", pair.Symbol)
 						return
 					}
@@ -392,7 +398,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			if sngl < 0 { // SELL
 				// Check if the market is in an uptrend before selling
 				if isUptrend && sngl != -2 { // panic sell
-					logger.Infof("UPTREND signal for %s, cancelling sell", pair.Symbol)
+					logger.InfoColorf(logger.BrightBlack, "UPTREND signal for %s, cancelling sell", pair.Symbol)
 					continue
 				}
 				logger.Infof("SELL signal for %s | Amount: %.4f | Price: %.4f | Base Balance: %.4f",
@@ -410,7 +416,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 	}
 }
 
-func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, tradeAmount, currentPrice, quoteBalance float64) bool {
+func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, strategy interfaces.Strategy, tradeAmount, currentPrice, quoteBalance float64) bool {
 	if tradeAmount*currentPrice < pair.MinNotional {
 		//logger.Infof("BUY amount too small for %s. Adjusting to minimum notional.", pair.Symbol)
 		tradeAmount = pair.MinNotional / currentPrice
@@ -433,9 +439,28 @@ func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, tradeAmount,
 		logger.Infof("Error placing LIMIT BUY order for %s: %v", pair.Symbol, err)
 		return false
 	}
+	var rsiVal, macdVal, stochasticStr, stochasticSignal, lowerBound, middleBound, upperBound, ichimokuKijun, ichimokuTenkan, mfi, cci float64 = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+	if rsiMacdStrategy, ok := strategy.(*strategies.CompoundStrategy); ok {
+		lastData := rsiMacdStrategy.GetLatestData()
+		rsiVal = lastData.RSIVal
+		macdVal = lastData.MacdLine
+		stochasticStr = lastData.StochasticK
+		stochasticSignal = lastData.StochasticD
+		lowerBound = lastData.LowerBand
+		middleBound = lastData.MiddleBand
+		upperBound = lastData.UpperBand
+		mfi = lastData.MFIVal
+		cci = lastData.CCIVal
+		ichimokuKijun = lastData.IchimokuKijun
+		ichimokuTenkan = lastData.IchimokuTenkan
+	} else {
+		logger.Errorf("Error getting strategy for %s", pair.Symbol)
+	}
+
+	logger.Debugf("Trade Indicators: RSI=%.2f, MACD=%.2f, Stochastic=%.2f (Signal=%.2f) OrderID %d", rsiVal, macdVal, stochasticStr, stochasticSignal, orderID)
 
 	// Log trade in database
-	err = db2.SQLiteDB.LogActiveTrade(pair.Symbol, price, tradeAmount, orderID)
+	err = db2.SQLiteDB.LogActiveTrade(pair.Symbol, price, tradeAmount, orderID, rsiVal, macdVal, stochasticSignal, lowerBound, middleBound, upperBound, mfi, cci, ichimokuTenkan, ichimokuKijun)
 	if err != nil {
 		logger.Infof("Error logging BUY trade for %s: %v", pair.Symbol, err)
 	}
@@ -450,13 +475,13 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 		tradeAmount = pair.MinNotional / currentPrice
 
 		if tradeAmount > baseBalance {
-			logger.Infof("Skipping SELL for %s: Insufficient balance. Need %.2f Have %.2f", pair.Symbol, tradeAmount, baseBalance)
+			logger.Infof("Skipping SELL for %s: Insufficient balance. Need %.8f Have %.8f", pair.Symbol, tradeAmount, baseBalance)
 			return false
 		}
 	}
 
 	// Place Limit SELL Order
-	limitPrice := currentPrice * 0.999 // 0.1% lower than current price
+	limitPrice := currentPrice
 	//limitOrderPrice := strconv.FormatFloat(limitPrice, 'f', pair.PricePrecision, 64)
 	executedVolume := strconv.FormatFloat(tradeAmount, 'f', pair.QtyPrecision, 64)
 
@@ -475,36 +500,25 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 	}
 	profitLoss := (price - activeTrade.BuyPrice) * activeTrade.Quantity
 
-	bot.candlesMu.RLock()
-	candles, exists := bot.candles[pair.Symbol]
-	bot.candlesMu.RUnlock()
+	var rsiVal, macdVal, stochasticStr, stochasticSignal, lowerBound, middleBound, upperBound, mfi, cci float64 = 0, 0, 0, 0, 0, 0, 0, 0, 0
+	var ichimoku algos.IchimokuResult
 
-	bot.pairsMu.RLock()
-	strategy, hasStrategy := bot.pairStrategies[pair.Symbol]
-	bot.pairsMu.RUnlock()
-
-	var rsiVal, macdVal, stochasticStr, stochasticSignal, lowerBound, middleBound, upperBound float64 = 0, 0, 0, 0, 0, 0, 0
-	if hasStrategy {
-		// Load the strategy and fetch indicators and save it to the database
-		if rsiMacdStrategy, ok := strategy.(*strategies.CompoundStrategy); ok {
-			if exists || len(candles) != 0 {
-				rsiVal, _, _ = rsiMacdStrategy.GetRSI(candles, pair.Symbol)
-				macdVal, _, _, _, _ = rsiMacdStrategy.GetMACD(candles)
-				stochasticStr, stochasticSignal, _ = rsiMacdStrategy.GetStochastic(candles)
-				lowerBound, middleBound, upperBound, _ = rsiMacdStrategy.GetBollingerBands(candles)
-			}
-		} else {
-			logger.Errorf("Error getting strategy for %s", pair.Symbol)
-		}
-	} else {
-		logger.Errorf("Error getting strategy for %s", pair.Symbol)
-	}
+	rsiVal = activeTrade.RSI
+	macdVal = activeTrade.Macd
+	stochasticSignal = activeTrade.Stochastic
+	lowerBound = activeTrade.LowerBound
+	middleBound = activeTrade.MiddleBound
+	upperBound = activeTrade.UpperBound
+	mfi = activeTrade.MFI
+	cci = activeTrade.CCI
+	ichimoku.Tenkan = activeTrade.IchimokuTenkan
+	ichimoku.Kijun = activeTrade.IchimokuKijun
 
 	// Fetch indicator values
 	logger.Debugf("Trade Indicators: RSI=%.2f, MACD=%.2f, Stochastic=%.2f (Signal=%.2f) OrderID %d", rsiVal, macdVal, stochasticStr, stochasticSignal, orderID)
 
 	// Log the trade
-	err = db2.SQLiteDB.LogCompletedTrade(pair.Symbol, activeTrade.BuyPrice, price, activeTrade.Quantity, profitLoss, rsiVal, macdVal, stochasticSignal, lowerBound, middleBound, upperBound)
+	err = db2.SQLiteDB.LogCompletedTrade(pair.Symbol, activeTrade.BuyPrice, price, activeTrade.Quantity, profitLoss, rsiVal, macdVal, stochasticSignal, lowerBound, middleBound, upperBound, mfi, cci, ichimoku.Tenkan, ichimoku.Kijun, activeTrade.Timestamp.Unix(), activeTrade.GetOrderID())
 	if err != nil {
 		logger.Errorf("Error logging completed trade (SELL) for %s: %v", pair.Symbol, err)
 	} else {
@@ -734,19 +748,22 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 }
 
 func (bot *MultiPairTradingBot) isMarketStateEnabled(state models.MarketState) bool {
-	if bot.config.Trending.Enabled && state == models.Trending {
-		return true
+	switch state {
+	case models.Trending:
+		return bot.config.Trending.Enabled
+	case models.Chaotic:
+		return bot.config.Chaotic.Enabled
+	case models.RangeBound:
+		return bot.config.RangeBound.Enabled
+	case models.Default:
+		return bot.config.Default.Enabled
+	case models.Transitional:
+		return bot.config.Transitional.Enabled
+	case models.StronglyTrending:
+		return bot.config.StronglyTrending.Enabled
+	default:
+		return false
 	}
-	if bot.config.Chaotic.Enabled && state == models.Chaotic {
-		return true
-	}
-	if bot.config.RangeBound.Enabled && state == models.RangeBound {
-		return true
-	}
-	if bot.config.Default.Enabled && state == models.Default {
-		return true
-	}
-	return false
 }
 
 func (bot *MultiPairTradingBot) resyncTrades() {
@@ -783,7 +800,7 @@ func (bot *MultiPairTradingBot) resyncTrades() {
 			quantity := trade.Quantity
 			profitLoss := (sellPrice - trade.BuyPrice) * quantity
 
-			err = db2.SQLiteDB.LogCompletedTrade(trade.Symbol, trade.BuyPrice, sellPrice, quantity, profitLoss, 0, 0, 0, 0, 0, 0)
+			err = db2.SQLiteDB.LogCompletedTrade(trade.Symbol, trade.BuyPrice, sellPrice, quantity, profitLoss, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, lastTrade.Time, lastTrade.OrderID)
 			if err != nil {
 				logger.Errorf("Error logging completed trade for %s: %v", trade.Symbol, err)
 				continue

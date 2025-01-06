@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"binance_bot/algos"
 	"binance_bot/logger"
 	"binance_bot/models"
 	"github.com/go-playground/validator/v10"
@@ -19,6 +20,60 @@ type MarketAnalyzer struct {
 	IchimokuSpanBPeriod      int     `validate:"required"`
 	VolumeThreshold          float64 `validate:"required"` // Threshold to consider volume "significant"
 	FractalLookback          int     `validate:"required"` // Period used for Donchian or fractal analysis
+
+	// Optional Indicators (MFI, CCI)
+	MFIPeriod     int
+	MFIOverbought float64
+	MFIOversold   float64
+
+	CCIPeriod     int
+	CCIOverbought float64
+	CCIOversold   float64
+}
+
+var mfiAlgo *algos.MFIStrategy
+var cciAlgo *algos.CCIStrategy
+
+func NewMarketAnalyzer(analyzer MarketAnalyzer) *MarketAnalyzer {
+	if err := validator.New().Struct(analyzer); err != nil {
+		logger.Fatalf("Invalid MarketAnalyzer configuration: %v", err)
+	}
+	if analyzer.MFIPeriod != 0 && analyzer.MFIOverbought != 0 && analyzer.MFIOversold != 0 {
+		logger.Infof("MFI Strategy enabled for MarketAnalysis with Period=%d, Overbought=%v, Oversold=%v",
+			analyzer.MFIPeriod, analyzer.MFIOverbought, analyzer.MFIOversold)
+		mfiAlgo = &algos.MFIStrategy{
+			Overbought: int(analyzer.MFIOverbought),
+			Oversold:   int(analyzer.MFIOversold),
+			Period:     analyzer.MFIPeriod,
+		}
+	}
+
+	if analyzer.CCIPeriod != 0 && analyzer.CCIOverbought != 0 && analyzer.CCIOversold != 0 {
+		logger.Infof("CCI Strategy enabled for MarketAnalysis with Period=%d, Overbought=%v, Oversold=%v",
+			analyzer.CCIPeriod, analyzer.CCIOverbought, analyzer.CCIOversold)
+		cciAlgo = &algos.CCIStrategy{
+			Period:     analyzer.CCIPeriod,
+			Overbought: analyzer.CCIOverbought,
+			Oversold:   analyzer.CCIOversold,
+		}
+	}
+	return &MarketAnalyzer{
+		ATRPeriod:                analyzer.ATRPeriod,
+		ADXPeriod:                analyzer.ADXPeriod,
+		HighVolatilityThreshold:  analyzer.HighVolatilityThreshold,
+		StrongTrendThreshold:     analyzer.StrongTrendThreshold,
+		IchimokuConversionPeriod: analyzer.IchimokuConversionPeriod,
+		IchimokuBasePeriod:       analyzer.IchimokuBasePeriod,
+		IchimokuSpanBPeriod:      analyzer.IchimokuSpanBPeriod,
+		VolumeThreshold:          analyzer.VolumeThreshold,
+		FractalLookback:          analyzer.FractalLookback,
+		MFIPeriod:                analyzer.MFIPeriod,
+		MFIOverbought:            analyzer.MFIOverbought,
+		MFIOversold:              analyzer.MFIOversold,
+		CCIPeriod:                analyzer.CCIPeriod,
+		CCIOverbought:            analyzer.CCIOverbought,
+		CCIOversold:              analyzer.CCIOversold,
+	}
 }
 
 // AnalyzeMarket determines the market state based on various signals
@@ -35,16 +90,42 @@ func (ma *MarketAnalyzer) AnalyzeMarket(candles []models.CandleStick) (marketSta
 	isUptrend := ma.IsUptrend(candles)
 
 	// Additional Indicators
-	ichimokuSignal := ma.calculateIchimokuCloud(candles)      // "bullish", "bearish", or "neutral"
-	volumeSignal := ma.analyzeVolume(candles)                 // "rising", "falling", "stable"
-	fractalSignal := ma.detectFractalCharacteristics(candles) // "range", "breakout", "mixed"
+	ichimokuSignal := ma.calculateIchimokuCloud(candles)
+	volumeSignal := ma.analyzeVolume(candles)
+	fractalSignal := ma.detectFractalCharacteristics(candles)
 
-	logger.Debugf("[Market Analysis Raw Data] ATR=%.2f | ADX=%.2f | Uptrend=%v | Ichimoku=%v | Volume=%v | Fractal=%v",
-		atr, adx, isUptrend, ichimokuSignal, volumeSignal, fractalSignal)
+	// OPTIONAL Indicators
+	var mfiVal float64
+	var mfiSignal int
+	var mfiEnabled = mfiAlgo != nil
+	if mfiEnabled {
+		var errMfi error
+		mfiVal, mfiSignal, errMfi = mfiAlgo.Calculate(candles, "")
+		if errMfi != nil {
+			logger.Debugf("Error computing MFI: %v", errMfi)
+		} else {
+			logger.Debugf("MFI=%.2f, MFI-Signal=%d", mfiVal, mfiSignal)
+		}
+	}
+	var cciVal float64
+	var cciSignal int
+	var cciEnabled = cciAlgo != nil
+	if cciEnabled {
+		var errCci error
+		cciVal, cciSignal, errCci = cciAlgo.Calculate(candles, "")
+		if errCci != nil {
+			logger.Debugf("Error computing CCI: %v", errCci)
+		} else {
+			logger.Debugf("CCI=%.2f, CCI-Signal=%d", cciVal, cciSignal)
+		}
+	}
+
+	logger.Debugf("[Market Analysis Raw Data] ATR=%.2f | ADX=%.2f | Uptrend=%v | Ichimoku=%v | Volume=%v | Fractal=%v | MFI=%.2f | CCI=%.2f",
+		atr, adx, isUptrend, ichimokuSignal, volumeSignal, fractalSignal, mfiVal, cciVal)
 
 	var trendingScore, chaoticScore, rangeScore float64
 
-	// Trending conditions (as before)
+	// --- Trending conditions (existing) ---
 	if atr < ma.HighVolatilityThreshold {
 		trendingScore += 1.0
 	}
@@ -63,7 +144,20 @@ func (ma *MarketAnalyzer) AnalyzeMarket(candles []models.CandleStick) (marketSta
 		trendingScore += 0.5
 	}
 
-	// Chaotic conditions
+	if mfiEnabled {
+		if mfiVal < ma.MFIOverbought {
+			trendingScore += 0.5 // a slight bump
+		}
+	}
+
+	if cciEnabled {
+		if cciVal < ma.CCIOverbought && cciVal > ma.CCIOversold {
+			// CCI is not extremely over/under
+			trendingScore += 0.5
+		}
+	}
+
+	// --- Chaotic conditions (existing) ---
 	if atr > ma.HighVolatilityThreshold {
 		chaoticScore += 1.0
 	}
@@ -77,7 +171,20 @@ func (ma *MarketAnalyzer) AnalyzeMarket(candles []models.CandleStick) (marketSta
 		chaoticScore += 0.5
 	}
 
-	// Range-Bound conditions
+	// NEW: maybe if MFI > Overbought => we suspect chaotic blow-off top
+	if mfiEnabled {
+		if mfiVal > ma.MFIOverbought {
+			chaoticScore += 0.5
+		}
+	}
+	// Similarly if CCI is extremely high or extremely low => might be chaotic
+	if cciEnabled {
+		if cciVal > ma.CCIOverbought || cciVal < ma.CCIOversold {
+			chaoticScore += 0.5
+		}
+	}
+
+	// --- Range-Bound conditions (existing) ---
 	if atr < ma.HighVolatilityThreshold {
 		rangeScore += 1.0
 	}
@@ -91,19 +198,27 @@ func (ma *MarketAnalyzer) AnalyzeMarket(candles []models.CandleStick) (marketSta
 		rangeScore += 1.0
 	}
 
-	logger.Debugf("[State Scores] Trending=%.2f | Chaotic=%.2f | RangeBound=%.2f", trendingScore, chaoticScore, rangeScore)
+	// NEW: if MFI in mid-range => 40–60 => might indicate sideways range
+	if mfiEnabled {
+		if mfiVal >= ma.MFIOversold && mfiVal <= ma.MFIOverbought {
+			rangeScore += 0.5
+		}
+	}
+	// If CCI near 0 => not strongly trending => might be range
+	if cciEnabled {
+		if math.Abs(cciVal) < 50 {
+			rangeScore += 0.5
+		}
+	}
 
-	// For now, let's just handle them here without changing models:
-	// If you can't modify models easily, consider a local mapping.
+	logger.Debugf("[State Scores] Trending=%.2f | Chaotic=%.2f | RangeBound=%.2f", trendingScore, chaoticScore, rangeScore)
 
 	scores := map[models.MarketState]float64{
 		models.Trending:   trendingScore,
 		models.Chaotic:    chaoticScore,
 		models.RangeBound: rangeScore,
-		// Default will get 0 unless all fail
 	}
 
-	// Determine top state
 	var chosenState models.MarketState
 	highestScore := math.Inf(-1)
 	for state, score := range scores {
@@ -114,33 +229,25 @@ func (ma *MarketAnalyzer) AnalyzeMarket(candles []models.CandleStick) (marketSta
 	}
 
 	requiredScore := 1.5
-	strongTrendThreshold := 3.5  // If trending score > 3.5, call it strongly trending
-	transitionalThreshold := 0.5 // If we don't meet requiredScore but >0.5, call it transitional
+	strongTrendThreshold := 3.5
+	transitionalThreshold := 0.5
 
-	// If highestScore doesn't meet the requiredScore
 	if highestScore < requiredScore {
-		// Check if we have at least some minor indication
 		if highestScore > transitionalThreshold {
 			logger.Infof("Scores not enough for main states but above transitional threshold. Using TRANSITIONAL.")
-			// You'll need to define TRANSITIONAL in your models:
-			// e.g., const Transitional MarketState = iota + 4
-			// For now assume models.Transitional exists:
 			return models.Transitional, atr, adx
 		}
-
 		logger.Debugf("No state met the required score (%.2f). Using DEFAULT. Scores: T=%.2f C=%.2f R=%.2f",
 			requiredScore, trendingScore, chaoticScore, rangeScore)
 		return models.Default, atr, adx
 	}
 
-	// If Trending is chosen and score is very high, classify as StronglyTrending
 	if chosenState == models.Trending && trendingScore >= strongTrendThreshold {
 		logger.Debugf("Chosen Market State: StronglyTrending with Score=%.2f | T=%.2f C=%.2f R=%.2f",
 			highestScore, trendingScore, chaoticScore, rangeScore)
 		return models.StronglyTrending, atr, adx
 	}
 
-	// Otherwise return the chosen state normally
 	logger.Debugf("Chosen Market State: %v with Score=%.2f | T=%.2f C=%.2f R=%.2f",
 		chosenState, highestScore, trendingScore, chaoticScore, rangeScore)
 	return chosenState, atr, adx
@@ -253,21 +360,72 @@ func (ma *MarketAnalyzer) calculateADX(candles []models.CandleStick) float64 {
 // IsUptrend determines if the market is in an uptrend based on EMA and ADX
 func (ma *MarketAnalyzer) IsUptrend(candles []models.CandleStick) bool {
 	totalCandles := len(candles)
-
-	if totalCandles >= 50 {
-		// Use the full method
-		return ma.checkUptrendWithLongSMAs(candles)
-	} else if totalCandles >= 20 {
-		// Fallback #1: Shorter SMAs since we have fewer candles
-		return ma.checkUptrendWithShortSMAs(candles)
-	} else if totalCandles >= 10 {
-		// Fallback #2: Simple price-based heuristic
-		return ma.checkSimpleUptrend(candles, 3)
-	} else {
-		// Not enough data at all
+	if totalCandles < 10 {
 		logger.Infof("Extremely insufficient candles for trend detection. Got %d\n", totalCandles)
 		return false
 	}
+
+	//Compute MFI & CCI
+	var mfiVal float64
+	var mfiEnabled = mfiAlgo != nil
+	if mfiEnabled {
+		var errMfi error
+		mfiVal, _, errMfi = mfiAlgo.Calculate(candles, "")
+		if errMfi != nil {
+			logger.Debugf("Error computing MFI in IsUptrend: %v", errMfi)
+		}
+	}
+	var cciVal float64
+	var cciSignal int
+	var cciEnabled = cciAlgo != nil
+
+	if cciEnabled {
+		var errCci error
+		cciVal, cciSignal, errCci = cciAlgo.Calculate(candles, "")
+		if errCci != nil {
+			logger.Debugf("Error computing CCI in IsUptrend: %v", errCci)
+		}
+	}
+
+	// 2) Existing logic for large candle counts
+	switch {
+	case totalCandles >= 50:
+		if !ma.checkUptrendWithLongSMAs(candles) {
+			return false
+		}
+	case totalCandles >= 20:
+		if !ma.checkUptrendWithShortSMAs(candles) {
+			return false
+		}
+	default:
+		// If we have between 10 and 19 candles:
+
+	}
+
+	if mfiEnabled && mfiVal > ma.MFIOverbought {
+		logger.Debugf("MFI=%.2f is overbought (>%v). Not confirming uptrend.", mfiVal, ma.MFIOverbought)
+		return false
+	}
+
+	if cciEnabled && cciVal > ma.CCIOverbought {
+		logger.Debugf("CCI=%.2f is below oversold (%v). Possibly downward push, not uptrend yet.", cciVal, ma.CCIOversold)
+		return false
+	}
+
+	if cciEnabled && cciSignal == -1 {
+		logger.Debugf("CCI says overbought => cciSignal == -1, skipping uptrend.")
+		return false
+	}
+
+	adxVal := ma.calculateADX(candles)
+	if adxVal < 20 {
+		logger.Debugf("ADX=%.2f <20 => weak trend, skipping uptrend", adxVal)
+		return false
+	}
+
+	// If we reach here, we consider it an uptrend
+	logger.DebugColorf(logger.Cyan, "Uptrend confirmed by MFI=%.2f, CCI=%.2f, ADX=%.2f", mfiVal, cciVal, adxVal)
+	return true
 }
 
 func (ma *MarketAnalyzer) checkUptrendWithLongSMAs(candles []models.CandleStick) bool {

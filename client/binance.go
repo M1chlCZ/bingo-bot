@@ -329,7 +329,7 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 	do := func() (any, error) {
 		info, err := b.client.NewExchangeInfoService().Symbol(symbol).Do(context.Background())
 		if err != nil {
-			return Result{}, fmt.Errorf("failed to fetch exchange info for %s: %v", symbol, err)
+			return Result{}, fmt.Errorf("failed to fetch exchange info for %s: %w", symbol, err)
 		}
 
 		var minQty, maxQty, stepSize float64
@@ -337,15 +337,15 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 			if filter["filterType"] == "LOT_SIZE" {
 				minQty, err = strconv.ParseFloat(filter["minQty"].(string), 64)
 				if err != nil {
-					return Result{}, fmt.Errorf("failed to parse minQty for %s: %v", symbol, err)
+					return Result{}, fmt.Errorf("failed to parse minQty for %s: %w", symbol, err)
 				}
 				maxQty, err = strconv.ParseFloat(filter["maxQty"].(string), 64)
 				if err != nil {
-					return Result{}, fmt.Errorf("failed to parse maxQty for %s: %v", symbol, err)
+					return Result{}, fmt.Errorf("failed to parse maxQty for %s: %w", symbol, err)
 				}
 				stepSize, err = strconv.ParseFloat(filter["stepSize"].(string), 64)
 				if err != nil {
-					return Result{}, fmt.Errorf("failed to parse stepSize for %s: %v", symbol, err)
+					return Result{}, fmt.Errorf("failed to parse stepSize for %s: %w", symbol, err)
 				}
 			}
 		}
@@ -353,7 +353,7 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 		// Adjust quantity to comply with LOT_SIZE
 		quantityFloat, err := strconv.ParseFloat(quantity, 64)
 		if err != nil {
-			return Result{}, fmt.Errorf("invalid quantity format: %v", err)
+			return Result{}, fmt.Errorf("invalid quantity format: %w", err)
 		}
 
 		if quantityFloat < minQty {
@@ -382,10 +382,10 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 
 		quantityPrecision := 0
 
-		if side == "BUY" {
+		if side == "SELL" {
 			quantityPrecision = info.Symbols[0].BaseAssetPrecision
 		} else {
-			quantityPrecision = info.Symbols[0].BaseAssetPrecision
+			quantityPrecision = info.Symbols[0].QuoteAssetPrecision
 		}
 
 		formattedQty = strconv.FormatFloat(adjustedQty, 'f', quantityPrecision, 64)
@@ -396,8 +396,8 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 		order, err := b.client.NewCreateOrderService().
 			Symbol(symbol).
 			Side(binance.SideType(side)).
-			Type(binance.OrderTypeMarket). // Market order
-			Quantity(formattedQty).        // Base asset quantity
+			Type(binance.OrderTypeMarket).
+			Quantity(formattedQty).
 			Do(context.Background())
 
 		if err != nil {
@@ -415,7 +415,7 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 			}
 			quantity, err := strconv.ParseFloat(fill.Quantity, 64)
 			if err != nil {
-				return Result{}, fmt.Errorf("failed to parse fill quantity: %v", err)
+				return Result{}, fmt.Errorf("failed to parse fill quantity: %w", err)
 			}
 			totalQuoteQty += price * quantity
 			totalBaseQty += quantity

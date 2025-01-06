@@ -8,69 +8,91 @@ import (
 )
 
 // This configuration tries to be more crypto-friendly and trade more frequently.
-// Adjusted intervals, thresholds, and periods to be more lenient.
+// Adjust intervals, thresholds, and periods to be more lenient
 
 var (
-	// DefaultMarketState : A neutral baseline, now more willing to trade
+	// DefaultMarketState ---------------- DEFAULT ----------------
 	DefaultMarketState = types.MarketStateStrategy{
 		Enabled: true,
 		Strategy: &strategies.CompoundStrategy{
-			RiskRewardThreshold: 0.5, // Lower RR threshold to accept more trades
+			// Basic risk/logic config
+			PanicSell:           false,
+			RiskRewardThreshold: 0.5,
 			StrategyType:        strategies.RSIMACDStrategyType,
+
+			// RSI
 			RSI: &algos.RSIStrategy{
-				Overbought: 65, // Slightly lower overbought to generate SELL signals sooner
-				Oversold:   28, // Slightly higher oversold to generate BUY signals sooner
+				Overbought: 65,
+				Oversold:   28,
 				Period:     12,
 			},
+			// MACD
 			MACD: &algos.MACDStrategy{
-				FastPeriod:   6,  // Faster MACD for quicker signals
-				SlowPeriod:   15, // Shorter slow period
-				SignalPeriod: 3,  // Quicker signal line
+				FastPeriod:   6,
+				SlowPeriod:   15,
+				SignalPeriod: 3,
 			},
+			// Bollinger
 			BollingerBands: &algos.BollingerBands{
 				Period: 12,
-				Width:  2.2, // Narrower than 3.5 to see more band touches
+				Width:  2.2,
 			},
+			// Stochastic
 			Stochastic: &algos.StochasticOscillator{
-				Overbought: 65, // Lower overbought, more frequent sells
-				Oversold:   28, // Higher oversold, more frequent buys
+				Overbought: 65,
+				Oversold:   28,
 				Period:     10,
 			},
+			// Ichimoku
 			Ichimoku: &algos.IchimokuStrategy{
 				ConversionPeriod: 7,
 				BasePeriod:       24,
 				SpanBPeriod:      44,
 			},
-			CandleInterval:            "6h", // More frequent checks than 12h
-			DesiredProfit:             1.0,  // Lower profit target to secure quick wins
-			HighestPriceFallOffMargin: 0.5,  // Smaller panic sell margin
+			// CCI
+			CCI: &algos.CCIStrategy{
+				Period:     14,
+				Overbought: 100,
+				Oversold:   -100,
+			},
+			// MFI
+			MFI: &algos.MFIStrategy{
+				Period:     14,
+				Overbought: 80,
+				Oversold:   20,
+			},
+
+			CandleInterval:            "12h",
+			DesiredProfit:             1.0,
+			HighestPriceFallOffMargin: 0.5,
 			FeeRate:                   0.001,
 			MarketState:               models.Default,
 		},
 	}
 
-	// ChaoticMarketState : Very short intervals and very permissive conditions to trade mean-reversions often
+	// ChaoticMarketState ---------------- CHAOTIC ----------------
 	ChaoticMarketState = types.MarketStateStrategy{
-		Enabled: true,
+		Enabled: false,
 		Strategy: &strategies.CompoundStrategy{
-			RiskRewardThreshold: 0.7, // Slightly lenient
+			PanicSell:           false,
+			RiskRewardThreshold: 0.7,
 			RSI: &algos.RSIStrategy{
-				Overbought: 72,
+				Overbought: 60,
 				Oversold:   28,
-				Period:     10, // Shorter RSI period for quicker signals
+				Period:     10,
 			},
 			MACD: &algos.MACDStrategy{
 				FastPeriod:   5,
 				SlowPeriod:   12,
-				SignalPeriod: 4, // Very fast MACD to catch sudden moves
+				SignalPeriod: 4,
 			},
 			BollingerBands: &algos.BollingerBands{
 				Period: 7,
-				Width:  2.8, // Slightly narrower than default chaotic
+				Width:  2.2,
 			},
 			Stochastic: &algos.StochasticOscillator{
 				Overbought: 85,
-				Oversold:   15,
+				Oversold:   18,
 				Period:     7,
 			},
 			Ichimoku: &algos.IchimokuStrategy{
@@ -78,19 +100,30 @@ var (
 				BasePeriod:       22,
 				SpanBPeriod:      44,
 			},
-			CandleInterval:            "1h", // Faster interval for quick trades
-			DesiredProfit:             1.0,  // Slight profit target
+			CCI: &algos.CCIStrategy{
+				Period:     7,
+				Overbought: 120,
+				Oversold:   -120,
+			},
+			MFI: &algos.MFIStrategy{
+				Period:     7,
+				Overbought: 75,
+				Oversold:   15,
+			},
+			CandleInterval:            "4h",
+			DesiredProfit:             1.0,
 			HighestPriceFallOffMargin: 1.0,
 			FeeRate:                   0.001,
 			MarketState:               models.Chaotic,
 		},
 	}
 
-	// TrendingMarketState : Slightly less strict to allow more trades in confirmed trends
+	// TrendingMarketState ---------------- TRENDING ----------------
 	TrendingMarketState = types.MarketStateStrategy{
 		Enabled: true,
 		Strategy: &strategies.CompoundStrategy{
-			RiskRewardThreshold: 1.0, // Lower than 1.1 for more trades
+			PanicSell:           false,
+			RiskRewardThreshold: 1.0,
 			RSI: &algos.RSIStrategy{
 				Overbought: 68,
 				Oversold:   32,
@@ -99,11 +132,11 @@ var (
 			MACD: &algos.MACDStrategy{
 				FastPeriod:   10,
 				SlowPeriod:   20,
-				SignalPeriod: 7, // Slightly faster MACD than standard
+				SignalPeriod: 7,
 			},
 			BollingerBands: &algos.BollingerBands{
 				Period: 20,
-				Width:  2.3, // Slightly narrower to catch pullbacks in trend
+				Width:  2.3,
 			},
 			Stochastic: &algos.StochasticOscillator{
 				Overbought: 75,
@@ -115,56 +148,78 @@ var (
 				BasePeriod:       26,
 				SpanBPeriod:      52,
 			},
-			CandleInterval:            "12h", // Keep a decent interval
-			DesiredProfit:             5.0,   // Lower than 10 to secure profits sooner
-			HighestPriceFallOffMargin: 3.0,   // Less margin than 5.0
+			CCI: &algos.CCIStrategy{
+				Period:     20,
+				Overbought: 100,
+				Oversold:   -25,
+			},
+			MFI: &algos.MFIStrategy{
+				Period:     14,
+				Overbought: 80,
+				Oversold:   20,
+			},
+			CandleInterval:            "12h",
+			DesiredProfit:             5.0,
+			HighestPriceFallOffMargin: 3.0,
 			FeeRate:                   0.001,
 			MarketState:               models.Trending,
 		},
 	}
 
-	// RangeBoundMarketState : More frequent trades at band extremes
+	// RangeBoundMarketState ---------------- RANGE-BOUND ----------------
 	RangeBoundMarketState = types.MarketStateStrategy{
 		Enabled: true,
 		Strategy: &strategies.CompoundStrategy{
-			RiskRewardThreshold: 0.8, // More lenient
+			PanicSell:           false,
+			RiskRewardThreshold: 0.8,
 			MACD: &algos.MACDStrategy{
 				FastPeriod:   9,
 				SlowPeriod:   21,
 				SignalPeriod: 7,
 			},
 			Stochastic: &algos.StochasticOscillator{
-				Overbought: 60, // Even lower to generate trades sooner
-				Oversold:   40, // Higher oversold for more buys
+				Overbought: 60,
+				Oversold:   40,
 				Period:     14,
 			},
 			BollingerBands: &algos.BollingerBands{
 				Period: 15,
-				Width:  2.0, // Narrow bands for frequent touches
+				Width:  2.0,
 			},
 			RSI: &algos.RSIStrategy{
 				Overbought: 65,
 				Oversold:   35,
-				Period:     10, // Shorter RSI period for quick signals
+				Period:     10,
 			},
 			Ichimoku: &algos.IchimokuStrategy{
 				ConversionPeriod: 9,
 				BasePeriod:       26,
 				SpanBPeriod:      52,
 			},
-			CandleInterval:            "8h", // Slightly shorter than 12h for more signals
-			DesiredProfit:             2.0,  // Lower desired profit to realize gains in a range
-			HighestPriceFallOffMargin: 2.0,  // Slightly lower than 3.0
+			CCI: &algos.CCIStrategy{
+				Period:     14,
+				Overbought: 100,
+				Oversold:   -100,
+			},
+			MFI: &algos.MFIStrategy{
+				Period:     14,
+				Overbought: 80,
+				Oversold:   20,
+			},
+			CandleInterval:            "1d",
+			DesiredProfit:             2.0,
+			HighestPriceFallOffMargin: 2.0,
 			FeeRate:                   0.001,
 			MarketState:               models.RangeBound,
 		},
 	}
 
-	// StronglyTrendingMarketState : Quickly capitalize on strong trends with somewhat relaxed conditions
+	// StronglyTrendingMarketState ---------------- STRONGLY TRENDING ----------------
 	StronglyTrendingMarketState = types.MarketStateStrategy{
 		Enabled: true,
 		Strategy: &strategies.CompoundStrategy{
-			RiskRewardThreshold: 1.2, // Slightly lower than 1.5 to get more trades
+			PanicSell:           true,
+			RiskRewardThreshold: 1.2,
 			RSI: &algos.RSIStrategy{
 				Overbought: 65,
 				Oversold:   30,
@@ -177,7 +232,7 @@ var (
 			},
 			BollingerBands: &algos.BollingerBands{
 				Period: 20,
-				Width:  1.8, // Even narrower to catch small pullbacks
+				Width:  1.8,
 			},
 			Stochastic: &algos.StochasticOscillator{
 				Overbought: 75,
@@ -189,23 +244,34 @@ var (
 				BasePeriod:       26,
 				SpanBPeriod:      52,
 			},
-			CandleInterval:            "8h", // Slightly more frequent updates than 1d
-			DesiredProfit:             8.0,  // Lower than 15 to secure profits
-			HighestPriceFallOffMargin: 4.0,  // Less margin to prevent big drawdowns
+			CCI: &algos.CCIStrategy{
+				Period:     20,
+				Overbought: 150,
+				Oversold:   -150,
+			},
+			MFI: &algos.MFIStrategy{
+				Period:     14,
+				Overbought: 85,
+				Oversold:   15,
+			},
+			CandleInterval:            "12h",
+			DesiredProfit:             8.0,
+			HighestPriceFallOffMargin: 4.0,
 			FeeRate:                   0.001,
 			MarketState:               models.StronglyTrending,
 		},
 	}
 
-	// TransitionalMarketState : Very low threshold to encourage taking contrarian trades
+	// TransitionalMarketState ---------------- TRANSITIONAL ----------------
 	TransitionalMarketState = types.MarketStateStrategy{
 		Enabled: true,
 		Strategy: &strategies.CompoundStrategy{
-			RiskRewardThreshold: 0.6, // Even more lenient
+			PanicSell:           false,
+			RiskRewardThreshold: 0.6,
 			RSI: &algos.RSIStrategy{
 				Overbought: 80,
 				Oversold:   20,
-				Period:     10, // Shorter period for quick signals
+				Period:     10,
 			},
 			MACD: &algos.MACDStrategy{
 				FastPeriod:   8,
@@ -214,7 +280,7 @@ var (
 			},
 			BollingerBands: &algos.BollingerBands{
 				Period: 10,
-				Width:  3.0, // Wide bands in transitional markets to find extremes
+				Width:  3.0,
 			},
 			Stochastic: &algos.StochasticOscillator{
 				Overbought: 85,
@@ -226,8 +292,18 @@ var (
 				BasePeriod:       22,
 				SpanBPeriod:      44,
 			},
-			CandleInterval:            "4h", // Frequent checks for transitions
-			DesiredProfit:             1.0,  // Small quick profits
+			CCI: &algos.CCIStrategy{
+				Period:     14,
+				Overbought: 100,
+				Oversold:   -100,
+			},
+			MFI: &algos.MFIStrategy{
+				Period:     10,
+				Overbought: 80,
+				Oversold:   20,
+			},
+			CandleInterval:            "4h",
+			DesiredProfit:             1.0,
 			HighestPriceFallOffMargin: 0.8,
 			FeeRate:                   0.001,
 			MarketState:               models.Transitional,

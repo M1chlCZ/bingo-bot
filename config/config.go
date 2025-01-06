@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-type ConfigMultiTrading struct {
+type MultiTrading struct {
 	AutoTrading          bool
 	Default              types.MarketStateStrategy `validate:"required"`
 	Chaotic              types.MarketStateStrategy `validate:"required"`
@@ -27,8 +27,8 @@ type ConfigMultiTrading struct {
 	AnalyzerConfig       *analysis.MarketAnalyzer `validate:"required"`
 }
 
-func DefaultMultiTradingConfig() ConfigMultiTrading {
-	return ConfigMultiTrading{
+func DefaultMultiTradingConfig() MultiTrading {
+	return MultiTrading{
 		AutoTrading:          true,
 		Default:              DefaultMarketState,
 		Chaotic:              ChaoticMarketState,
@@ -41,7 +41,7 @@ func DefaultMultiTradingConfig() ConfigMultiTrading {
 		IncludedBaseMarkets:  []string{"USDT"},
 		TradingLoopInterval:  10 * time.Second,
 		AnalysisLoopInterval: 30 * time.Minute,
-		AnalyzerConfig: &analysis.MarketAnalyzer{
+		AnalyzerConfig: analysis.NewMarketAnalyzer(analysis.MarketAnalyzer{
 			ATRPeriod:                15,
 			ADXPeriod:                15,
 			HighVolatilityThreshold:  0.03,
@@ -51,11 +51,18 @@ func DefaultMultiTradingConfig() ConfigMultiTrading {
 			IchimokuSpanBPeriod:      52,
 			VolumeThreshold:          10000.0,
 			FractalLookback:          20,
-		},
+			// optional MFI and CCI
+			MFIPeriod:     14,
+			MFIOverbought: 80,
+			MFIOversold:   20,
+			CCIPeriod:     20,
+			CCIOverbought: 100,
+			CCIOversold:   -100,
+		}),
 	}
 }
 
-func (c *ConfigMultiTrading) UpdateStrategy(state models.MarketState, strategy types.MarketStateStrategy) {
+func (c *MultiTrading) UpdateStrategy(state models.MarketState, strategy types.MarketStateStrategy) {
 	err := strategy.Validate()
 	if err != nil {
 		var validationErrors validator.ValidationErrors
@@ -83,7 +90,7 @@ func (c *ConfigMultiTrading) UpdateStrategy(state models.MarketState, strategy t
 	}
 }
 
-func (c *ConfigMultiTrading) UpdateAnalyzerConfig(analyzerConfig *analysis.MarketAnalyzer) {
+func (c *MultiTrading) UpdateAnalyzerConfig(analyzerConfig *analysis.MarketAnalyzer) {
 	err := analyzerConfig.Validate()
 	if err != nil {
 		var validationErrors validator.ValidationErrors
@@ -97,18 +104,18 @@ func (c *ConfigMultiTrading) UpdateAnalyzerConfig(analyzerConfig *analysis.Marke
 	c.AnalyzerConfig = analyzerConfig
 }
 
-func (c *ConfigMultiTrading) UpdateTradingLoopInterval(interval time.Duration) {
+func (c *MultiTrading) UpdateTradingLoopInterval(interval time.Duration) {
 	c.TradingLoopInterval = interval
 }
 
-func (c *ConfigMultiTrading) UpdateExcludedMarkets(markets []models.TradingPair) {
+func (c *MultiTrading) UpdateExcludedMarkets(markets []models.TradingPair) {
 	c.ExcludedMarkets = markets
 }
 
-func (c *ConfigMultiTrading) UpdateExcludedQuoteMarkets(markets []string) {
+func (c *MultiTrading) UpdateExcludedQuoteMarkets(markets []string) {
 	c.ExcludedQuoteMarkets = markets
 }
 
-func (c *ConfigMultiTrading) UpdateIncludedBaseMarkets(markets []string) {
+func (c *MultiTrading) UpdateIncludedBaseMarkets(markets []string) {
 	c.IncludedBaseMarkets = markets
 }

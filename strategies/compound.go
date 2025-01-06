@@ -15,13 +15,34 @@ type CompoundStrategy struct {
 	Stochastic                *algos.StochasticOscillator `validate:"required"`
 	BollingerBands            *algos.BollingerBands       `validate:"required"`
 	Ichimoku                  *algos.IchimokuStrategy     `validate:"required"`
+	CCI                       *algos.CCIStrategy          `validate:"required"`
+	MFI                       *algos.MFIStrategy          `validate:"required"`
 	MarketState               models.MarketState          `validate:"required"`
 	RiskRewardThreshold       float64                     `validate:"gte=0"`
 	FeeRate                   float64                     `validate:"gte=0"`
 	DesiredProfit             float64                     `validate:"gte=0"`
 	HighestPriceFallOffMargin float64                     `validate:"gte=0"`
 	CandleInterval            string                      `validate:"required"`
+	PanicSell                 bool                        `validate:"required"`
 }
+
+type LastData struct {
+	RSIVal         float64
+	Histogram      float64
+	SignalLine     float64
+	MacdLine       float64
+	StochasticK    float64
+	StochasticD    float64
+	LowerBand      float64
+	MiddleBand     float64
+	UpperBand      float64
+	IchimokuTenkan float64
+	IchimokuKijun  float64
+	CCIVal         float64
+	MFIVal         float64
+}
+
+var lastData LastData
 
 func (cs *CompoundStrategy) GetStrategyType() StrategyType {
 	return RSIMACDStrategyType
@@ -38,39 +59,64 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 	trade, _ := db2.SQLiteDB.GetActiveTrade(pair)
 	isActive, err := db2.SQLiteDB.IsCurrentlyActiveTrade(pair)
 	if err != nil {
-		logger.Errorf("Error checking active trade: %v", err)
+		logger.Errorf("Error checking active trade: %v", err.Error())
 		isActive = false
 	}
 
 	// Calculate Indicators
 	rsiVal, _, err := cs.RSI.Calculate(candles, pair)
 	if err != nil {
-		logger.Errorf("Error calculating RSI: %w", err)
+		logger.Errorf("Error calculating RSI: %v", err.Error())
 		return 0, err
 	}
-
-	_, macdSignalLine, macdVal, macdIndicatorSignal, err := cs.MACD.Calculate(candles)
+	macdHistogram, signalLine, macdLine, macdIndicatorSignal, err := cs.MACD.Calculate(candles)
 	if err != nil {
 		logger.Errorf("Error calculating MACD: %v", err)
 		return 0, err
 	}
 
-	stochasticK, _, err := cs.Stochastic.Calculate(candles)
+	stochasticK, stochasticD, err := cs.Stochastic.Calculate(candles)
 	if err != nil {
-		logger.Errorf("Error calculating Stochastic: %v", err)
+		logger.Errorf("Error calculating Stochastic: %v", err.Error())
 		return 0, err
 	}
 
 	lowerBand, middleBand, upperBand, err := cs.BollingerBands.Calculate(candles)
 	if err != nil {
-		logger.Errorf("Error calculating Bollinger Bands: %v", err)
+		logger.Errorf("Error calculating Bollinger Bands: %v", err.Error())
 		return 0, err
 	}
 
 	ichimokuRes, err := cs.Ichimoku.Calculate(candles)
 	if err != nil {
-		logger.Errorf("Error calculating Ichimoku: %v", err)
+		logger.Errorf("Error calculating Ichimoku: %v", err.Error())
 		return 0, err
+	}
+
+	cciVal, cciSignal, err := cs.CCI.Calculate(candles, pair)
+	if err != nil {
+		logger.Errorf("Error calculating CCI: %v", err)
+	}
+
+	mfiVal, mfiSignal, err := cs.MFI.Calculate(candles, pair)
+	if err != nil {
+		logger.Errorf("Error calculating MFI: %v", err)
+	}
+
+	lastData = LastData{
+		RSIVal:         rsiVal,
+		Histogram:      macdHistogram,
+		SignalLine:     signalLine,
+		MacdLine:       macdLine,
+		StochasticK:    stochasticK,
+		StochasticD:    stochasticD,
+		LowerBand:      lowerBand,
+		MiddleBand:     middleBand,
+		UpperBand:      upperBand,
+		IchimokuKijun:  ichimokuRes.Kijun,
+		IchimokuTenkan: ichimokuRes.Tenkan,
+		CCIVal:         cciVal,
+		MFIVal:         mfiVal,
 	}
 
 	// If a trade exists, handle P/L logic first
@@ -78,6 +124,7 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		breakevenPrice := trade.BuyPrice * (1 + cs.FeeRate)
 		profitMargin := (currentPrice - trade.BuyPrice) / trade.BuyPrice * 100
 
+		// HIGH PRICE since trade
 		athPrice, err := db2.SQLiteDB.GetAth(trade.Symbol)
 		if err != nil || currentPrice > athPrice {
 			logger.Infof("Setting new HIGH price for %s: %.8f", trade.Symbol, currentPrice)
@@ -86,6 +133,8 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			}
 			athPrice = currentPrice
 		}
+
+		// LOW PRICE since trade
 		atlPrice, err := db2.SQLiteDB.GetAtl(trade.Symbol)
 		if err != nil || currentPrice < atlPrice {
 			logger.Infof("Setting new LOW price for %s: %.8f", trade.Symbol, currentPrice)
@@ -95,6 +144,7 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			atlPrice = currentPrice
 		}
 
+		// Percentage change since trade
 		profitMarginATH := (currentPrice - athPrice) / athPrice * 100
 		upliftFromAtl := (currentPrice - atlPrice) / atlPrice * 100
 
@@ -106,8 +156,19 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		}
 
 		if profitMargin < -cs.HighestPriceFallOffMargin {
-			logger.InfoColorf(logger.BrightRed, "[PANIC SELL] %s: Price dropped below margin %.2f", pair, profitMargin)
-			return -1, nil
+			if cs.PanicSell {
+				logger.InfoColorf(logger.BrightRed, "[PANIC SELL] %s: Price dropped below margin %.2f", pair, profitMargin)
+				return -1, nil
+			}
+		}
+
+		if profitMarginATH < -cs.HighestPriceFallOffMargin {
+			if cs.PanicSell {
+				if profitMargin > 0 {
+					logger.InfoColorf(logger.BrightBlack, "[ATH FALL OFF SELL] %s: Desired profit dropped below set ATH dropoff margin: (%.2f%%)", pair, profitMarginATH)
+					return -1, nil
+				}
+			}
 		}
 
 		if currentPrice < breakevenPrice {
@@ -116,7 +177,7 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		}
 
 		if profitMargin > cs.DesiredProfit {
-			logger.InfoColorf(logger.BrightGreen, "[SELL] %s: Desired profit reached (%.2f%%)", pair, profitMargin)
+			logger.InfoColorf(logger.BrightBlack, "[SELL] %s: Desired profit reached (%.2f%%)", pair, profitMargin)
 			return -1, nil
 		}
 
@@ -124,167 +185,179 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		return 0, nil
 	}
 
-	// Determine signals commonly used across states
-	bullishConditions := (ichimokuRes.Bullish || !ichimokuRes.Bearish) && macdIndicatorSignal == 1 && rsiVal < float64(cs.RSI.Overbought)
-	bearishConditions := (ichimokuRes.Bearish || !ichimokuRes.Bullish) && macdIndicatorSignal == -1 && rsiVal > float64(cs.RSI.Oversold)
+	bullishConditions := (ichimokuRes.Bullish || !ichimokuRes.Bearish) &&
+		(macdIndicatorSignal == 1) &&
+		(rsiVal < float64(cs.RSI.Overbought)) &&
+		(macdHistogram > 0)
 
-	//signalColor := Cyan
-	//if bullishConditions {
-	//	signalColor = Green
-	//} else if bearishConditions {
-	//	signalColor = Red
-	//} else if ichimokuRes.Bullish || ichimokuRes.Bearish {
-	//	signalColor = Yellow
-	//}
+	bearishConditions := (ichimokuRes.Bearish || !ichimokuRes.Bullish) &&
+		(macdIndicatorSignal == -1) &&
+		(rsiVal > float64(cs.RSI.Oversold))
 
-	logger.DebugColorf(logger.BrightBlack, "%s | %s | Ichimoku=(B:%t, Br:%t), MACD=%d, RSIVal=%.2f, StochK=%.2f", pair, marketState.String(), ichimokuRes.Bullish, ichimokuRes.Bearish, macdIndicatorSignal, rsiVal, stochasticK)
+	// Log
+	logger.DebugColorf(logger.BrightBlack,
+		"%s | %s | Ichimoku=(B:%t, Br:%t), MACD=%d (hist=%.2f), RSI=%.2f, Stoch=%.2f, CCI=%.2f, MFI=%.2f",
+		pair, marketState.String(),
+		ichimokuRes.Bullish, ichimokuRes.Bearish,
+		macdIndicatorSignal, macdHistogram, rsiVal, stochasticK, cciVal, mfiVal,
+	)
 
-	// Market-state based logic
+	mfiOverbought := float64(cs.MFI.Overbought)
+	mfiOversold := float64(cs.MFI.Oversold)
+	cciOverbought := cs.CCI.Overbought
+	cciOversold := cs.CCI.Oversold
+	rsiOverbought := float64(cs.RSI.Overbought)
+	//rsiOversold := float64(cs.RSI.Oversold)
+
+	// === Market-state based logic ===
 	switch marketState {
+	// ------------------ STRONGLY TRENDING ------------------
 	case models.StronglyTrending:
-		if ichimokuRes.Bullish && macdIndicatorSignal == 1 && rsiVal < float64(cs.RSI.Overbought) && stochasticK < float64(cs.Stochastic.Overbought) {
-			if currentPrice < middleBand {
-				target := upperBand * 1.02
-				stop := lowerBand
-				rr := cs.calcRR(currentPrice, stop, target, pair)
-				logger.InfoColorf(logger.BrightBlue, "[ %s STRONGLY TREDING RR=%.2f ]", pair, rr)
-				if rr > cs.RiskRewardThreshold {
-					logger.InfoColorf(logger.BrightGreen, "[ %s STRONGLY TREDING | UPTREND CONFIRMED RR=%.2f ]", pair, rr)
-					return 1, nil
-				}
-			}
-		}
+		if ichimokuRes.Bullish && macdIndicatorSignal == 1 && macdHistogram > 0 &&
+			rsiVal < rsiOverbought &&
+			cciVal < cciOverbought && cciVal > cciOversold &&
+			mfiVal < mfiOverbought && mfiVal > mfiOversold &&
+			currentPrice < middleBand {
 
-		if ichimokuRes.Bearish && macdIndicatorSignal == -1 && rsiVal > float64(cs.RSI.Oversold) && stochasticK > float64(cs.Stochastic.Oversold) && isActive {
-			if currentPrice > middleBand {
-				target := lowerBand * 0.98
-				stop := upperBand * 1.02
-				rr := cs.calcRRForSell(currentPrice, stop, target, pair)
-				if rr > cs.RiskRewardThreshold {
-					logger.InfoColorf(logger.BrightRed, "[ %s Strongly Trending SELL| DOWNTREND CONFIRMED RR=%.2f ]", pair, rr)
-					return -1, nil
-				}
-			}
-		}
-		logger.DebugColorf(logger.BrightMagenta, "[ Strongly Trending HOLD ] %s", pair)
-
-		return 0, nil
-
-	case models.Transitional:
-		if rsiVal < 15 && macdIndicatorSignal >= 0 && stochasticK < float64(cs.Stochastic.Oversold) {
-			target := middleBand
-			stop := currentPrice * 0.98
-			rr := cs.calcRR(currentPrice, stop, target, pair)
-			logger.InfoColorf(logger.BrightMagenta, "[ %s TRANSITIONAL RR=%.2f ]", pair, rr)
-			if rr > (cs.RiskRewardThreshold * 0.8) {
-				logger.InfoColorf(logger.BrightMagenta, "[ %s TRANSITIONAL BUY RR=%.2f ]", pair, rr)
-				return 1, nil
-			}
-		}
-
-		if rsiVal > 85 && macdIndicatorSignal <= 0 && stochasticK > float64(cs.Stochastic.Overbought) && isActive {
-			target := middleBand
-			stop := currentPrice * 1.02
-			rr := cs.calcRRForSell(currentPrice, stop, target, pair)
-			if rr > (cs.RiskRewardThreshold * 0.8) {
-				logger.InfoColorf(logger.Red, "[ TRANSITIONAL SELL ] Downtrend confirmed, RR=%.2f %s ", rr, pair)
-				return -1, nil
-			}
-		}
-
-		logger.DebugColorf(logger.BrightYellow, "[Transitional HOLD]%s: No extreme condition found.", pair)
-		return 0, nil
-
-	case models.Trending:
-		if bullishConditions && macdVal > macdSignalLine && stochasticK < float64(cs.Stochastic.Overbought) {
-			target := upperBand
+			target := upperBand * 1.02
 			stop := lowerBand
 			rr := cs.calcRR(currentPrice, stop, target, pair)
-			logger.InfoColorf(logger.Cyan, "[ %s TRENDING RR=%.2f ]", pair, rr)
+			logger.Infof("[StrongTrend BUY] cci=%.1f,mfi=%.1f,RR=%.2f", cciVal, mfiVal, rr)
 			if rr > cs.RiskRewardThreshold {
-				logger.InfoColorf(logger.BrightMagenta, "[ %s TRENDING BUY RR=%.2f ]", pair, rr)
+				logger.Infof("[StrongTrend BUY] Finalizing buy. RR=%.2f > %.2f", rr, cs.RiskRewardThreshold)
 				return 1, nil
 			}
 		}
 
-		if bearishConditions && isActive && macdVal < macdSignalLine {
+		// For a SELL logic, you might check cciVal > 100 or mfiVal > 80 => Overbought
+		if isActive &&
+			cciVal > cciOverbought &&
+			mfiVal > mfiOverbought &&
+			macdIndicatorSignal == -1 {
 			target := lowerBand
 			stop := upperBand
 			rr := cs.calcRRForSell(currentPrice, stop, target, pair)
 			if rr > cs.RiskRewardThreshold {
-				logger.InfoColorf(logger.Red, "[ TRENDING SELL ] Downtrend confirmed, RR=%.2f %s ", rr, pair)
+				logger.Infof("[StrongTrend SELL] cci=%.1f,mfi=%.1f => rr=%.2f", cciVal, mfiVal, rr)
 				return -1, nil
 			}
 		}
-
-		logger.DebugColorf(logger.Yellow, "%s: No optimal trend trade found.", pair)
+		logger.DebugColorf(logger.BrightMagenta, "[StronglyTrending HOLD] %s: No trade triggered.", pair)
 		return 0, nil
 
-	case models.Chaotic:
-		if currentPrice > upperBand && int(stochasticK) > cs.Stochastic.Overbought && rsiVal > float64(cs.RSI.Overbought) {
-			logger.InfoColorf(logger.Red, "[ CHAOTIC SELL ] Downtrend confirmed, RR=%.2f %s ", 0.0, pair)
-
-			return -1, nil
-		}
-		if currentPrice < lowerBand && int(stochasticK) < cs.Stochastic.Oversold && rsiVal < float64(cs.RSI.Oversold) {
-			logger.InfoColorf(logger.BrightMagenta, "[ %s CHAOTIC BUY ]", pair)
-
-			return 1, nil
-		}
-		logger.DebugColorf(logger.Yellow, "[ CHAOTIC HOLD ]%s: No optimal trend trade found.", pair)
-		return 0, nil
-
-	case models.RangeBound:
-		relaxedRR := cs.RiskRewardThreshold * 0.5
-		if currentPrice <= lowerBand && macdVal > macdSignalLine && int(stochasticK) < cs.Stochastic.Oversold && int(rsiVal) < cs.RSI.Oversold {
+	// ------------------ TRANSITIONAL ------------------
+	case models.Transitional:
+		// e.g. cciSignal == 1 => CCI < cciOversold threshold, mfiSignal == 1 => MFI < mfiOversold => might catch a big contrarian trade
+		if cciSignal == 1 && mfiSignal == 1 {
 			target := middleBand
-			stop := lowerBand * 0.99
+			stop := currentPrice * 0.98
 			rr := cs.calcRR(currentPrice, stop, target, pair)
-			logger.InfoColorf(logger.Cyan, "[ %s RANGE BOUND RR=%.2f ]", pair, rr)
-			if rr > relaxedRR {
-				logger.InfoColorf(logger.BrightMagenta, "[ %s RANGE-BOUND BUY RR=%.2f ]", pair, rr)
+			logger.Infof("[Transitional BUY] cci=%.1f,mfi=%.1f,RR=%.2f", cciVal, mfiVal, rr)
+			if rr > cs.RiskRewardThreshold*0.8 {
+				logger.Infof("[Transitional BUY triggered!]")
+				return 1, nil
+			}
+		}
+		// etc. for SELL if cciSignal == -1 && mfiSignal == -1
+		logger.DebugColorf(logger.BrightYellow, "[Transitional HOLD]%s: no extreme condition found. (CCI=%.1f, MFI=%.1f)", pair, cciVal, mfiVal)
+		return 0, nil
+
+	// ------------------ TRENDING ------------------
+	case models.Trending:
+		if bullishConditions &&
+			cciVal < cciOverbought &&
+			cciVal > cciOversold &&
+			mfiVal < mfiOverbought &&
+			mfiVal > mfiOversold {
+
+			target := upperBand
+			stop := lowerBand
+			rr := cs.calcRR(currentPrice, stop, target, pair)
+			if rr > cs.RiskRewardThreshold {
+				logger.Infof("[Trending BUY] cci=%.1f,mfi=%.1f,RR=%.2f", cciVal, mfiVal, rr)
 				return 1, nil
 			}
 		}
 
-		if currentPrice >= upperBand && macdVal < macdSignalLine && int(stochasticK) > cs.Stochastic.Overbought && int(rsiVal) > cs.RSI.Overbought && isActive {
+		if bearishConditions && isActive &&
+			cciVal > cciOverbought &&
+			mfiVal > mfiOverbought {
+			target := lowerBand
+			stop := upperBand
+			rr := cs.calcRRForSell(currentPrice, stop, target, pair)
+			if rr > cs.RiskRewardThreshold {
+				logger.Infof("[Trending SELL] cci=%.1f,mfi=%.1f => rr=%.2f", cciVal, mfiVal, rr)
+				return -1, nil
+			}
+		}
+		logger.DebugColorf(logger.Yellow, "%s: No trending trade found. CCI=%.1f, MFI=%.1f", pair, cciVal, mfiVal)
+		return 0, nil
+
+	// ------------------ CHAOTIC ------------------
+	case models.Chaotic:
+		if currentPrice < lowerBand &&
+			cciVal < cciOversold &&
+			mfiVal < mfiOversold {
+			logger.Infof("[Chaotic BUY] cci=%.1f,mfi=%.1f => oversold", cciVal, mfiVal)
+			return 1, nil
+		}
+		logger.DebugColorf(logger.Yellow, "[CHAOTIC HOLD]%s: cci=%.1f, mfi=%.1f => no trade", pair, cciVal, mfiVal)
+		return 0, nil
+
+	// ------------------ RANGEBOUND ------------------
+	case models.RangeBound:
+		relaxedRR := cs.RiskRewardThreshold * 0.5
+
+		// BUY near lower band if cciSignal=1 or mfiSignal=1
+		if currentPrice <= lowerBand && (cciSignal == 1 || mfiSignal == 1) {
+			target := middleBand
+			stop := lowerBand * 0.99
+			rr := cs.calcRR(currentPrice, stop, target, pair)
+			if rr > relaxedRR {
+				logger.Infof("[RangeBound BUY] cci=%.1f,mfi=%.1f,rr=%.2f", cciVal, mfiVal, rr)
+				return 1, nil
+			}
+		}
+		// SELL near upper band if cciSignal=-1 or mfiSignal=-1
+		if currentPrice >= upperBand && isActive && (cciSignal == -1 || mfiSignal == -1) {
 			target := middleBand
 			stop := upperBand * 1.01
 			rr := cs.calcRRForSell(currentPrice, stop, target, pair)
 			if rr > relaxedRR {
-				logger.InfoColorf(logger.Red, "[ RANGE-BOUND SELL ] Downtrend confirmed, RR=%.2f %s ", 0.0, pair)
+				logger.Infof("[RangeBound SELL] cci=%.1f,mfi=%.1f, rr=%.2f", cciVal, mfiVal, rr)
 				return -1, nil
 			}
 		}
-		logger.DebugColorf(logger.Yellow, "[ RANGE-BOUND HOLD ]%s: No optimal trend trade found.", pair)
+		logger.DebugColorf(logger.Yellow, "[RANGE-BOUND HOLD]%s: cci=%.1f, mfi=%.1f => no trade", pair, cciVal, mfiVal)
 		return 0, nil
 
+	// ------------------ DEFAULT ------------------
 	default:
-		if bullishConditions && macdVal > macdSignalLine && stochasticK < float64(cs.Stochastic.Overbought) {
+		if bullishConditions &&
+			cciVal < cciOverbought &&
+			mfiVal < mfiOverbought {
 			target := upperBand
 			stop := lowerBand
 			rr := cs.calcRR(currentPrice, stop, target, pair)
-			logger.InfoColorf(logger.Cyan, "[ %s DEFAULT RR=%.2f ]", pair, rr)
-
 			if rr > cs.RiskRewardThreshold {
-				logger.InfoColorf(logger.BrightMagenta, "[ %s DEFAULT BUY RR=%.2f ]", pair, rr)
-
+				logger.Infof("[Default BUY] cci=%.1f, mfi=%.1f => RR=%.2f", cciVal, mfiVal, rr)
 				return 1, nil
 			}
 		}
 
-		if bearishConditions && isActive && macdVal < macdSignalLine && stochasticK > float64(cs.Stochastic.Oversold) {
+		if bearishConditions && isActive &&
+			cciVal > cciOverbought &&
+			mfiVal > mfiOverbought {
 			target := lowerBand
 			stop := upperBand
 			rr := cs.calcRRForSell(currentPrice, stop, target, pair)
 			if rr > cs.RiskRewardThreshold {
-				logger.InfoColorf(logger.Red, "[ DEFAULT SELL ] Downtrend confirmed, RR=%.2f %s ", 0.0, pair)
-
+				logger.Infof("[Default SELL] cci=%.1f, mfi=%.1f => rr=%.2f", cciVal, mfiVal, rr)
 				return -1, nil
 			}
 		}
 
-		logger.DebugColorf(logger.Yellow, "[ DEFAULT HOLD ]%s: No optimal trend trade found.", pair)
+		logger.DebugColorf(logger.Yellow, "[DEFAULT HOLD] %s => cci=%.1f, mfi=%.1f => no trade", pair, cciVal, mfiVal)
 		return 0, nil
 	}
 }
@@ -323,6 +396,22 @@ func (cs *CompoundStrategy) GetStochastic(candles []models.CandleStick) (float64
 
 func (cs *CompoundStrategy) GetBollingerBands(candles []models.CandleStick) (float64, float64, float64, error) {
 	return cs.BollingerBands.Calculate(candles)
+}
+
+func (cs *CompoundStrategy) GetMFI(candles []models.CandleStick) (float64, int, error) {
+	return cs.MFI.Calculate(candles, "")
+}
+
+func (cs *CompoundStrategy) GetCCI(candles []models.CandleStick) (float64, int, error) {
+	return cs.CCI.Calculate(candles, "")
+}
+
+func (cs *CompoundStrategy) GetIchimoku(candles []models.CandleStick) (algos.IchimokuResult, error) {
+	return cs.Ichimoku.Calculate(candles)
+}
+
+func (cs *CompoundStrategy) GetLatestData() LastData {
+	return lastData
 }
 
 func (cs *CompoundStrategy) GetCandleInterval() string {
