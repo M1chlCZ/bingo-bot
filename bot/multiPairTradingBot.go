@@ -419,9 +419,9 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, strategy interfaces.Strategy, tradeAmount, currentPrice, quoteBalance float64) bool {
 	if tradeAmount*currentPrice < pair.MinNotional {
 		//logger.Infof("BUY amount too small for %s. Adjusting to minimum notional.", pair.Symbol)
-		tradeAmount = pair.MinNotional / currentPrice
+		tradeAmount = pair.MinNotional * currentPrice
 
-		if tradeAmount*currentPrice > quoteBalance {
+		if tradeAmount > quoteBalance {
 			logger.Infof("Skipping BUY for %s: Insufficient USDT balance. Need %.4f Have %.4f", pair.Symbol, tradeAmount, quoteBalance)
 			return false
 		}
