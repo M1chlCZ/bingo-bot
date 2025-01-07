@@ -14,6 +14,8 @@ Bingo-Bot (Binance GO Bot) is a **work-in-progress**, **experimental trading bot
 ## ⚡ Features
 - **Automated Trading**: Works with Binance for spot trading. More exchanges coming soon!
 - **Custom Strategies**: Easily implement your own strategies in the `./strategies/` folder.
+- **Market Analysis**: Bot automatically analyzes markets and trades based on market conditions.
+- **Automatic pairs add/remove**: Bot automatically adds new pairs and removes pairs that are not profitable.
 - **Pluggable Exchanges**: Add other exchanges by adhering to the shared interface in `./interfaces/shared.go`.
 - **Stop-Loss and Take-Profit**: Dynamic risk management for trades.
 - **Multi-Pair Trading**: Manage multiple trading pairs with thread-safe operations.
@@ -93,6 +95,35 @@ func (self *MyCustomStrategy) Calculate(candles []models.CandleStick, pair strin
 }
 ```
 
+### 🔧 Configuration Explained
+
+Bingo-Bot uses a flexible configuration system found in the config package to manage strategies and settings for different market states. This system allows you to fine-tune how the bot behaves under varying market conditions.
+
+#### MultiTrading Struct
+
+##### The core configuration is handled by the MultiTrading struct, which defines:
+
+**•** Market State Strategies: Separate strategy configurations (Default, Chaotic, Trending, etc.) for different market conditions.
+
+**•** Intervals & Filters: Set how often the bot trades and analyzes the market, and filter markets to include or exclude certain trading pairs.
+
+**•** Analyzer Config: Contains parameters for technical indicators (RSI, MACD, etc.) used in market analysis.
+
+#### Updating Configurations
+
+##### The bot provides methods to update configurations at runtime:
+
+**•** UpdateStrategy(state, strategy): Change the strategy for a specific market state after validating it.
+
+**•** UpdateAnalyzerConfig(analyzerConfig): Update the market analyzer’s parameters.
+
+**•** Other update methods adjust intervals, include/exclude markets, and more.
+
+You can also use default configurations or create your own by modifying the config package.
+```
+conf := config.DefaultMultiTradingConfig()
+bt := bot.NewMultiPairTradingBot(cl, &conf)
+```
 ### Exchanges
 1. **Binance** is currently supported. More exchanges are coming soon!
 2. To add a new exchange, implement the `ExchangeClient` interface in `./interfaces/shared.go`.
@@ -126,12 +157,20 @@ For advanced users integrating new exchanges or modifying the bot, ensure proper
 
 ```plaintext
 bingo-bot/
+├── algos/             # Algos used for trading
+├── analysis/          # Market analysis
 ├── bot/               # Core bot logic for trading
 ├── client/            # Binance API client
+├── config/            # Config for trading bot
 ├── db/                # SQLite integration for logging trades
 ├── interfaces/        # Shared interfaces for strategies and exchanges
+├── logger/            # Logger implementation
+├── metrics/           # metrics reporting (wip)
+├── ml/                # experimental ml model for predicting when to buy (wip/experimental)
+├── models/            # structs for data models
+├── plotter/           # Plotting for performance of the bot (wip)
 ├── strategies/        # Default and custom trading strategies
-├── logger/            # Logging
+├── types/             # Custom types structs for the bot
 ├── utils/             # Utility functions (Performance, Time, etc.)
 ├── main.go            # Entry point for the bot
 ├── Dockerfile         # Docker file for building the bot
@@ -156,7 +195,7 @@ Feel free to submit **pull requests**, **bug reports**, or **feature requests**.
 - [ ] Add backtesting framework.
 - [x] Improve logging and analytics.
 - [ ] Integrate more exchanges.
-- [ ] Add more strategies (Bollinger Bands, Stochastic Oscillator, etc.).
+- [X] Add more strategies (Bollinger Bands, Stochastic Oscillator, etc.).
 
 ---
 

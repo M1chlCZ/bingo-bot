@@ -190,14 +190,14 @@ func (bot *MultiPairTradingBot) calculateTradeAmount(signal int, quoteBalance, b
 func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional, quoteBalance, baseBalance float64, pair string, atr, adx float64) float64 {
 	// Define baseline risk parameters
 	const (
-		baseRiskPercentage = 0.08 // Risk 5% of quote balance as baseline risk per trade
+		baseRiskPercentage = 0.1  // Risk 5% of quote balance as baseline risk per trade
 		atrReference       = 1.0  // ATR reference level
 		adxReference       = 25.0 // ADX reference for "moderate" trend
-		minTradePercentage = 0.16 // Minimum 15% of quote balance
+		minTradePercentage = 0.18 // Minimum 15% of quote balance
 		maxTradePercentage = 0.5  // Maximum 50% of quote balance
 
-		// We want at least 5% above that notional
-		extraPercent = 0.05 // 5%
+		// want at least 10% above that notional
+		extraPercent = 0.1
 	)
 
 	//  Start with base position in quote currency = quoteBalance * baseRiskPercentage
