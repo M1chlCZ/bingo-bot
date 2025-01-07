@@ -26,7 +26,7 @@ type MultiPairTradingBot struct {
 	analysisLock   sync.Mutex
 	interval       string
 	pairs          map[string]*models.TradingPair
-	pairStrategies map[string]interfaces.Strategy // Pair-specific strategies
+	pairStrategies map[string]interfaces.Strategy
 	pairsMu        sync.RWMutex
 	candles        map[string][]models.CandleStick
 	candlesMu      sync.RWMutex
@@ -34,6 +34,8 @@ type MultiPairTradingBot struct {
 	stopCh         chan struct{}
 	config         config.MultiTrading
 }
+
+// TODO: Use sync.Map for pairs and analysisData, especially with GO 1.24 improved performance of sync.Map
 
 // NewMultiPairTradingBot creates a new instance of MultiPairTradingBot
 func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, config *config.MultiTrading) *MultiPairTradingBot {
@@ -72,7 +74,7 @@ func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, config *config.M
 	return &MultiPairTradingBot{
 		exchange:       exchange,
 		config:         *config,
-		interval:       "1d",
+		interval:       "1d", //only for initial analysis
 		marketAnalyzer: config.AnalyzerConfig,
 		pairs:          make(map[string]*models.TradingPair),
 		analysisData:   make(map[string]*analysis.PairAnalysis),
@@ -128,6 +130,7 @@ func (bot *MultiPairTradingBot) StartTrading() {
 	// Launch market analysis updater as a separate goroutine
 	go bot.updateMarketAnalysis()
 
+	// TODO: Add manual pair trading for chosen pairs instead of auto trading
 	// Fetch all trading pairs from the exchange and add them (TODO only for manually added pairs)
 	// var wg sync.WaitGroup
 	//tradingPairs := bot.exchange.GetTradingPairs()
@@ -384,7 +387,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			}
 			if sngl < 0 { // SELL
 				// Check if the market is in an uptrend before selling
-				if isUptrend && sngl != -2 { // panic sell
+				if isUptrend && sngl != -2 { // sngl == 2 > panic sell
 					logger.InfoColorf(logger.BrightBlack, "UPTREND signal for %s, cancelling sell", pair.Symbol)
 					continue
 				}
@@ -468,7 +471,6 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 
 	// Place Limit SELL Order
 	limitPrice := currentPrice
-	//limitOrderPrice := strconv.FormatFloat(limitPrice, 'f', pair.PricePrecision, 64)
 	executedVolume := strconv.FormatFloat(tradeAmount, 'f', pair.QtyPrecision, 64)
 
 	logger.Infof("Placing LIMIT SELL order for %s: Quantity=%.4f, Limit Price=%.4f, Quote Amount %.4f, MinNotional %.4f", pair.Symbol, tradeAmount, limitPrice, tradeAmount*currentPrice, pair.MinNotional)
@@ -653,8 +655,6 @@ func (bot *MultiPairTradingBot) adjustTradingPairs() {
 
 func (bot *MultiPairTradingBot) performPairAdjustment() {
 	logger.Infof("Adjusting trading pairs based on market analysis...")
-
-	logger.Infof("%v", bot.config)
 
 	// Fetch all USDT markets from the exchange
 	allMarkets, err := bot.exchange.FetchMarkets(bot.config.IncludedBaseMarkets, bot.config.ExcludedQuoteMarkets, bot.config.ExcludedMarkets)

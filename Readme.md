@@ -71,7 +71,7 @@ Bingo-Bot (Binance GO Bot) is a **work-in-progress**, **experimental trading bot
       ```
     - Or use `go run`:
       ```bash
-      go run main.go
+      go run main.go --log=debug
       ```
 
 ---
