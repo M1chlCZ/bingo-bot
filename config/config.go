@@ -12,35 +12,39 @@ import (
 )
 
 type MultiTrading struct {
-	AutoTrading          bool
-	Default              types.MarketStateStrategy `validate:"required"`
-	Chaotic              types.MarketStateStrategy `validate:"required"`
-	Trending             types.MarketStateStrategy `validate:"required"`
-	RangeBound           types.MarketStateStrategy `validate:"required"`
-	Transitional         types.MarketStateStrategy `validate:"required"`
-	StronglyTrending     types.MarketStateStrategy `validate:"required"`
-	ExcludedMarkets      []models.TradingPair
-	ExcludedQuoteMarkets []string
-	IncludedBaseMarkets  []string                 `validate:"required"`
-	TradingLoopInterval  time.Duration            `validate:"required"`
-	AnalysisLoopInterval time.Duration            `validate:"required"`
-	AnalyzerConfig       *analysis.MarketAnalyzer `validate:"required"`
+	AutoTrading           bool
+	Default               types.MarketStateStrategy `validate:"required"`
+	Chaotic               types.MarketStateStrategy `validate:"required"`
+	Trending              types.MarketStateStrategy `validate:"required"`
+	RangeBound            types.MarketStateStrategy `validate:"required"`
+	Transitional          types.MarketStateStrategy `validate:"required"`
+	StronglyTrending      types.MarketStateStrategy `validate:"required"`
+	ExcludedMarkets       []models.TradingPair
+	ExcludedQuoteMarkets  []string
+	IncludedBaseMarkets   []string                 `validate:"required"`
+	TradingLoopInterval   time.Duration            `validate:"required"`
+	AnalysisLoopInterval  time.Duration            `validate:"required"`
+	AnalyzerConfig        *analysis.MarketAnalyzer `validate:"required"`
+	ThresholdStopTrading  float64                  `validate:"required"` //percentage
+	ThresholdStartTrading float64                  `validate:"required"`
 }
 
 func DefaultMultiTradingConfig() MultiTrading {
 	return MultiTrading{
-		AutoTrading:          true,
-		Default:              DefaultMarketState,
-		Chaotic:              ChaoticMarketState,
-		Trending:             TrendingMarketState,
-		RangeBound:           RangeBoundMarketState,
-		Transitional:         TransitionalMarketState,
-		StronglyTrending:     StronglyTrendingMarketState,
-		ExcludedMarkets:      []models.TradingPair{},
-		ExcludedQuoteMarkets: []string{"USDC", "USDP", "FDUSD"},
-		IncludedBaseMarkets:  []string{"USDT"},
-		TradingLoopInterval:  10 * time.Second,
-		AnalysisLoopInterval: 30 * time.Minute,
+		AutoTrading:           true,
+		Default:               DefaultMarketState,
+		Chaotic:               ChaoticMarketState,
+		Trending:              TrendingMarketState,
+		RangeBound:            RangeBoundMarketState,
+		Transitional:          TransitionalMarketState,
+		StronglyTrending:      StronglyTrendingMarketState,
+		ExcludedMarkets:       []models.TradingPair{},
+		ExcludedQuoteMarkets:  []string{"USDC", "USDP", "FDUSD"},
+		IncludedBaseMarkets:   []string{"USDT"},
+		TradingLoopInterval:   10 * time.Second,
+		AnalysisLoopInterval:  30 * time.Minute,
+		ThresholdStartTrading: 0.25,
+		ThresholdStopTrading:  0.75,
 		AnalyzerConfig: analysis.NewMarketAnalyzer(analysis.MarketAnalyzer{
 			ATRPeriod:                15,
 			ADXPeriod:                15,

@@ -33,6 +33,7 @@ type MultiPairTradingBot struct {
 	wg             sync.WaitGroup
 	stopCh         chan struct{}
 	config         config.MultiTrading
+	stopAllBuys    bool
 }
 
 // TODO: Use sync.Map for pairs and analysisData, especially with GO 1.24 improved performance of sync.Map
@@ -122,6 +123,9 @@ func (bot *MultiPairTradingBot) StartTrading() {
 
 	// Perform initial pair adjustment
 	bot.performPairAdjustment()
+
+	// Check for market meltdown
+	bot.checkMarketMeltdown()
 
 	// Signal handling for graceful shutdown
 	stop := make(chan os.Signal, 1)
@@ -317,6 +321,11 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			if err != nil {
 				logger.Errorf("Error calculating signal for %s: %v", pair.Symbol, err)
 				continue
+			}
+
+			// If stopAllBuys is set, force a SELL all to QUOTE BALANCE
+			if bot.stopAllBuys {
+				sngl = -2
 			}
 
 			if sngl == 0 {
@@ -560,7 +569,7 @@ func (bot *MultiPairTradingBot) updateMarketAnalysis() {
 				pairsToAnalyze = append(pairsToAnalyze, pair)
 			}
 			bot.pairsMu.RUnlock()
-
+			localCandles := make(map[string][]models.CandleStick)
 			for _, pair := range pairsToAnalyze {
 				bot.pairsMu.Lock()
 				strategy := bot.pairStrategies[pair.Symbol]
@@ -570,7 +579,7 @@ func (bot *MultiPairTradingBot) updateMarketAnalysis() {
 				if err != nil {
 					continue
 				}
-
+				bot.checkEarlyWarning(map[string][]models.CandleStick{pair.Symbol: candles})
 				marketState, atr, adx := bot.marketAnalyzer.AnalyzeMarket(candles)
 				analysisData := analysis.PairAnalysis{
 					Pair:        pair,
@@ -585,8 +594,11 @@ func (bot *MultiPairTradingBot) updateMarketAnalysis() {
 				bot.pairStrategies[pair.Symbol] = newStrategy
 				bot.pairsMu.Unlock()
 
+				localCandles[pair.Symbol] = candles
+
 				logger.Infof("Market analysis updated for %s: State=%v", pair.Symbol, marketState)
 			}
+			bot.checkEarlyWarning(localCandles)
 			logger.Infof("Market analysis update completed.")
 		}
 	}
@@ -828,4 +840,81 @@ func (bot *MultiPairTradingBot) SuggestStrategy(marketState models.MarketState) 
 	default:
 		return bot.config.Default.Strategy
 	}
+}
+
+// checkEarlyWarning checks for early warning signs of a market meltdown
+func (bot *MultiPairTradingBot) checkEarlyWarning(candlesMap map[string][]models.CandleStick) {
+	var meltdownCount int
+	total := len(candlesMap)
+
+	for symbol, cset := range candlesMap {
+		if len(cset) < 10 {
+			// skip
+			continue
+		}
+		// measure performance over last 5 candles vs. prev 5
+		perf := bot.measureShortTermPerformance(cset, 5)
+		if perf < -2.0 { // if dropped >2% in last N bars
+			logger.InfoColorf(logger.BrightRed, "[%s] Meltdown detected: %.2f%% drop in last 5 bars", symbol, perf)
+			meltdownCount++
+		}
+	}
+
+	meltdownRatio := float64(meltdownCount) / float64(total)
+	if meltdownRatio >= bot.config.ThresholdStopTrading {
+		logger.Errorf("Market meltdown detected: %.2f%% of pairs are in meltdown state", meltdownRatio*100)
+		bot.stopAllBuys = true
+	} else {
+		if meltdownRatio < bot.config.ThresholdStartTrading {
+			logger.Infof("Market meltdown resolved: %.2f%% of pairs are in meltdown state", meltdownRatio*100)
+			bot.stopAllBuys = false
+		}
+	}
+}
+
+// checkMarketMeltdown checks for a market meltdown, before trading starts
+func (bot *MultiPairTradingBot) checkMarketMeltdown() {
+	logger.Infof("Checking for market meltdown...")
+	localCandles := make(map[string][]models.CandleStick)
+	bot.pairsMu.RLock()
+	for sym, _ := range bot.pairs {
+		cset, errC := bot.exchange.FetchCandles(sym, bot.interval, 100)
+		if errC == nil {
+			localCandles[sym] = cset
+		}
+	}
+	bot.pairsMu.RUnlock()
+
+	bot.checkEarlyWarning(localCandles)
+	logger.Infof("Market meltdown check completed.")
+}
+
+func (bot *MultiPairTradingBot) measureShortTermPerformance(candles []models.CandleStick, shortPeriod int) float64 {
+	n := len(candles)
+	if n < shortPeriod*2 {
+		// Not enough candles to compare last X vs. previous X
+		return 0
+	}
+
+	// Sum of the last 'shortPeriod' closes
+	var lastSum float64
+	for i := n - shortPeriod; i < n; i++ {
+		lastSum += candles[i].Close
+	}
+	lastAvg := lastSum / float64(shortPeriod)
+
+	// Sum of the previous 'shortPeriod' closes
+	var prevSum float64
+	for i := n - (2 * shortPeriod); i < n-shortPeriod; i++ {
+		prevSum += candles[i].Close
+	}
+	prevAvg := prevSum / float64(shortPeriod)
+
+	// Percentage difference: ((lastAvg - prevAvg) / prevAvg) * 100
+	perfPct := 0.0
+	if prevAvg != 0 {
+		perfPct = (lastAvg - prevAvg) / prevAvg * 100.0
+	}
+
+	return perfPct
 }
