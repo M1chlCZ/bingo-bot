@@ -1,9 +1,9 @@
 package utils
 
 import (
-	"binance_bot/models"
 	"encoding/csv"
 	"fmt"
+	"github.com/M1chlCZ/bingo-bot/models"
 	"os"
 	"path/filepath"
 	"time"

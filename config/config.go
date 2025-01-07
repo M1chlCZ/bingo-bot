@@ -1,11 +1,11 @@
 package config
 
 import (
-	"binance_bot/analysis"
-	"binance_bot/logger"
-	"binance_bot/models"
-	"binance_bot/types"
 	"errors"
+	"github.com/M1chlCZ/bingo-bot/analysis"
+	"github.com/M1chlCZ/bingo-bot/logger"
+	"github.com/M1chlCZ/bingo-bot/models"
+	"github.com/M1chlCZ/bingo-bot/types"
 	"github.com/go-playground/validator/v10"
 	"log"
 	"time"

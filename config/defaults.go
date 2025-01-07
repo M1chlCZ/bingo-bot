@@ -1,10 +1,10 @@
 package config
 
 import (
-	"binance_bot/algos"
-	"binance_bot/models"
-	"binance_bot/strategies"
-	"binance_bot/types"
+	"github.com/M1chlCZ/bingo-bot/algos"
+	"github.com/M1chlCZ/bingo-bot/models"
+	"github.com/M1chlCZ/bingo-bot/strategies"
+	"github.com/M1chlCZ/bingo-bot/types"
 )
 
 // This configuration tries to be more crypto-friendly and trade more frequently.

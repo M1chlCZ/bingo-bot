@@ -1,8 +1,8 @@
 package types
 
 import (
-	"binance_bot/strategies"
 	"errors"
+	"github.com/M1chlCZ/bingo-bot/strategies"
 	"github.com/go-playground/validator/v10"
 )
 

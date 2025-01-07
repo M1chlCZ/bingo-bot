@@ -1,4 +1,4 @@
-module binance_bot
+module github.com/M1chlCZ/bingo-bot
 
 go 1.23
 

@@ -1,16 +1,15 @@
 package bot
 
 import (
-	"binance_bot/algos"
-	"binance_bot/analysis"
-	"binance_bot/config"
-	db2 "binance_bot/db"
-	"binance_bot/interfaces"
-	"binance_bot/logger"
-	"binance_bot/models"
-	"binance_bot/strategies"
+	"github.com/M1chlCZ/bingo-bot/algos"
+	"github.com/M1chlCZ/bingo-bot/analysis"
+	"github.com/M1chlCZ/bingo-bot/config"
+	db2 "github.com/M1chlCZ/bingo-bot/db"
+	"github.com/M1chlCZ/bingo-bot/interfaces"
+	"github.com/M1chlCZ/bingo-bot/logger"
+	"github.com/M1chlCZ/bingo-bot/models"
+	"github.com/M1chlCZ/bingo-bot/strategies"
 	"log"
-	"math"
 	"os"
 	"os/signal"
 	"strconv"
@@ -175,18 +174,6 @@ func (bot *MultiPairTradingBot) Stop() {
 	logger.Warn("Trading bot stopped.")
 }
 
-func (bot *MultiPairTradingBot) calculateTradeAmount(signal int, quoteBalance, baseBalance float64, pair string) float64 {
-	if signal > 0 { // BUY Signal
-		amount := math.Min(quoteBalance*0.25, quoteBalance)
-		logger.Infof("BUY %.2f %s \n", amount, pair)
-		return amount // Use 25% of quote balance
-	} else if signal < 0 { // SELL Signal
-		logger.Infof("SELL %s %.2f \n", pair, baseBalance)
-		return baseBalance // Sell all base balance
-	}
-	return 0
-}
-
 func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional, quoteBalance, baseBalance float64, pair string, atr, adx float64) float64 {
 	// Define baseline risk parameters
 	const (
@@ -203,7 +190,7 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional
 	//  Start with base position in quote currency = quoteBalance * baseRiskPercentage
 	basePosition := quoteBalance * baseRiskPercentage
 
-	// 1) Adjust position size based on ADX
+	// Adjust position size based on ADX
 	adxMultiplier := 1.0 + (adx-adxReference)*0.02
 	if adxMultiplier < 0.5 {
 		adxMultiplier = 0.5
@@ -212,7 +199,7 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional
 	}
 	adjustedForADX := basePosition * adxMultiplier
 
-	// 2) Adjust position size based on ATR (Volatility)
+	// Adjust position size based on ATR (Volatility)
 	atrMultiplier := atrReference / atr
 	if atrMultiplier < 0.5 {
 		atrMultiplier = 0.5
@@ -221,20 +208,20 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional
 	}
 	adjustedForVolatility := adjustedForADX * atrMultiplier
 
-	// 3) Convert the absolute currency amount to fraction of the quote balance
+	//  Convert the absolute currency amount to fraction of the quote balance
 	tradePercentage := adjustedForVolatility / quoteBalance
 
-	// 4) Ensure the tradePercentage is within our min/max
+	// Ensure the tradePercentage is within our min/max
 	if tradePercentage < minTradePercentage {
 		tradePercentage = minTradePercentage
 	} else if tradePercentage > maxTradePercentage {
 		tradePercentage = maxTradePercentage
 	}
 
-	// 5) Final amount to trade
+	// Final amount to trade
 	finalAmount := tradePercentage * quoteBalance
 
-	// 6) Enforce an absolute minimum buy: (exchangeMinNotional * (1 + extraPercent))
+	// Enforce an absolute minimum buy: (exchangeMinNotional * (1 + extraPercent))
 	// so we don't get a NOTIONAL error. E.g., if min notional is $10, we want $10.50 as minimum.
 	minBuyAbsolute := notional * (1 + extraPercent)
 
@@ -429,8 +416,7 @@ func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, strategy int
 
 	// Place Limit BUY Order
 	limitPrice := currentPrice * 1.000
-	// 0.01% higher than current price
-	//limitOrderPrice := strconv.FormatFloat(limitPrice, 'f', pair.PricePrecision, 64)
+
 	executedVolume := strconv.FormatFloat(tradeAmount, 'f', pair.QtyPrecision, 64)
 
 	logger.Infof("Placing LIMIT BUY order for %s: Quantity=%.2f, Limit Price=%.2f, Base amount %.4f", pair.Symbol, tradeAmount, limitPrice, tradeAmount*currentPrice)

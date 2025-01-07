@@ -1,8 +1,8 @@
 package algos
 
 import (
-	"binance_bot/models"
 	"fmt"
+	"github.com/M1chlCZ/bingo-bot/models"
 	"math"
 )
 

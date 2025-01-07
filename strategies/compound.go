@@ -1,10 +1,10 @@
 package strategies
 
 import (
-	"binance_bot/algos"
-	db2 "binance_bot/db"
-	"binance_bot/logger"
-	"binance_bot/models"
+	"github.com/M1chlCZ/bingo-bot/algos"
+	db2 "github.com/M1chlCZ/bingo-bot/db"
+	"github.com/M1chlCZ/bingo-bot/logger"
+	"github.com/M1chlCZ/bingo-bot/models"
 	"github.com/go-playground/validator/v10"
 )
 

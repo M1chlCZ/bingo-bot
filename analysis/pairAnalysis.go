@@ -1,7 +1,7 @@
 package analysis
 
 import (
-	"binance_bot/models"
+	"github.com/M1chlCZ/bingo-bot/models"
 )
 
 // PairAnalysis holds the analysis data for a specific pair

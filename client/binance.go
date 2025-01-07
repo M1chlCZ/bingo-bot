@@ -1,11 +1,11 @@
 package client
 
 import (
-	"binance_bot/interfaces"
-	"binance_bot/logger"
-	"binance_bot/models"
 	"context"
 	"fmt"
+	"github.com/M1chlCZ/bingo-bot/interfaces"
+	"github.com/M1chlCZ/bingo-bot/logger"
+	"github.com/M1chlCZ/bingo-bot/models"
 	"github.com/adshao/go-binance/v2"
 	"log"
 	"math"

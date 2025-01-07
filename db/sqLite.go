@@ -1,11 +1,11 @@
 package db
 
 import (
-	"binance_bot/logger"
-	"binance_bot/models"
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/M1chlCZ/bingo-bot/logger"
+	"github.com/M1chlCZ/bingo-bot/models"
 	_ "github.com/mattn/go-sqlite3" // Import go-sqlite3 library
 	"log"
 	"os"

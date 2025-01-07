@@ -1,16 +1,16 @@
 package metrics
 
 import (
-	db2 "binance_bot/db"
-	"binance_bot/interfaces"
-	"binance_bot/models"
-	"binance_bot/utils"
 	"context"
 	"database/sql"
 	"fmt"
+	db2 "github.com/M1chlCZ/bingo-bot/db"
+	"github.com/M1chlCZ/bingo-bot/interfaces"
+	"github.com/M1chlCZ/bingo-bot/models"
+	"github.com/M1chlCZ/bingo-bot/utils"
 	"time"
 
-	"binance_bot/logger"
+	"github.com/M1chlCZ/bingo-bot/logger"
 )
 
 // calculatePerformance calculates the performance metrics by fetching current prices dynamically.

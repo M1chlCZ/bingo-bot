@@ -1,13 +1,13 @@
 package main
 
 import (
-	"binance_bot/bot"
-	"binance_bot/client"
-	"binance_bot/config"
-	sqlite "binance_bot/db"
-	"binance_bot/logger"
-	"binance_bot/metrics"
 	"flag"
+	"github.com/M1chlCZ/bingo-bot/bot"
+	"github.com/M1chlCZ/bingo-bot/client"
+	"github.com/M1chlCZ/bingo-bot/config"
+	sqlite "github.com/M1chlCZ/bingo-bot/db"
+	"github.com/M1chlCZ/bingo-bot/logger"
+	"github.com/M1chlCZ/bingo-bot/metrics"
 	"github.com/joho/godotenv"
 	"log"
 	"os"

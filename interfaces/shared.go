@@ -1,8 +1,8 @@
 package interfaces
 
 import (
-	"binance_bot/models"
-	"binance_bot/strategies"
+	"github.com/M1chlCZ/bingo-bot/models"
+	"github.com/M1chlCZ/bingo-bot/strategies"
 	"github.com/adshao/go-binance/v2"
 )
 
