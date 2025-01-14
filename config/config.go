@@ -25,7 +25,7 @@ type MultiTrading struct {
 	TradingLoopInterval   time.Duration            `validate:"required"`
 	AnalysisLoopInterval  time.Duration            `validate:"required"`
 	AnalyzerConfig        *analysis.MarketAnalyzer `validate:"required"`
-	ThresholdStopTrading  float64                  `validate:"required"` //percentage
+	ThresholdStopTrading  float64                  `validate:"required"` // percentage
 	ThresholdStartTrading float64                  `validate:"required"`
 }
 
@@ -43,8 +43,8 @@ func DefaultMultiTradingConfig() MultiTrading {
 		IncludedBaseMarkets:   []string{"USDT"},
 		TradingLoopInterval:   10 * time.Second,
 		AnalysisLoopInterval:  30 * time.Minute,
-		ThresholdStartTrading: 0.25,
-		ThresholdStopTrading:  0.75,
+		ThresholdStartTrading: 0,
+		ThresholdStopTrading:  0,
 		AnalyzerConfig: analysis.NewMarketAnalyzer(analysis.MarketAnalyzer{
 			ATRPeriod:                15,
 			ADXPeriod:                15,

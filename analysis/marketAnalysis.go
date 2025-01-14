@@ -365,66 +365,70 @@ func (ma *MarketAnalyzer) IsUptrend(candles []models.CandleStick) bool {
 		return false
 	}
 
-	//Compute MFI & CCI
-	var mfiVal float64
-	var mfiEnabled = mfiAlgo != nil
-	if mfiEnabled {
-		var errMfi error
-		mfiVal, _, errMfi = mfiAlgo.Calculate(candles, "")
-		if errMfi != nil {
-			logger.Debugf("Error computing MFI in IsUptrend: %v", errMfi)
-		}
-	}
-	var cciVal float64
-	var cciSignal int
-	var cciEnabled = cciAlgo != nil
-
-	if cciEnabled {
-		var errCci error
-		cciVal, cciSignal, errCci = cciAlgo.Calculate(candles, "")
-		if errCci != nil {
-			logger.Debugf("Error computing CCI in IsUptrend: %v", errCci)
-		}
-	}
-
-	// 2) Existing logic for large candle counts
-	switch {
-	case totalCandles >= 50:
-		if !ma.checkUptrendWithLongSMAs(candles) {
-			return false
-		}
-	case totalCandles >= 20:
-		if !ma.checkUptrendWithShortSMAs(candles) {
-			return false
-		}
-	default:
-		// If we have between 10 and 19 candles:
-
-	}
-
-	if mfiEnabled && mfiVal > ma.MFIOverbought {
-		logger.Debugf("MFI=%.2f is overbought (>%v). Not confirming uptrend.", mfiVal, ma.MFIOverbought)
+	if !ma.checkUptrendWithShortSMAs(candles) {
 		return false
 	}
 
-	if cciEnabled && cciVal > ma.CCIOverbought {
-		logger.Debugf("CCI=%.2f is below oversold (%v). Possibly downward push, not uptrend yet.", cciVal, ma.CCIOversold)
-		return false
-	}
-
-	if cciEnabled && cciSignal == -1 {
-		logger.Debugf("CCI says overbought => cciSignal == -1, skipping uptrend.")
-		return false
-	}
-
-	adxVal := ma.calculateADX(candles)
-	if adxVal < 20 {
-		logger.Debugf("ADX=%.2f <20 => weak trend, skipping uptrend", adxVal)
-		return false
-	}
-
-	// If we reach here, we consider it an uptrend
-	logger.DebugColorf(logger.Cyan, "Uptrend confirmed by MFI=%.2f, CCI=%.2f, ADX=%.2f", mfiVal, cciVal, adxVal)
+	// Compute MFI & CCI
+	//var mfiVal float64
+	//var mfiEnabled = mfiAlgo != nil
+	//if mfiEnabled {
+	//	var errMfi error
+	//	mfiVal, _, errMfi = mfiAlgo.Calculate(candles, "")
+	//	if errMfi != nil {
+	//		logger.Debugf("Error computing MFI in IsUptrend: %v", errMfi)
+	//	}
+	//}
+	//var cciVal float64
+	//var cciSignal int
+	//var cciEnabled = cciAlgo != nil
+	//
+	//if cciEnabled {
+	//	var errCci error
+	//	cciVal, cciSignal, errCci = cciAlgo.Calculate(candles, "")
+	//	if errCci != nil {
+	//		logger.Debugf("Error computing CCI in IsUptrend: %v", errCci)
+	//	}
+	//}
+	//
+	//// 2) Existing logic for large candle counts
+	//switch {
+	//case totalCandles >= 50:
+	//	if !ma.checkUptrendWithLongSMAs(candles) {
+	//		return false
+	//	}
+	//case totalCandles >= 20:
+	//	if !ma.checkUptrendWithShortSMAs(candles) {
+	//		return false
+	//	}
+	//default:
+	//	// If we have between 10 and 19 candles:
+	//
+	//}
+	//
+	//if mfiEnabled && mfiVal > ma.MFIOverbought {
+	//	logger.Debugf("MFI=%.2f is overbought (>%v). Not confirming uptrend.", mfiVal, ma.MFIOverbought)
+	//	return false
+	//}
+	//
+	//if cciEnabled && cciVal > ma.CCIOverbought {
+	//	logger.Debugf("CCI=%.2f is below oversold (%v). Possibly downward push, not uptrend yet.", cciVal, ma.CCIOversold)
+	//	return false
+	//}
+	//
+	//if cciEnabled && cciSignal == -1 {
+	//	logger.Debugf("CCI says overbought => cciSignal == -1, skipping uptrend.")
+	//	return false
+	//}
+	//
+	//adxVal := ma.calculateADX(candles)
+	//if adxVal < 20 {
+	//	logger.Debugf("ADX=%.2f <20 => weak trend, skipping uptrend", adxVal)
+	//	return false
+	//}
+	//
+	//// If we reach here, we consider it an uptrend
+	//logger.DebugColorf(logger.Cyan, "Uptrend confirmed by MFI=%.2f, CCI=%.2f, ADX=%.2f", mfiVal, cciVal, adxVal)
 	return true
 }
 

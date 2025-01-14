@@ -163,11 +163,9 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		}
 
 		if profitMarginATH < -cs.HighestPriceFallOffMargin {
-			if cs.PanicSell {
-				if profitMargin > 0 {
-					logger.InfoColorf(logger.BrightBlack, "[ATH FALL OFF SELL] %s: Desired profit dropped below set ATH dropoff margin: (%.2f%%)", pair, profitMarginATH)
-					return -1, nil
-				}
+			if profitMargin > 0 {
+				logger.InfoColorf(logger.BrightBlack, "[ATH FALL OFF SELL] %s: Desired profit dropped below set ATH dropoff margin: (%.2f%%)", pair, profitMarginATH)
+				return -1, nil
 			}
 		}
 

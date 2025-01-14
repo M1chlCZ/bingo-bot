@@ -166,7 +166,7 @@ func (bot *MultiPairTradingBot) StartTrading() {
 	logger.Infof("Shutdown signal received. Stopping all trading...")
 
 	// Signal all goroutines to stop
-	close(bot.stopCh)
+	//close(bot.stopCh)
 
 	// Wait for all goroutines to finish
 	bot.wg.Wait()
@@ -262,6 +262,7 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional
 	return 0
 }
 
+//nolint:gocognit, core function
 func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 	defer bot.wg.Done()
 
@@ -359,7 +360,6 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			// Determine trade size
 			tradeAmount := bot.calculateTradeAmountAdvance(sngl, pair.MinNotional, quoteBalance, baseBalance, pair.Symbol, anls.ATR, anls.ADX)
 			if tradeAmount == 0 {
-				logger.Warnf("Insufficient balance for %s trade. Skipping trade.", pair.Symbol)
 				continue
 			}
 
@@ -374,7 +374,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 					logger.Errorf("Error checking active trade for %s: %v", pair.Symbol, err)
 					continue
 				}
-				//Prevent overtrading
+				// Prevent overtrading
 				if tradesToday >= 25 {
 					logger.Infof("Maximum daily trades reached for %s. Skipping further trades.", pair.Symbol)
 					continue
@@ -388,7 +388,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 
 				go func(pair *models.TradingPair, tradeAmount, currentPrice, quoteBalance float64) {
 					if !bot.handleBuy(pair, strategy, tradeAmount/currentPrice, currentPrice, quoteBalance) {
-						//logger.Errorf("Error handling BUY for %s", pair.Symbol)
+						// logger.Errorf("Error handling BUY for %s", pair.Symbol)
 						return
 					}
 					tradesToday++
@@ -417,7 +417,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 
 func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, strategy interfaces.Strategy, tradeAmount, currentPrice, quoteBalance float64) bool {
 	if tradeAmount*currentPrice < pair.MinNotional {
-		//logger.Infof("BUY amount too small for %s. Adjusting to minimum notional.", pair.Symbol)
+		// logger.Infof("BUY amount too small for %s. Adjusting to minimum notional.", pair.Symbol)
 		tradeAmount = pair.MinNotional
 
 		if tradeAmount > quoteBalance {
@@ -469,7 +469,7 @@ func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, strategy int
 // handleSell processes a SELL order
 func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount, currentPrice, baseBalance float64) bool {
 	if tradeAmount*currentPrice < pair.MinNotional {
-		//logger.Infof("SELL amount too small for %s. Adjusting to minimum notional.", pair.Symbol)
+		// logger.Infof("SELL amount too small for %s. Adjusting to minimum notional.", pair.Symbol)
 		tradeAmount = pair.MinNotional / currentPrice
 
 		if tradeAmount > baseBalance {
@@ -579,7 +579,6 @@ func (bot *MultiPairTradingBot) updateMarketAnalysis() {
 				if err != nil {
 					continue
 				}
-				bot.checkEarlyWarning(map[string][]models.CandleStick{pair.Symbol: candles})
 				marketState, atr, adx := bot.marketAnalyzer.AnalyzeMarket(candles)
 				analysisData := analysis.PairAnalysis{
 					Pair:        pair,
@@ -709,11 +708,24 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 	pairsToAdd := make([]models.TradingPair, 0)
 
 	bot.pairsMu.RLock()
+
+	// Add active trading pairs on program start, regardless of their market state
+	if bot.pairs == nil || len(bot.pairs) == 0 {
+		for _, market := range allMarkets {
+			if activeTradePairs[market.Symbol] && !containsPairs(trendingMarkets, market.Symbol) {
+				logger.Infof("Adding pair %s as it has active trades.", market.Symbol)
+				pairsToAdd = append(pairsToAdd, market)
+			}
+		}
+	}
+
+	// On subsequent runs, remove pairs that are no longer trending and have no active trades
 	for symbol := range bot.pairs {
 		if !containsPairs(trendingMarkets, symbol) && !activeTradePairs[symbol] {
 			pairsToRemove = append(pairsToRemove, symbol)
 		}
 	}
+	// On subsequent runs, add new trending markets
 	for _, market := range trendingMarkets {
 		if _, exists := bot.pairs[market.Symbol]; !exists {
 			pairsToAdd = append(pairsToAdd, market)
@@ -844,6 +856,9 @@ func (bot *MultiPairTradingBot) SuggestStrategy(marketState models.MarketState) 
 
 // checkEarlyWarning checks for early warning signs of a market meltdown
 func (bot *MultiPairTradingBot) checkEarlyWarning(candlesMap map[string][]models.CandleStick) {
+	if (bot.config.ThresholdStartTrading == 0) || (bot.config.ThresholdStopTrading == 0) {
+		return
+	}
 	var meltdownCount int
 	total := len(candlesMap)
 
@@ -854,7 +869,7 @@ func (bot *MultiPairTradingBot) checkEarlyWarning(candlesMap map[string][]models
 		}
 		// measure performance over last 5 candles vs. prev 5
 		perf := bot.measureShortTermPerformance(cset, 5)
-		if perf < -2.0 { // if dropped >2% in last N bars
+		if perf < -5.0 { // if dropped >2% in last N bars
 			logger.InfoColorf(logger.BrightRed, "[%s] Meltdown detected: %.2f%% drop in last 5 bars", symbol, perf)
 			meltdownCount++
 		}
@@ -864,16 +879,20 @@ func (bot *MultiPairTradingBot) checkEarlyWarning(candlesMap map[string][]models
 	if meltdownRatio >= bot.config.ThresholdStopTrading {
 		logger.Errorf("Market meltdown detected: %.2f%% of pairs are in meltdown state", meltdownRatio*100)
 		bot.stopAllBuys = true
-	} else {
-		if meltdownRatio < bot.config.ThresholdStartTrading {
-			logger.Infof("Market meltdown resolved: %.2f%% of pairs are in meltdown state", meltdownRatio*100)
-			bot.stopAllBuys = false
-		}
 	}
+
+	if meltdownRatio < bot.config.ThresholdStartTrading {
+		logger.Infof("Market meltdown resolved: %.2f%% of pairs are in meltdown state", meltdownRatio*100)
+		bot.stopAllBuys = false
+	}
+	logger.Infof("Market meltdown check completed. %.2f%% of pairs are in meltdown state", meltdownRatio*100)
 }
 
 // checkMarketMeltdown checks for a market meltdown, before trading starts
 func (bot *MultiPairTradingBot) checkMarketMeltdown() {
+	if (bot.config.ThresholdStartTrading == 0) || (bot.config.ThresholdStopTrading == 0) {
+		return
+	}
 	logger.Infof("Checking for market meltdown...")
 	localCandles := make(map[string][]models.CandleStick)
 	bot.pairsMu.RLock()
