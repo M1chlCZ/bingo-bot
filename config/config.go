@@ -1,32 +1,36 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/M1chlCZ/bingo-bot/analysis"
 	"github.com/M1chlCZ/bingo-bot/logger"
 	"github.com/M1chlCZ/bingo-bot/models"
 	"github.com/M1chlCZ/bingo-bot/types"
 	"github.com/go-playground/validator/v10"
 	"log"
+	"os"
 	"time"
 )
 
 type MultiTrading struct {
-	AutoTrading           bool
-	Default               types.MarketStateStrategy `validate:"required"`
-	Chaotic               types.MarketStateStrategy `validate:"required"`
-	Trending              types.MarketStateStrategy `validate:"required"`
-	RangeBound            types.MarketStateStrategy `validate:"required"`
-	Transitional          types.MarketStateStrategy `validate:"required"`
-	StronglyTrending      types.MarketStateStrategy `validate:"required"`
-	ExcludedMarkets       []models.TradingPair
-	ExcludedQuoteMarkets  []string
-	IncludedBaseMarkets   []string                 `validate:"required"`
-	TradingLoopInterval   time.Duration            `validate:"required"`
-	AnalysisLoopInterval  time.Duration            `validate:"required"`
-	AnalyzerConfig        *analysis.MarketAnalyzer `validate:"required"`
-	ThresholdStopTrading  float64                  `validate:"required"` // percentage
-	ThresholdStartTrading float64                  `validate:"required"`
+	AutoTrading           bool                      `json:"autoTrading"`
+	Default               types.MarketStateStrategy `validate:"required" json:"default"`
+	Chaotic               types.MarketStateStrategy `validate:"required" json:"chaotic"`
+	Trending              types.MarketStateStrategy `validate:"required" json:"trending"`
+	RangeBound            types.MarketStateStrategy `validate:"required" json:"rangeBound"`
+	Transitional          types.MarketStateStrategy `validate:"required" json:"transitional"`
+	StronglyTrending      types.MarketStateStrategy `validate:"required" json:"stronglyTrending"`
+	ExcludedMarkets       []models.TradingPair      `json:"excludedMarkets"`
+	ExcludedQuoteMarkets  []string                  `json:"excludedQuoteMarkets"`
+	IncludedBaseMarkets   []string                  `validate:"required" json:"includedBaseMarkets"`
+	TradingLoopInterval   time.Duration             `validate:"required" json:"tradingLoopInterval"`
+	AnalysisLoopInterval  time.Duration             `validate:"required" json:"analysisLoopInterval"`
+	AnalyzerConfig        *analysis.MarketAnalyzer  `validate:"required" json:"analyzerConfig"`
+	ThresholdStopTrading  float64                   `json:"thresholdStopTrading"` // percentage
+	ThresholdStartTrading float64                   `json:"thresholdStartTrading"`
+	PendingBuyCoolDown    time.Duration             `validate:"required" json:"pendingBuyCoolDown"`
 }
 
 func DefaultMultiTradingConfig() MultiTrading {
@@ -45,6 +49,7 @@ func DefaultMultiTradingConfig() MultiTrading {
 		AnalysisLoopInterval:  30 * time.Minute,
 		ThresholdStartTrading: 0,
 		ThresholdStopTrading:  0,
+		PendingBuyCoolDown:    2 * time.Minute,
 		AnalyzerConfig: analysis.NewMarketAnalyzer(analysis.MarketAnalyzer{
 			ATRPeriod:                15,
 			ADXPeriod:                15,
@@ -64,6 +69,24 @@ func DefaultMultiTradingConfig() MultiTrading {
 			CCIOversold:   -100,
 		}),
 	}
+}
+
+func MultiTradingConfigFromJSON(filePath string) (MultiTrading, error) {
+	configJson, err := os.ReadFile(filePath)
+	if err != nil {
+		return MultiTrading{}, err
+	}
+	var config MultiTrading
+	err = json.Unmarshal(configJson, &config)
+	if err != nil {
+		return MultiTrading{}, err
+	}
+	fmt.Println(config)
+	err = config.Validate()
+	if err != nil {
+		return MultiTrading{}, err
+	}
+	return config, nil
 }
 
 func (c *MultiTrading) UpdateStrategy(state models.MarketState, strategy types.MarketStateStrategy) {
@@ -122,4 +145,17 @@ func (c *MultiTrading) UpdateExcludedQuoteMarkets(markets []string) {
 
 func (c *MultiTrading) UpdateIncludedBaseMarkets(markets []string) {
 	c.IncludedBaseMarkets = markets
+}
+
+func validMarketState(fl validator.FieldLevel) bool {
+	state := fl.Field().Int() // the int value
+	return state >= 0 && state <= 5
+}
+func (c *MultiTrading) Validate() error {
+	validate := validator.New()
+	err := validate.RegisterValidation("marketStateEnum", validMarketState)
+	if err != nil {
+		panic(err)
+	}
+	return validate.Struct(c)
 }

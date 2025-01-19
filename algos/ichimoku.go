@@ -6,9 +6,9 @@ import (
 )
 
 type IchimokuStrategy struct {
-	ConversionPeriod int
-	BasePeriod       int
-	SpanBPeriod      int
+	ConversionPeriod int `json:"conversionPeriod"`
+	BasePeriod       int `json:"basePeriod"`
+	SpanBPeriod      int `json:"spanBPeriod"`
 }
 
 // IchimokuResult holds computed values for interpretation

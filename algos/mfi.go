@@ -6,9 +6,9 @@ import (
 )
 
 type MFIStrategy struct {
-	Overbought int
-	Oversold   int
-	Period     int
+	Overbought int `json:"overbought"`
+	Oversold   int `json:"oversold"`
+	Period     int `json:"period"`
 }
 
 // Calculate returns (latestMFI, signal, error)

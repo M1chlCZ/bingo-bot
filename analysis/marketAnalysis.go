@@ -10,25 +10,25 @@ import (
 
 // MarketAnalyzer analyzes market conditions for trading decisions
 type MarketAnalyzer struct {
-	ATRPeriod               int     `validate:"required"` // Period for ATR calculation
-	ADXPeriod               int     `validate:"required"` // Period for ADX calculation
-	HighVolatilityThreshold float64 `validate:"required"` // Threshold to identify high volatility
-	StrongTrendThreshold    float64 `validate:"required"` // Threshold to identify strong trends
+	ATRPeriod               int     `validate:"required" json:"atrPeriod"`               // Period for ATR calculation
+	ADXPeriod               int     `validate:"required" json:"adxPeriod"`               // Period for ADX calculation
+	HighVolatilityThreshold float64 `validate:"required" json:"highVolatilityThreshold"` // Threshold to identify high volatility
+	StrongTrendThreshold    float64 `validate:"required" json:"strongTrendThreshold"`    // Threshold to identify strong trends
 
-	IchimokuConversionPeriod int     `validate:"required"`
-	IchimokuBasePeriod       int     `validate:"required"`
-	IchimokuSpanBPeriod      int     `validate:"required"`
-	VolumeThreshold          float64 `validate:"required"` // Threshold to consider volume "significant"
-	FractalLookback          int     `validate:"required"` // Period used for Donchian or fractal analysis
+	IchimokuConversionPeriod int     `validate:"required" json:"ichimokuConversionPeriod"`
+	IchimokuBasePeriod       int     `validate:"required" json:"ichimokuBasePeriod"`
+	IchimokuSpanBPeriod      int     `validate:"required" json:"ichimokuSpanBPeriod"`
+	VolumeThreshold          float64 `validate:"required" json:"volumeThreshold"` // Threshold to consider volume "significant"
+	FractalLookback          int     `validate:"required" json:"fractalLookback"` // Period used for Donchian or fractal analysis
 
 	// Optional Indicators (MFI, CCI)
-	MFIPeriod     int
-	MFIOverbought float64
-	MFIOversold   float64
+	MFIPeriod     int     `json:"mfiPeriod"`
+	MFIOverbought float64 `json:"mfiOverbought"`
+	MFIOversold   float64 `json:"mfiOversold"`
 
-	CCIPeriod     int
-	CCIOverbought float64
-	CCIOversold   float64
+	CCIPeriod     int     `json:"cciPeriod"`
+	CCIOverbought float64 `json:"cciOverbought"`
+	CCIOversold   float64 `json:"cciOversold"`
 }
 
 var mfiAlgo *algos.MFIStrategy
@@ -357,247 +357,29 @@ func (ma *MarketAnalyzer) calculateADX(candles []models.CandleStick) float64 {
 	return ma.average(adxValues[len(adxValues)-ma.ADXPeriod:])
 }
 
-// IsUptrend determines if the market is in an uptrend based on EMA and ADX
+// IsUptrend determines if the *current candle* is moving upwards
 func (ma *MarketAnalyzer) IsUptrend(candles []models.CandleStick) bool {
-	totalCandles := len(candles)
-	if totalCandles < 10 {
-		logger.Infof("Extremely insufficient candles for trend detection. Got %d\n", totalCandles)
+	if len(candles) < 2 {
 		return false
 	}
 
-	if !ma.checkUptrendWithShortSMAs(candles) {
+	lastCandle := candles[len(candles)-1]
+
+	// 1) Intrabar up check
+	if lastCandle.Close <= lastCandle.Open {
 		return false
 	}
 
-	// Compute MFI & CCI
-	//var mfiVal float64
-	//var mfiEnabled = mfiAlgo != nil
-	//if mfiEnabled {
-	//	var errMfi error
-	//	mfiVal, _, errMfi = mfiAlgo.Calculate(candles, "")
-	//	if errMfi != nil {
-	//		logger.Debugf("Error computing MFI in IsUptrend: %v", errMfi)
-	//	}
-	//}
-	//var cciVal float64
-	//var cciSignal int
-	//var cciEnabled = cciAlgo != nil
-	//
-	//if cciEnabled {
-	//	var errCci error
-	//	cciVal, cciSignal, errCci = cciAlgo.Calculate(candles, "")
-	//	if errCci != nil {
-	//		logger.Debugf("Error computing CCI in IsUptrend: %v", errCci)
-	//	}
-	//}
-	//
-	//// 2) Existing logic for large candle counts
-	//switch {
-	//case totalCandles >= 50:
-	//	if !ma.checkUptrendWithLongSMAs(candles) {
-	//		return false
-	//	}
-	//case totalCandles >= 20:
-	//	if !ma.checkUptrendWithShortSMAs(candles) {
-	//		return false
-	//	}
-	//default:
-	//	// If we have between 10 and 19 candles:
-	//
-	//}
-	//
-	//if mfiEnabled && mfiVal > ma.MFIOverbought {
-	//	logger.Debugf("MFI=%.2f is overbought (>%v). Not confirming uptrend.", mfiVal, ma.MFIOverbought)
-	//	return false
-	//}
-	//
-	//if cciEnabled && cciVal > ma.CCIOverbought {
-	//	logger.Debugf("CCI=%.2f is below oversold (%v). Possibly downward push, not uptrend yet.", cciVal, ma.CCIOversold)
-	//	return false
-	//}
-	//
-	//if cciEnabled && cciSignal == -1 {
-	//	logger.Debugf("CCI says overbought => cciSignal == -1, skipping uptrend.")
-	//	return false
-	//}
-	//
-	//adxVal := ma.calculateADX(candles)
-	//if adxVal < 20 {
-	//	logger.Debugf("ADX=%.2f <20 => weak trend, skipping uptrend", adxVal)
-	//	return false
-	//}
-	//
-	//// If we reach here, we consider it an uptrend
-	//logger.DebugColorf(logger.Cyan, "Uptrend confirmed by MFI=%.2f, CCI=%.2f, ADX=%.2f", mfiVal, cciVal, adxVal)
-	return true
-}
-
-func (ma *MarketAnalyzer) checkUptrendWithLongSMAs(candles []models.CandleStick) bool {
-	shortPeriod := 20
-	longPeriod := 50
-
-	shortSMA := ma.calculateSMA(candles, shortPeriod)
-	longSMA := ma.calculateSMA(candles, longPeriod)
-	if shortSMA == nil || longSMA == nil {
-		logger.Infof("Not enough data to calculate long SMAs for trend detection.")
-		return false
+	// 2) short EMA
+	if len(candles) < 5 {
+		return true // fallback if not enough data for EMA
 	}
-
-	recentShortSMA := shortSMA[len(shortSMA)-1]
-	recentLongSMA := longSMA[len(longSMA)-1]
-
-	if recentShortSMA <= recentLongSMA {
-		return false
-	}
-
-	// Check that short SMA above long SMA for last 3 bars
-	if !ma.isShortAboveLongForBars(shortSMA, longSMA, 3) {
-		return false
-	}
-
-	// SMA Slope Check
-	if !ma.isSMAIncreasing(shortSMA, 3) {
-		return false
-	}
-
-	// Price Action Check
-	if !ma.isPriceMakingHigherHighs(candles, 3) {
-		return false
-	}
-
-	return true
-}
-
-func (ma *MarketAnalyzer) checkUptrendWithShortSMAs(candles []models.CandleStick) bool {
-	// Use shorter periods, e.g., 7 and 14
-	shortPeriod := 7
-	longPeriod := 14
-
-	shortSMA := ma.calculateSMA(candles, shortPeriod)
-	longSMA := ma.calculateSMA(candles, longPeriod)
-	if shortSMA == nil || longSMA == nil {
-		logger.Infof("Not enough data for even short SMAs.")
-		return false
-	}
-
-	if shortSMA[len(shortSMA)-1] <= longSMA[len(longSMA)-1] {
-		return false
-	}
-
-	// Less strict checks since we have less data
-	if !ma.isShortAboveLongForBars(shortSMA, longSMA, 2) {
-		return false
-	}
-
-	// Maybe skip slope check or just do 2 bars
-	if !ma.isSMAIncreasing(shortSMA, 2) {
-		return false
-	}
-
-	// Price action check with fewer bars
-	if !ma.isPriceMakingHigherHighs(candles, 2) {
-		return false
-	}
-
-	return true
-}
-
-// Helper function to check if short SMA has been consistently above long SMA for given bars
-func (ma *MarketAnalyzer) isShortAboveLongForBars(shortSMA, longSMA []float64, bars int) bool {
-	// To compare apples to apples, align arrays by their ending indices
-	minLen := len(longSMA)
-	shortAligned := shortSMA[len(shortSMA)-minLen:]
-	longAligned := longSMA
-
-	if len(shortAligned) < bars {
-		return false
-	}
-	for i := len(shortAligned) - bars; i < len(shortAligned); i++ {
-		if shortAligned[i] <= longAligned[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// Check if SMA is increasing over the last 'bars' periods
-// i.e., each subsequent SMA value should be higher than the previous one
-func (ma *MarketAnalyzer) isSMAIncreasing(sma []float64, bars int) bool {
-	if len(sma) < bars+1 {
-		return false
-	}
-
-	for i := len(sma) - bars; i < len(sma); i++ {
-		if i == 0 {
-			continue
-		}
-		if sma[i] <= sma[i-1] {
-			return false
-		}
-	}
-	return true
-}
-
-// Check if price is making higher highs for the last 'bars' candles
-// This can help confirm that not only the SMAs are aligned, but price action is also trending up.
-func (ma *MarketAnalyzer) isPriceMakingHigherHighs(candles []models.CandleStick, bars int) bool {
-	if len(candles) < bars+1 {
-		return false
-	}
-
-	// Check if each subsequent high is greater than the previous one
-	for i := len(candles) - bars; i < len(candles); i++ {
-		if i == len(candles)-bars {
-			continue // Skip the first in the series since we have nothing to compare it to
-		}
-		// Ensure the current candle's close is higher than the previous candle's close
-		if candles[i].Close <= candles[i-1].Close {
-			return false
-		}
-	}
-	return true
-}
-
-// Helper function to calculate SMA
-func (ma *MarketAnalyzer) calculateSMA(candles []models.CandleStick, period int) []float64 {
-	if len(candles) < period {
-		return nil
-	}
-
-	sma := make([]float64, len(candles)-period+1)
-	for i := 0; i <= len(candles)-period; i++ {
-		sum := 0.0
-		for j := 0; j < period; j++ {
-			sum += candles[i+j].Close
-		}
-		sma[i] = sum / float64(period)
-	}
-	return sma
-}
-
-func (ma *MarketAnalyzer) checkSimpleUptrend(candles []models.CandleStick, barsToCheck int) bool {
-	// Simple heuristic: last few closes each higher than the previous
-	// Or last close > average of last barsToCheck closes
-	if len(candles) < barsToCheck {
-		return false
-	}
-
-	sum := 0.0
-	for i := len(candles) - barsToCheck; i < len(candles); i++ {
-		sum += candles[i].Close
-	}
-	avg := sum / float64(barsToCheck)
-
-	if candles[len(candles)-1].Close > avg {
-		// Optional: Check if each close is higher than the previous
-		for i := len(candles) - barsToCheck + 1; i < len(candles); i++ {
-			if candles[i].Close <= candles[i-1].Close {
-				return false
-			}
-		}
+	shortEmaValues := ma.calculateEMA(candles, 5)
+	if len(shortEmaValues) == 0 {
 		return true
 	}
-	return false
+	lastEMA := shortEmaValues[len(shortEmaValues)-1]
+	return lastCandle.Close > lastEMA
 }
 
 // calculateIchimokuCloud calculates a simplified Ichimoku signal

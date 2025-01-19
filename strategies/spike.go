@@ -1,10 +1,11 @@
-package algos
+package strategies
 
 import (
 	"fmt"
 	"github.com/M1chlCZ/bingo-bot/models"
 	"log"
 	"math"
+	"time"
 )
 
 // SpikeStrategy represents the type of strategy, all fields are required to be filled
@@ -15,7 +16,11 @@ type SpikeStrategy struct {
 	VolumeThreshold float64 // Minimum volume to confirm spike
 }
 
-func (s *SpikeStrategy) Calculate(candles []models.CandleStick, pair string, _ bool) (int, error) {
+func (s *SpikeStrategy) GetStrategyType() StrategyType {
+	return SpikeDetectionStrategyType
+}
+
+func (s *SpikeStrategy) Calculate(candles []models.CandleStick, pair string, marketState models.MarketState, pendingCoolDown time.Duration) (int, error) {
 	if len(candles) < s.AvgPeriod+1 {
 		return 0, fmt.Errorf("not enough candles to calculate spike")
 	}
@@ -33,6 +38,10 @@ func (s *SpikeStrategy) Calculate(candles []models.CandleStick, pair string, _ b
 	}
 
 	return 0, nil // Hold
+}
+
+func (s *SpikeStrategy) GetCandleInterval() string {
+	return "1h"
 }
 
 func calculateAverageCandleSize(candles []models.CandleStick, period int) float64 {

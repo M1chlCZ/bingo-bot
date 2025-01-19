@@ -7,10 +7,10 @@ import (
 )
 
 type StochasticOscillator struct {
-	Overbought int
-	Oversold   int
-	Period     int
-	DPeriod    int // The period for %D smoothing, commonly 3
+	Overbought int `json:"overbought"`
+	Oversold   int `json:"oversold"`
+	Period     int `json:"period"`
+	DPeriod    int `json:"dPeriod"`
 }
 
 // Calculate the Stochastic Oscillator (%K and %D).

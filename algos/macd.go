@@ -6,9 +6,9 @@ import (
 )
 
 type MACDStrategy struct {
-	FastPeriod   int
-	SlowPeriod   int
-	SignalPeriod int
+	FastPeriod   int `json:"fastPeriod"`
+	SlowPeriod   int `json:"slowPeriod"`
+	SignalPeriod int `json:"signalPeriod"`
 }
 
 // Calculate generates a signal based on MACD crossovers

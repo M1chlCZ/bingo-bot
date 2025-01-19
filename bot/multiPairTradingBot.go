@@ -318,7 +318,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			isUptrend := bot.marketAnalyzer.IsUptrend(candles)
 
 			// Calculate signal
-			sngl, err := strategy.Calculate(candles, pair.Symbol, anls.MarketState)
+			sngl, err := strategy.Calculate(candles, pair.Symbol, anls.MarketState, bot.config.PendingBuyCoolDown)
 			if err != nil {
 				logger.Errorf("Error calculating signal for %s: %v", pair.Symbol, err)
 				continue
@@ -449,8 +449,8 @@ func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, strategy int
 		upperBound = lastData.UpperBand
 		mfi = lastData.MFIVal
 		cci = lastData.CCIVal
-		ichimokuKijun = lastData.IchimokuKijun
-		ichimokuTenkan = lastData.IchimokuTenkan
+		ichimokuKijun = lastData.IchimokuRes.Kijun
+		ichimokuTenkan = lastData.IchimokuRes.Tenkan
 	} else {
 		logger.Errorf("Error getting strategy for %s", pair.Symbol)
 	}
@@ -896,7 +896,7 @@ func (bot *MultiPairTradingBot) checkMarketMeltdown() {
 	logger.Infof("Checking for market meltdown...")
 	localCandles := make(map[string][]models.CandleStick)
 	bot.pairsMu.RLock()
-	for sym, _ := range bot.pairs {
+	for sym := range bot.pairs {
 		cset, errC := bot.exchange.FetchCandles(sym, bot.interval, 100)
 		if errC == nil {
 			localCandles[sym] = cset

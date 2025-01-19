@@ -7,9 +7,9 @@ import (
 )
 
 type CCIStrategy struct {
-	Period     int     // Lookback for CCI
-	Overbought float64 // e.g., +100
-	Oversold   float64 // e.g., -100
+	Period     int     `json:"period"`
+	Overbought float64 `json:"overbought"`
+	Oversold   float64 `json:"oversold"`
 }
 
 // Calculate CCI and return (latestCCI, signal, error).

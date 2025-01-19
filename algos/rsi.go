@@ -7,9 +7,9 @@ import (
 )
 
 type RSIStrategy struct {
-	Overbought int // RSI threshold for overbought (sell signal)
-	Oversold   int // RSI threshold for oversold (buy signal)
-	Period     int // Lookback period for RSI
+	Overbought int `json:"overbought"`
+	Oversold   int `json:"oversold"`
+	Period     int `json:"period"`
 }
 
 // Calculate returns the latest RSI and a signal based on overbought/oversold levels

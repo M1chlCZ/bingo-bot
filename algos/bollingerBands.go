@@ -7,8 +7,8 @@ import (
 )
 
 type BollingerBands struct {
-	Period int
-	Width  float64
+	Period int     `json:"period"`
+	Width  float64 `json:"width"`
 }
 
 func (bb *BollingerBands) Calculate(candles []models.CandleStick) (lowerBand, middleBand, upperBand float64, err error) {

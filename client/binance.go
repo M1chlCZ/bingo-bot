@@ -385,7 +385,7 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 		if side == "SELL" {
 			quantityPrecision = info.Symbols[0].BaseAssetPrecision
 		} else {
-			quantityPrecision = info.Symbols[0].QuoteAssetPrecision
+			quantityPrecision = info.Symbols[0].BaseAssetPrecision
 		}
 
 		formattedQty = strconv.FormatFloat(adjustedQty, 'f', quantityPrecision, 64)

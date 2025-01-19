@@ -49,6 +49,15 @@ func main() {
 	}
 
 	conf := config.DefaultMultiTradingConfig()
+	// Load config from JSON
+	//	conf, err := config.MultiTradingConfigFromJSON("config.json")
+	//if err != nil {
+	//	log.Fatalf("Failed to load config: %v", err)
+	//}
+	//pr, err := utils.PrettyJson(conf)
+	//if err == nil {
+	//	fmt.Println(pr)
+	//}
 	bt := bot.NewMultiPairTradingBot(cl, &conf)
 
 	go metrics.MonitorPerformance(cl)

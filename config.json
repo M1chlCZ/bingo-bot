@@ -1,0 +1,322 @@
+{
+        "autoTrading": true,
+        "default": {
+                "enabled": true,
+                "strategy": {
+                        "strategyType": "compound",
+                        "rsi": {
+                                "overbought": 70,
+                                "oversold": 30,
+                                "period": 14
+                        },
+                        "macd": {
+                                "fastPeriod": 8,
+                                "slowPeriod": 21,
+                                "signalPeriod": 5
+                        },
+                        "stochastic": {
+                                "overbought": 80,
+                                "oversold": 20,
+                                "period": 14,
+                                "dPeriod": 0
+                        },
+                        "bollingerBands": {
+                                "period": 14,
+                                "width": 2.2
+                        },
+                        "ichimoku": {
+                                "conversionPeriod": 9,
+                                "basePeriod": 26,
+                                "spanBPeriod": 52
+                        },
+                        "cci": {
+                                "period": 14,
+                                "overbought": 100,
+                                "oversold": -100
+                        },
+                        "mfi": {
+                                "overbought": 80,
+                                "oversold": 20,
+                                "period": 14
+                        },
+                        "marketState": 0,
+                        "riskRewardThreshold": 0.6,
+                        "feeRate": 0.001,
+                        "desiredProfit": 2,
+                        "highestPriceFallOffMargin": 0.5,
+                        "candleInterval": "4h",
+                        "panicSell": false
+                }
+        },
+        "chaotic": {
+                "enabled": false,
+                "strategy": {
+                        "strategyType": "compound",
+                        "rsi": {
+                                "overbought": 65,
+                                "oversold": 28,
+                                "period": 10
+                        },
+                        "macd": {
+                                "fastPeriod": 5,
+                                "slowPeriod": 15,
+                                "signalPeriod": 4
+                        },
+                        "stochastic": {
+                                "overbought": 85,
+                                "oversold": 18,
+                                "period": 10,
+                                "dPeriod": 0
+                        },
+                        "bollingerBands": {
+                                "period": 10,
+                                "width": 2.5
+                        },
+                        "ichimoku": {
+                                "conversionPeriod": 8,
+                                "basePeriod": 22,
+                                "spanBPeriod": 44
+                        },
+                        "cci": {
+                                "period": 10,
+                                "overbought": 120,
+                                "oversold": -120
+                        },
+                        "mfi": {
+                                "overbought": 75,
+                                "oversold": 15,
+                                "period": 10
+                        },
+                        "marketState": 2,
+                        "riskRewardThreshold": 0.7,
+                        "feeRate": 0.001,
+                        "desiredProfit": 2,
+                        "highestPriceFallOffMargin": 1,
+                        "candleInterval": "2h",
+                        "panicSell": true
+                }
+        },
+        "trending": {
+                "enabled": true,
+                "strategy": {
+                        "strategyType": "compound",
+                        "rsi": {
+                                "overbought": 70,
+                                "oversold": 30,
+                                "period": 14
+                        },
+                        "macd": {
+                                "fastPeriod": 8,
+                                "slowPeriod": 21,
+                                "signalPeriod": 5
+                        },
+                        "stochastic": {
+                                "overbought": 80,
+                                "oversold": 20,
+                                "period": 14,
+                                "dPeriod": 0
+                        },
+                        "bollingerBands": {
+                                "period": 20,
+                                "width": 2.2
+                        },
+                        "ichimoku": {
+                                "conversionPeriod": 9,
+                                "basePeriod": 26,
+                                "spanBPeriod": 52
+                        },
+                        "cci": {
+                                "period": 20,
+                                "overbought": 100,
+                                "oversold": -100
+                        },
+                        "mfi": {
+                                "overbought": 80,
+                                "oversold": 20,
+                                "period": 14
+                        },
+                        "marketState": 1,
+                        "riskRewardThreshold": 1,
+                        "feeRate": 0.001,
+                        "desiredProfit": 4,
+                        "highestPriceFallOffMargin": 1,
+                        "candleInterval": "6h",
+                        "panicSell": false
+                }
+        },
+        "rangeBound": {
+                "enabled": true,
+                "strategy": {
+                        "strategyType": "compound",
+                        "rsi": {
+                                "overbought": 68,
+                                "oversold": 32,
+                                "period": 10
+                        },
+                        "macd": {
+                                "fastPeriod": 9,
+                                "slowPeriod": 21,
+                                "signalPeriod": 7
+                        },
+                        "stochastic": {
+                                "overbought": 75,
+                                "oversold": 25,
+                                "period": 14,
+                                "dPeriod": 0
+                        },
+                        "bollingerBands": {
+                                "period": 15,
+                                "width": 2
+                        },
+                        "ichimoku": {
+                                "conversionPeriod": 9,
+                                "basePeriod": 26,
+                                "spanBPeriod": 52
+                        },
+                        "cci": {
+                                "period": 14,
+                                "overbought": 100,
+                                "oversold": -100
+                        },
+                        "mfi": {
+                                "overbought": 80,
+                                "oversold": 20,
+                                "period": 14
+                        },
+                        "marketState": 3,
+                        "riskRewardThreshold": 0.8,
+                        "feeRate": 0.001,
+                        "desiredProfit": 2.5,
+                        "highestPriceFallOffMargin": 1,
+                        "candleInterval": "1d",
+                        "panicSell": false
+                }
+        },
+        "transitional": {
+                "enabled": true,
+                "strategy": {
+                        "strategyType": "compound",
+                        "rsi": {
+                                "overbought": 70,
+                                "oversold": 30,
+                                "period": 10
+                        },
+                        "macd": {
+                                "fastPeriod": 8,
+                                "slowPeriod": 17,
+                                "signalPeriod": 5
+                        },
+                        "stochastic": {
+                                "overbought": 80,
+                                "oversold": 20,
+                                "period": 10,
+                                "dPeriod": 0
+                        },
+                        "bollingerBands": {
+                                "period": 10,
+                                "width": 2.5
+                        },
+                        "ichimoku": {
+                                "conversionPeriod": 7,
+                                "basePeriod": 22,
+                                "spanBPeriod": 44
+                        },
+                        "cci": {
+                                "period": 14,
+                                "overbought": 100,
+                                "oversold": -100
+                        },
+                        "mfi": {
+                                "overbought": 80,
+                                "oversold": 20,
+                                "period": 10
+                        },
+                        "marketState": 5,
+                        "riskRewardThreshold": 0.6,
+                        "feeRate": 0.001,
+                        "desiredProfit": 2,
+                        "highestPriceFallOffMargin": 0.8,
+                        "candleInterval": "4h",
+                        "panicSell": false
+                }
+        },
+        "stronglyTrending": {
+                "enabled": true,
+                "strategy": {
+                        "strategyType": "compound",
+                        "rsi": {
+                                "overbought": 72,
+                                "oversold": 28,
+                                "period": 14
+                        },
+                        "macd": {
+                                "fastPeriod": 10,
+                                "slowPeriod": 20,
+                                "signalPeriod": 6
+                        },
+                        "stochastic": {
+                                "overbought": 80,
+                                "oversold": 20,
+                                "period": 14,
+                                "dPeriod": 0
+                        },
+                        "bollingerBands": {
+                                "period": 20,
+                                "width": 1.8
+                        },
+                        "ichimoku": {
+                                "conversionPeriod": 9,
+                                "basePeriod": 26,
+                                "spanBPeriod": 52
+                        },
+                        "cci": {
+                                "period": 20,
+                                "overbought": 150,
+                                "oversold": -150
+                        },
+                        "mfi": {
+                                "overbought": 85,
+                                "oversold": 15,
+                                "period": 14
+                        },
+                        "marketState": 4,
+                        "riskRewardThreshold": 1.2,
+                        "feeRate": 0.001,
+                        "desiredProfit": 8,
+                        "highestPriceFallOffMargin": 1,
+                        "candleInterval": "6h",
+                        "panicSell": true
+                }
+        },
+        "excludedMarkets": [],
+        "excludedQuoteMarkets": [
+                "USDC",
+                "USDP",
+                "FDUSD"
+        ],
+        "includedBaseMarkets": [
+                "USDT"
+        ],
+        "tradingLoopInterval": 10000000000,
+        "analysisLoopInterval": 1800000000000,
+        "analyzerConfig": {
+                "atrPeriod": 15,
+                "adxPeriod": 15,
+                "highVolatilityThreshold": 0.03,
+                "strongTrendThreshold": 25,
+                "ichimokuConversionPeriod": 9,
+                "ichimokuBasePeriod": 26,
+                "ichimokuSpanBPeriod": 52,
+                "volumeThreshold": 10000,
+                "fractalLookback": 20,
+                "mfiPeriod": 14,
+                "mfiOverbought": 80,
+                "mfiOversold": 20,
+                "cciPeriod": 20,
+                "cciOverbought": 100,
+                "cciOversold": -100
+        },
+        "thresholdStopTrading": 0,
+        "thresholdStartTrading": 0,
+        "pendingBuyCoolDown": 120000000000
+}

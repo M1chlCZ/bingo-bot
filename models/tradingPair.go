@@ -2,13 +2,13 @@ package models
 
 // TradingPair represents a single trading pair configuration
 type TradingPair struct {
-	Symbol         string
-	BaseAsset      string
-	QuoteAsset     string
-	TradeAmount    float64
-	MinNotional    float64
-	PricePrecision int
-	QtyPrecision   int
+	Symbol         string  `json:"symbol"`
+	BaseAsset      string  `json:"baseAsset"`
+	QuoteAsset     string  `json:"quoteAsset"`
+	TradeAmount    float64 `json:"tradeAmount"`
+	MinNotional    float64 `json:"minNotional"`
+	PricePrecision int     `json:"pricePrecision"`
+	QtyPrecision   int     `json:"qtyPrecision"`
 }
 
 func NewTradingPair(symbol string) TradingPair {
