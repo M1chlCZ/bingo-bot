@@ -143,12 +143,12 @@ func (cs *CompoundStrategy) checkBullishConditions(
 
 	case models.StronglyTrending:
 		// *High momentum approach*
-		// Example: require MACD > 0, RSI < 75, maybe Ichimoku bull,
+		// require MACD > 0, RSI < 75, maybe Ichimoku bull,
 		// plus price near middle or lower Bollinger to buy pullbacks
 		if ci.MacdIndicator == 1 && ci.RSIVal < float64(cs.RSI.Overbought) {
-			// optional: ensure price is below middleBand, so we buy the dip
+			//  ensure price is below middleBand, so we buy the dip
 			if currentPrice < ci.MiddleBand {
-				// optional: also check MFI, CCI thresholds
+				//  also check MFI, CCI thresholds
 				if ci.MFIVal < float64(cs.MFI.Overbought) && ci.CCIVal < cs.CCI.Overbought {
 					return true
 				}
@@ -158,9 +158,9 @@ func (cs *CompoundStrategy) checkBullishConditions(
 
 	case models.Trending:
 		// *Regular trend approach*
-		// Example: MACD cross up, RSI < 70, no strict Bollinger check
+		// MACD cross up, RSI < 70, no strict Bollinger check
 		if ci.MacdIndicator == 1 && ci.RSIVal < float64(cs.RSI.Overbought) {
-			// optional: check if CCI is not overbought
+			// check if CCI is not overbought
 			if ci.CCIVal < cs.CCI.Overbought {
 				return true
 			}
@@ -202,13 +202,10 @@ func (cs *CompoundStrategy) checkBullishConditions(
 				return true
 			}
 		}
-		// or a contrarian approach if we detect a recent deep dip
-		// ...
 		return false
 
 	default:
 		// *Default fallback*
-		// Possibly a simpler check: MACD > 0, RSI < Overbought
 		if ci.MacdIndicator == 1 && ci.RSIVal < float64(cs.RSI.Overbought) {
 			return true
 		}
@@ -366,28 +363,19 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 			return true
 		}
 
-		// EXAMPLE #1: We can confirm if the *same* state conditions are still bullish
-		//   i.e., the user might want to confirm using 'checkBullishConditions' with pb.MarketState
-		//   and the *current* indicators.
-		//   This ensures that the environment is still consistent with the original buy logic.
-
 		if cs.checkBullishConditions(pb.MarketState, indicators, currentPrice) && currentPrice <= pb.TriggerPrice {
-			// For example, we confirm if price hasn’t run away above TriggerPrice,
-			// (or if you want a 'pullback' approach => currentPrice < pb.TriggerPrice).
 			logger.Infof("[PENDING BUY CONFIRMED] %s => actual buy now (State=%v)", pb.Pair, pb.MarketState)
 			pendingBuys.Delete(pbKey)
 			bought = 1
-			return false // break out of Range
+			return false
 		}
 
-		// EXAMPLE #2: If the environment drastically changed or the conditions are no longer valid, cancel
-		//   e.g., if RSI is now > Overbought or MACD turned negative, or price soared 5% above trigger
 		if (currentPrice > pb.TriggerPrice*1.05) || // ran away
 			(indicators.MacdIndicator == -1) || // no longer bullish
 			(indicators.RSIVal > float64(cs.RSI.Overbought)) {
 			logger.Warnf("[PENDING BUY CANCELLED] %s => conditions reversed or price soared. (State=%v)", pb.Pair, pb.MarketState)
 			pendingBuys.Delete(pbKey)
-			// We do NOT set bought=0 => just means we skip confirming
+
 		}
 
 		return true
