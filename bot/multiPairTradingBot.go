@@ -244,6 +244,11 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional
 			finalAmount = quoteBalance
 		}
 
+		if quoteBalance < minBuyAbsolute {
+			logger.Infof("Skipping BUY for %s: Insufficient USDT balance. Need %.4f Have %.4f", pair, minBuyAbsolute, quoteBalance)
+			return 0
+		}
+
 		logger.Debugf(
 			"BUY %.2f %s | ATR=%.2f, ADX=%.2f, BaseRisk=%.2f%%, ADXMultiplier=%.2f, ATRMultiplier=%.2f, TradePercentage=%.2f%%, MinBuy=%.2f",
 			finalAmount, pair, atr, adx, baseRiskPercentage*100, adxMultiplier, atrMultiplier, tradePercentage*100, minBuyAbsolute,
