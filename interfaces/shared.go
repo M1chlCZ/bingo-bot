@@ -2,7 +2,9 @@ package interfaces
 
 import (
 	"github.com/M1chlCZ/bingo-bot/models"
-	"github.com/M1chlCZ/bingo-bot/strategies"
+	//"github.com/M1chlCZ/bingo-bot/strategies"
+
+	//"github.com/M1chlCZ/bingo-bot/strategies"
 	"github.com/adshao/go-binance/v2"
 	"time"
 )
@@ -20,9 +22,10 @@ type Exchange interface {
 
 // Strategy interface for implementing different trading strategies
 type Strategy interface {
-	GetStrategyType() strategies.StrategyType
+	//GetStrategyType() strategies.StrategyType
 	Calculate(candles []models.CandleStick, pair string, marketState models.MarketState, pendingCoolDown time.Duration) (int, error)
 	GetCandleInterval() string
+	Clone() Strategy
 }
 
 // ExchangeClient interface defines methods our bot needs from an exchange client

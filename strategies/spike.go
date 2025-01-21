@@ -2,6 +2,7 @@ package strategies
 
 import (
 	"fmt"
+	"github.com/M1chlCZ/bingo-bot/interfaces"
 	"github.com/M1chlCZ/bingo-bot/models"
 	"log"
 	"math"
@@ -16,9 +17,9 @@ type SpikeStrategy struct {
 	VolumeThreshold float64 // Minimum volume to confirm spike
 }
 
-func (s *SpikeStrategy) GetStrategyType() StrategyType {
-	return SpikeDetectionStrategyType
-}
+//func (s *SpikeStrategy) GetStrategyType() StrategyType {
+//	return SpikeDetectionStrategyType
+//}
 
 func (s *SpikeStrategy) Calculate(candles []models.CandleStick, pair string, marketState models.MarketState, pendingCoolDown time.Duration) (int, error) {
 	if len(candles) < s.AvgPeriod+1 {
@@ -77,4 +78,11 @@ func isReversal(candles []models.CandleStick) bool {
 	previousCandle := candles[len(candles)-2]
 
 	return latestCandle.Close < latestCandle.Open && latestCandle.Close < previousCandle.Close
+}
+
+func (s *SpikeStrategy) Clone() interfaces.Strategy {
+	return &SpikeStrategy{
+		AvgPeriod:       s.AvgPeriod,
+		VolumeThreshold: s.VolumeThreshold,
+	}
 }

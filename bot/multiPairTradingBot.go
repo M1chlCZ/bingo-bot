@@ -391,13 +391,11 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				logger.Infof("BUY signal for %s | Amount: %.4f | Price: %.4f | Quote Balance: %.4f",
 					pair.Symbol, tradeAmount/currentPrice, currentPrice, quoteBalance)
 
-				go func(pair *models.TradingPair, tradeAmount, currentPrice, quoteBalance float64) {
-					if !bot.handleBuy(pair, strategy, tradeAmount/currentPrice, currentPrice, quoteBalance) {
-						// logger.Errorf("Error handling BUY for %s", pair.Symbol)
-						return
-					}
-					tradesToday++
-				}(pair, tradeAmount, currentPrice, quoteBalance)
+				if !bot.handleBuy(pair, strategy, tradeAmount/currentPrice, currentPrice, quoteBalance) {
+					// logger.Errorf("Error handling BUY for %s", pair.Symbol)
+					return
+				}
+				tradesToday++
 			}
 			if sngl < 0 { // SELL
 				// Check if the market is in an uptrend before selling
@@ -407,12 +405,11 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				}
 				logger.Infof("SELL signal for %s | Amount: %.4f | Price: %.4f | Base Balance: %.4f",
 					pair.Symbol, tradeAmount, currentPrice, baseBalance)
-				go func(pair *models.TradingPair, tradeAmount, currentPrice, baseBalance float64) {
-					if !bot.handleSell(pair, tradeAmount, currentPrice, baseBalance) {
-						logger.Errorf("Error handling SELL for %s", pair.Symbol)
-						return
-					}
-				}(pair, tradeAmount, currentPrice, baseBalance)
+				if !bot.handleSell(pair, tradeAmount, currentPrice, baseBalance) {
+					logger.Errorf("Error handling SELL for %s", pair.Symbol)
+					return
+				}
+
 			} else {
 				logger.Debugf("UPTREND signal for %s, cancelling sell", pair.Symbol)
 			}
@@ -843,19 +840,28 @@ func containsPairs(pairs []models.TradingPair, symbol string) bool {
 }
 
 func (bot *MultiPairTradingBot) SuggestStrategy(marketState models.MarketState) interfaces.Strategy {
+	// Return the strategy based on the market state
+	// Clone() is called because we need new instances of the strategy for each pair
+	// This prevents wrong data being shared between pairs
+
 	switch marketState {
 	case models.Trending:
-		return bot.config.Trending.Strategy
+		return bot.config.Trending.Strategy.Clone()
+
 	case models.Chaotic:
-		return bot.config.Chaotic.Strategy
+		return bot.config.Chaotic.Strategy.Clone()
+
 	case models.RangeBound:
-		return bot.config.RangeBound.Strategy
+		return bot.config.RangeBound.Strategy.Clone()
+
 	case models.Transitional:
-		return bot.config.Transitional.Strategy
+		return bot.config.Transitional.Strategy.Clone()
+
 	case models.StronglyTrending:
-		return bot.config.StronglyTrending.Strategy
+		return bot.config.StronglyTrending.Strategy.Clone()
+
 	default:
-		return bot.config.Default.Strategy
+		return bot.config.Default.Strategy.Clone()
 	}
 }
 

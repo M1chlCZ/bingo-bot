@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/M1chlCZ/bingo-bot/algos"
 	db2 "github.com/M1chlCZ/bingo-bot/db"
+	"github.com/M1chlCZ/bingo-bot/interfaces"
 	"github.com/M1chlCZ/bingo-bot/logger"
 	"github.com/M1chlCZ/bingo-bot/models"
 	"github.com/go-playground/validator/v10"
@@ -28,6 +29,7 @@ type CompoundStrategy struct {
 	HighestPriceFallOffMargin float64                     `validate:"gte=0" json:"highestPriceFallOffMargin"`
 	CandleInterval            string                      `validate:"required" json:"candleInterval"`
 	PanicSell                 bool                        `json:"panicSell"`
+	localIndicators           CurrentIndicators
 }
 
 type CurrentIndicators struct {
@@ -58,13 +60,7 @@ type PendingBuy struct {
 	MacdLine     float64
 }
 
-var currentIndicators CurrentIndicators
-
 var pendingBuys sync.Map
-
-func (cs *CompoundStrategy) GetStrategyType() StrategyType {
-	return CompoundStrategyType
-}
 
 func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string, marketState models.MarketState, pendingCoolDown time.Duration) (int, error) {
 	if len(candles) == 0 {
@@ -82,11 +78,12 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 	}
 
 	// Calculate Indicators
-	currentIndicators, err = cs.getIndicators(candles, pair)
+	currentIndicators, err := cs.getIndicators(candles, pair)
 	if err != nil {
 		logger.Errorf("Error calculating indicators: %v", err.Error())
 		return 0, err
 	}
+	cs.localIndicators = currentIndicators
 	// If a trade exists, handle P/L logic first
 	if trade != nil {
 		return cs.checkActiveTrade(trade, currentPrice)
@@ -509,7 +506,7 @@ func (cs *CompoundStrategy) getIndicators(candles []models.CandleStick, pair str
 }
 
 func (cs *CompoundStrategy) GetLatestData() CurrentIndicators {
-	return currentIndicators
+	return cs.localIndicators
 }
 
 func (cs *CompoundStrategy) UnmarshalJSON(data []byte) error {
@@ -553,4 +550,54 @@ func (cs *CompoundStrategy) UnmarshalJSON(data []byte) error {
 	cs.PanicSell = aux.PanicSell
 
 	return nil
+}
+
+func (cs *CompoundStrategy) Clone() interfaces.Strategy {
+	newCS := &CompoundStrategy{
+		StrategyType: cs.StrategyType,
+		RSI: &algos.RSIStrategy{
+			Overbought: cs.RSI.Overbought,
+			Oversold:   cs.RSI.Oversold,
+			Period:     cs.RSI.Period,
+		},
+		MACD: &algos.MACDStrategy{
+			FastPeriod:   cs.MACD.FastPeriod,
+			SlowPeriod:   cs.MACD.SlowPeriod,
+			SignalPeriod: cs.MACD.SignalPeriod,
+		},
+		Stochastic: &algos.StochasticOscillator{
+			Overbought: cs.Stochastic.Overbought,
+			Oversold:   cs.Stochastic.Oversold,
+			Period:     cs.Stochastic.Period,
+			DPeriod:    cs.Stochastic.DPeriod,
+		},
+		BollingerBands: &algos.BollingerBands{
+			Period: cs.BollingerBands.Period,
+			Width:  cs.BollingerBands.Width,
+		},
+		Ichimoku: &algos.IchimokuStrategy{
+			ConversionPeriod: cs.Ichimoku.ConversionPeriod,
+			BasePeriod:       cs.Ichimoku.BasePeriod,
+			SpanBPeriod:      cs.Ichimoku.SpanBPeriod,
+		},
+		CCI: &algos.CCIStrategy{
+			Period:     cs.CCI.Period,
+			Overbought: cs.CCI.Overbought,
+			Oversold:   cs.CCI.Oversold,
+		},
+		MFI: &algos.MFIStrategy{
+			Period:     cs.MFI.Period,
+			Overbought: cs.MFI.Overbought,
+			Oversold:   cs.MFI.Oversold,
+		},
+		MarketState:               cs.MarketState,
+		RiskRewardThreshold:       cs.RiskRewardThreshold,
+		FeeRate:                   cs.FeeRate,
+		DesiredProfit:             cs.DesiredProfit,
+		HighestPriceFallOffMargin: cs.HighestPriceFallOffMargin,
+		CandleInterval:            cs.CandleInterval,
+		PanicSell:                 cs.PanicSell,
+		// lastIndicators stays zero or copy if needed
+	}
+	return newCS
 }
