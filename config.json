@@ -1,4 +1,4 @@
-{
+ {
         "autoTrading": true,
         "default": {
                 "enabled": true,
@@ -139,7 +139,7 @@
                         "riskRewardThreshold": 1,
                         "feeRate": 0.001,
                         "desiredProfit": 4,
-                        "highestPriceFallOffMargin": 1,
+                        "highestPriceFallOffMargin": 2,
                         "candleInterval": "6h",
                         "panicSell": false
                 }
@@ -187,7 +187,7 @@
                         "riskRewardThreshold": 0.8,
                         "feeRate": 0.001,
                         "desiredProfit": 2.5,
-                        "highestPriceFallOffMargin": 1,
+                        "highestPriceFallOffMargin": 2,
                         "candleInterval": "1d",
                         "panicSell": false
                 }
