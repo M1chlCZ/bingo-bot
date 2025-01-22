@@ -6,3 +6,8 @@ docker-compose.yml
 app/data/
 /app/
 exclude.txt
+go.mod
+go.sum
+trades.db
+trades.db-shm
+trades.db-wal
