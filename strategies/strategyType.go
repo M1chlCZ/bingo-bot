@@ -1,8 +1,8 @@
 package strategies
 
 import (
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 )
 
 // StrategyType defines a type-safe enum-like structure for strategies

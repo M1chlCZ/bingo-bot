@@ -2,7 +2,7 @@ package utils
 
 import (
 	"bytes"
-	"encoding/json"
+	"github.com/goccy/go-json"
 )
 
 func InlineIFT[T any](condition bool, a T, b T) T {

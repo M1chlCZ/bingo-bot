@@ -1,12 +1,12 @@
 package types
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/M1chlCZ/bingo-bot/interfaces"
 	"github.com/M1chlCZ/bingo-bot/strategies"
 	"github.com/go-playground/validator/v10"
+	"github.com/goccy/go-json"
 )
 
 type MarketStateStrategy struct {

@@ -104,7 +104,7 @@ var (
 			},
 			CandleInterval:            "2h", // “chaotic” might need shorter intervals
 			DesiredProfit:             2.0,
-			HighestPriceFallOffMargin: 2.0,
+			HighestPriceFallOffMargin: 1.2,
 			FeeRate:                   0.001,
 			MarketState:               models.Chaotic,
 		},
@@ -153,7 +153,7 @@ var (
 			},
 			CandleInterval:            "6h", // or "4h" or "8h" for trending
 			DesiredProfit:             4.0,  // more than default if we think it’s a real trend
-			HighestPriceFallOffMargin: 2.0,
+			HighestPriceFallOffMargin: 1.2,
 			FeeRate:                   0.001,
 			MarketState:               models.Trending,
 		},
@@ -202,7 +202,7 @@ var (
 			},
 			CandleInterval:            "1d", // For range-bound, a bigger timeframe might be okay
 			DesiredProfit:             2.5,  // modest
-			HighestPriceFallOffMargin: 2.0,
+			HighestPriceFallOffMargin: 1.2,
 			FeeRate:                   0.001,
 			MarketState:               models.RangeBound,
 		},
@@ -251,7 +251,7 @@ var (
 			},
 			CandleInterval:            "6h", // for strong trends, 6h might catch bigger moves
 			DesiredProfit:             8.0,
-			HighestPriceFallOffMargin: 2.0,
+			HighestPriceFallOffMargin: 1.2,
 			FeeRate:                   0.001,
 			MarketState:               models.StronglyTrending,
 		},

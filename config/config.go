@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/M1chlCZ/bingo-bot/analysis"
@@ -9,6 +8,7 @@ import (
 	"github.com/M1chlCZ/bingo-bot/models"
 	"github.com/M1chlCZ/bingo-bot/types"
 	"github.com/go-playground/validator/v10"
+	"github.com/goccy/go-json"
 	"log"
 	"os"
 	"time"

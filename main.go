@@ -8,7 +8,6 @@ import (
 	sqlite "github.com/M1chlCZ/bingo-bot/db"
 	"github.com/M1chlCZ/bingo-bot/logger"
 	"github.com/M1chlCZ/bingo-bot/metrics"
-	"github.com/M1chlCZ/bingo-bot/utils"
 	"github.com/joho/godotenv"
 	"log"
 	"os"
@@ -59,10 +58,6 @@ func main() {
 	//if err == nil {
 	//	fmt.Println(pr)
 	//}
-	pr, err := utils.PrettyJson(conf)
-	if err == nil {
-		log.Println(pr)
-	}
 	bt := bot.NewMultiPairTradingBot(cl, &conf)
 
 	go metrics.MonitorPerformance(cl)

@@ -1,7 +1,6 @@
 package strategies
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/M1chlCZ/bingo-bot/algos"
 	db2 "github.com/M1chlCZ/bingo-bot/db"
@@ -9,6 +8,7 @@ import (
 	"github.com/M1chlCZ/bingo-bot/logger"
 	"github.com/M1chlCZ/bingo-bot/models"
 	"github.com/go-playground/validator/v10"
+	"github.com/goccy/go-json"
 	"sync"
 	"time"
 )
