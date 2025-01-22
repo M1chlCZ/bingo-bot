@@ -63,7 +63,7 @@ var (
 
 	// ------------------ CHAOTIC ------------------
 	ChaoticMarketState = types.MarketStateStrategy{
-		Enabled: false, // you can enable if you want
+		Enabled: true, // you can enable if you want
 		Strategy: &strategies.CompoundStrategy{
 			PanicSell:           false,
 			RiskRewardThreshold: 0.7,
@@ -104,7 +104,7 @@ var (
 			},
 			CandleInterval:            "2h", // “chaotic” might need shorter intervals
 			DesiredProfit:             2.0,
-			HighestPriceFallOffMargin: 1.2,
+			HighestPriceFallOffMargin: 0.5,
 			FeeRate:                   0.001,
 			MarketState:               models.Chaotic,
 		},

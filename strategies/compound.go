@@ -97,7 +97,6 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 	)
 
 	bullishConditions := cs.checkBullishConditions(marketState, currentIndicators, currentPrice)
-
 	bearishConditions := cs.checkBearishConditions(marketState, currentIndicators, currentPrice)
 
 	bought := cs.evaluatePendingBuys(pair, currentPrice, currentIndicators, pendingCoolDown)
@@ -116,14 +115,12 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			MacdLine:     currentIndicators.MacdLine,
 		}
 		pendingBuys.Store(pbKey, newPb)
-		logger.InfoColorf(logger.Yellow, "[PENDING BUY] %s => price=%.2f, state=%v", pair, currentPrice, marketState)
+		logger.DebugColorf(logger.Yellow, "[PENDING BUY] %s => price=%.2f, state=%v", pair, currentPrice, marketState)
 		return 0, nil
 	}
-
 	if bearishConditions && isActive {
 		return -1, nil
 	}
-
 	logger.DebugColorf(logger.Yellow, "[DEFAULT HOLD] %s => cci=%.1f, mfi=%.1f => no trade", pair, currentIndicators.CCIVal, currentIndicators.MFIVal)
 	return 0, nil
 }
@@ -203,7 +200,7 @@ func (cs *CompoundStrategy) checkBullishConditions(
 
 	default:
 		// *Default fallback*
-		if ci.MacdIndicator == 1 && ci.RSIVal < float64(cs.RSI.Overbought) {
+		if ci.MacdIndicator == 1 && ci.MFIVal < float64(cs.MFI.Overbought) && ci.CCIVal < cs.CCI.Overbought {
 			return true
 		}
 		return false
@@ -361,7 +358,7 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 		}
 
 		if cs.checkBullishConditions(pb.MarketState, indicators, currentPrice) && currentPrice <= pb.TriggerPrice {
-			logger.Infof("[PENDING BUY CONFIRMED] %s => actual buy now (State=%v)", pb.Pair, pb.MarketState)
+			logger.InfoColorf(logger.Green, "[PENDING BUY CONFIRMED] %s => actual buy now (State=%v)", pb.Pair, pb.MarketState)
 			pendingBuys.Delete(pbKey)
 			bought = 1
 			return false

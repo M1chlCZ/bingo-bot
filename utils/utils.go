@@ -2,7 +2,9 @@ package utils
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/goccy/go-json"
+	"runtime"
 )
 
 func InlineIFT[T any](condition bool, a T, b T) T {
@@ -24,4 +26,17 @@ func PrettyJson(data interface{}) (string, error) {
 		return empty, err
 	}
 	return buffer.String(), nil
+}
+
+func PrintMemStats() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	fmt.Printf("Alloc = %v MiB", bToMb(m.Alloc))
+	fmt.Printf("\tTotalAlloc = %v MiB", bToMb(m.TotalAlloc))
+	fmt.Printf("\tSys = %v MiB", bToMb(m.Sys))
+	fmt.Printf("\tNumGC = %v\n", m.NumGC)
+}
+
+func bToMb(b uint64) uint64 {
+	return b / 1024 / 1024
 }

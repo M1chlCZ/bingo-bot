@@ -9,6 +9,7 @@ import (
 	"github.com/M1chlCZ/bingo-bot/logger"
 	"github.com/M1chlCZ/bingo-bot/models"
 	"github.com/M1chlCZ/bingo-bot/strategies"
+	"github.com/M1chlCZ/bingo-bot/utils"
 	"log"
 	"os"
 	"os/signal"
@@ -147,7 +148,7 @@ func (bot *MultiPairTradingBot) StartTrading() {
 	//	}(*pair)
 	//}
 	//wg.Wait()
-
+	utils.PrintMemStats()
 	logger.Infof("Trading pairs initialized. Starting trading loops...")
 
 	// Launch trading routines for each pair
