@@ -36,6 +36,7 @@ type ExchangeClient interface {
 	GetBalance(asset string) (float64, error)
 	CreateOrder(symbol, orderType, side string, amount string) (float64, error)
 	CreateMarketOrder(symbol, side, quantity string) (int64, float64, error)
+	IsTickerTooNew(symbol string) (bool, error)
 	// CreateLimitOrder(symbol, side, quantity, price string) (int64, error)
 	// CreateStopLossLimitOrder(symbol, side, quantity, price, stopLoss string) (int64, error)
 	// MonitorOrder(symbol string, orderID int64) (bool, error)

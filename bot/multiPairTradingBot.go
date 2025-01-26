@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"fmt"
 	"github.com/M1chlCZ/bingo-bot/algos"
 	"github.com/M1chlCZ/bingo-bot/analysis"
 	"github.com/M1chlCZ/bingo-bot/config"
@@ -373,17 +374,22 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				}
 
 				// Prevent overtrading
-				i, err := db2.SQLiteDB.GetActiveTradesCount()
+				activeTradesTotal, err := db2.SQLiteDB.GetActiveTradesCount()
 				if err != nil {
 					logger.Errorf("Error fetching active trades count: %v", err)
 					continue
 				}
-				if i >= 15 {
-					logger.Infof("Maximum daily trades reached for %s. Skipping further trades.", pair.Symbol)
+				todayTradeCount, err := db2.SQLiteDB.GetTodaysTradeCount()
+				if err != nil {
+					logger.Errorf("Error fetching today's active trades count: %v", err)
+					continue
+				}
+				if activeTradesTotal >= bot.config.MaxTotalTrades || todayTradeCount >= bot.config.MaxDailyTrades {
+					logger.InfoColorf(logger.Yellow, "Maximum daily trades reached. Skipping trade.")
 					continue
 				}
 				if active {
-					logger.Infof("Skipping BUY for %s: Active trade exists.", pair.Symbol)
+					logger.Debugf("Skipping BUY for %s: Active trade exists.", pair.Symbol)
 					continue
 				}
 				logger.Infof("BUY signal for %s | Amount: %.4f | Price: %.4f | Quote Balance: %.4f",
@@ -496,22 +502,21 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 	}
 	profitLoss := (price - activeTrade.BuyPrice) * activeTrade.Quantity
 
-	var rsiVal, macdVal, stochasticStr, stochasticSignal, lowerBound, middleBound, upperBound, mfi, cci float64 = 0, 0, 0, 0, 0, 0, 0, 0, 0
 	var ichimoku algos.IchimokuResult
 
-	rsiVal = activeTrade.RSI
-	macdVal = activeTrade.Macd
-	stochasticSignal = activeTrade.Stochastic
-	lowerBound = activeTrade.LowerBound
-	middleBound = activeTrade.MiddleBound
-	upperBound = activeTrade.UpperBound
-	mfi = activeTrade.MFI
-	cci = activeTrade.CCI
+	rsiVal := activeTrade.RSI
+	macdVal := activeTrade.Macd
+	stochasticSignal := activeTrade.Stochastic
+	lowerBound := activeTrade.LowerBound
+	middleBound := activeTrade.MiddleBound
+	upperBound := activeTrade.UpperBound
+	mfi := activeTrade.MFI
+	cci := activeTrade.CCI
 	ichimoku.Tenkan = activeTrade.IchimokuTenkan
 	ichimoku.Kijun = activeTrade.IchimokuKijun
 
 	// Fetch indicator values
-	logger.Debugf("Trade Indicators: RSI=%.2f, MACD=%.2f, Stochastic=%.2f (Signal=%.2f) OrderID %d", rsiVal, macdVal, stochasticStr, stochasticSignal, orderID)
+	logger.Debugf("Trade Indicators: RSI=%.2f, MACD=%.2f, Stochastic=%.2f (Signal=%.2f) OrderID %d", rsiVal, macdVal, stochasticSignal, stochasticSignal, orderID)
 
 	// Log the trade
 	err = db2.SQLiteDB.LogCompletedTrade(pair.Symbol, activeTrade.BuyPrice, price, activeTrade.Quantity, profitLoss, rsiVal, macdVal, stochasticSignal, lowerBound, middleBound, upperBound, mfi, cci, ichimoku.Tenkan, ichimoku.Kijun, activeTrade.Timestamp.Unix(), activeTrade.GetOrderID())
@@ -663,6 +668,7 @@ func (bot *MultiPairTradingBot) adjustTradingPairs() {
 	}
 }
 
+//nolint:funlen, gocognit, gocyclo shh, all okay
 func (bot *MultiPairTradingBot) performPairAdjustment() {
 	logger.Infof("Adjusting trading pairs based on market analysis...")
 
@@ -680,9 +686,16 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 		candles, err := bot.exchange.FetchCandles(market.Symbol, bot.interval, 100)
 		if err != nil {
 			logger.Errorf("Error fetching candles for %s | Sleeping for 3 minutes", market.Symbol)
-			return // Skip this market
+			continue // Skip this market
 		}
-
+		isOkay, err := bot.exchange.IsTickerTooNew(market.Symbol)
+		if err != nil {
+			continue
+		}
+		if !isOkay {
+			logger.Infof("Skipping trading pair: %s Too new for trading", market.Symbol)
+			continue
+		}
 		// Analyze the market using ATR and ADX
 		marketState, _, _ := bot.marketAnalyzer.AnalyzeMarket(candles)
 		if bot.isMarketStateEnabled(marketState) {

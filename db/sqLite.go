@@ -330,10 +330,24 @@ func (s *SQLite) GetActiveTrade(symbol string) (*models.ActiveTrade, error) {
 	return &trade, nil
 }
 
+// GetActiveTradesCount fetches the number of active trades
 func (s *SQLite) GetActiveTradesCount() (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	query := `SELECT COUNT(*) FROM active_trades`
+	var count int
+	err := s.DB.QueryRow(query).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// GetTodaysTradeCount fetches the number of trades for the current day
+func (s *SQLite) GetTodaysTradeCount() (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	query := `SELECT COUNT(*) FROM trades WHERE date(timestamp) = date('now')`
 	var count int
 	err := s.DB.QueryRow(query).Scan(&count)
 	if err != nil {

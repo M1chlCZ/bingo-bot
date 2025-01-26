@@ -53,8 +53,8 @@ var (
 				Oversold:   20,
 			},
 
-			CandleInterval:            "4h", // faster than 12h for “default”
-			DesiredProfit:             2.0,  // aim for a bit more than 1%
+			CandleInterval:            "12h",
+			DesiredProfit:             2.0,
 			HighestPriceFallOffMargin: 0.5,
 			FeeRate:                   0.001,
 			MarketState:               models.Default,
@@ -102,7 +102,7 @@ var (
 				Overbought: 75,
 				Oversold:   15,
 			},
-			CandleInterval:            "2h", // “chaotic” might need shorter intervals
+			CandleInterval:            "4h", // “chaotic” might need shorter intervals
 			DesiredProfit:             2.0,
 			HighestPriceFallOffMargin: 0.5,
 			FeeRate:                   0.001,
@@ -151,9 +151,9 @@ var (
 				Overbought: 80,
 				Oversold:   20,
 			},
-			CandleInterval:            "6h", // or "4h" or "8h" for trending
-			DesiredProfit:             4.0,  // more than default if we think it’s a real trend
-			HighestPriceFallOffMargin: 1.5,
+			CandleInterval:            "1d",
+			DesiredProfit:             4.0,
+			HighestPriceFallOffMargin: 1.0,
 			FeeRate:                   0.001,
 			MarketState:               models.Trending,
 		},
@@ -200,9 +200,9 @@ var (
 				Overbought: 80,
 				Oversold:   20,
 			},
-			CandleInterval:            "1d", // For range-bound, a bigger timeframe might be okay
-			DesiredProfit:             2.5,  // modest
-			HighestPriceFallOffMargin: 1.5,
+			CandleInterval:            "1d",
+			DesiredProfit:             2.5,
+			HighestPriceFallOffMargin: 1.0,
 			FeeRate:                   0.001,
 			MarketState:               models.RangeBound,
 		},
@@ -216,7 +216,7 @@ var (
 			RiskRewardThreshold: 1.2,
 			StrategyType:        strategies.CompoundStrategyType,
 			RSI: &algos.RSIStrategy{
-				Overbought: 72, // strong push might run RSI higher
+				Overbought: 72,
 				Oversold:   28,
 				Period:     14,
 			},
@@ -227,7 +227,7 @@ var (
 			},
 			BollingerBands: &algos.BollingerBands{
 				Period: 20,
-				Width:  1.8, // narrower bands for a stronger trend might catch quick breakouts
+				Width:  1.8,
 			},
 			Stochastic: &algos.StochasticOscillator{
 				Overbought: 80,
@@ -241,17 +241,17 @@ var (
 			},
 			CCI: &algos.CCIStrategy{
 				Period:     20,
-				Overbought: 150, // allow strong uptrends
+				Overbought: 150,
 				Oversold:   -150,
 			},
 			MFI: &algos.MFIStrategy{
 				Period:     14,
-				Overbought: 85, // allow bigger rallies
+				Overbought: 85,
 				Oversold:   15,
 			},
-			CandleInterval:            "6h", // for strong trends, 6h might catch bigger moves
+			CandleInterval:            "6h",
 			DesiredProfit:             8.0,
-			HighestPriceFallOffMargin: 1.5,
+			HighestPriceFallOffMargin: 1.0,
 			FeeRate:                   0.001,
 			MarketState:               models.StronglyTrending,
 		},
@@ -300,7 +300,7 @@ var (
 			},
 			CandleInterval:            "4h",
 			DesiredProfit:             2.0, // slightly bigger than 1
-			HighestPriceFallOffMargin: 1.8,
+			HighestPriceFallOffMargin: 1.0,
 			FeeRate:                   0.001,
 			MarketState:               models.Transitional,
 		},

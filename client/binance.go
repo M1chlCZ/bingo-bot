@@ -157,9 +157,7 @@ func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
 
 				// Parse filters to extract trading rules
 				for _, filter := range symbol.Filters {
-					switch filter["filterType"] {
-					case "NOTIONAL":
-						// Extract `minNotional`
+					if filter["filterType"] == "NOTIONAL" {
 						minNotionalStr, ok := filter["minNotional"].(string)
 						if !ok {
 							return nil, fmt.Errorf("invalid minNotional format for %s", pair.Symbol)
@@ -196,6 +194,54 @@ func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
 	// Not used
 	_ = data
 	return nil
+}
+
+func (b *BinanceClient) IsTickerTooNew(symbol string) (bool, error) {
+
+	type Enough struct {
+		IsEnough bool `json:"isEnough"`
+	}
+	doFunc := func() (any, error) {
+		klines, err := b.client.NewKlinesService().
+			Symbol(symbol).
+			Interval("1d").
+			Limit(1).
+			StartTime(0).
+			Do(context.Background())
+		if err != nil {
+			logger.Errorf("Error fetching klines for %s: %v", symbol, err)
+		}
+
+		if len(klines) == 0 {
+			// Means Binance has no data for this symbol—possibly newly listed
+			logger.Debugf("%s has no historical data.\n", symbol)
+			return Enough{IsEnough: false}, nil
+		}
+
+		// The earliest bar is klines[0]
+		firstTradeTime := time.Unix(0, int64(klines[0].OpenTime)*int64(time.Millisecond))
+
+		logger.Debugf("Earliest known trading time for %s: %v\n", symbol, firstTradeTime)
+
+		// For a 7-day threshold:
+		if time.Since(firstTradeTime) < 14*24*time.Hour {
+			logger.Debugf("%s is newer than 1 week—skipping.\n", symbol)
+			return Enough{IsEnough: false}, nil
+		}
+
+		logger.Debugf("%s is older than 1 week—OK to trade.\n", symbol)
+		return Enough{IsEnough: true}, nil
+	}
+
+	data, err := b.enqueueRequest(doFunc, false)
+	if err != nil {
+		return false, err
+	}
+	t, ok := data.(Enough)
+	if !ok {
+		return false, fmt.Errorf("unexpected data type returned from queue")
+	}
+	return t.IsEnough, nil
 }
 
 // GetCurrentPrice fetches the current price for a given symbol

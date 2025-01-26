@@ -31,6 +31,8 @@ type MultiTrading struct {
 	ThresholdStopTrading  float64                   `json:"thresholdStopTrading"` // percentage
 	ThresholdStartTrading float64                   `json:"thresholdStartTrading"`
 	PendingBuyCoolDown    time.Duration             `validate:"required" json:"pendingBuyCoolDown"`
+	MaxDailyTrades        int                       `json:"maxDailyTrades"`
+	MaxTotalTrades        int                       `json:"maxTotalTrades"`
 }
 
 func DefaultMultiTradingConfig() MultiTrading {
@@ -43,13 +45,15 @@ func DefaultMultiTradingConfig() MultiTrading {
 		Transitional:          TransitionalMarketState,
 		StronglyTrending:      StronglyTrendingMarketState,
 		ExcludedMarkets:       []models.TradingPair{},
-		ExcludedQuoteMarkets:  []string{"USDC", "USDP", "FDUSD"},
+		ExcludedQuoteMarkets:  []string{"USDC", "USDP", "FDUSD", "TUSD"},
 		IncludedBaseMarkets:   []string{"USDT"},
 		TradingLoopInterval:   10 * time.Second,
 		AnalysisLoopInterval:  30 * time.Minute,
 		ThresholdStartTrading: 0,
 		ThresholdStopTrading:  0,
-		PendingBuyCoolDown:    4 * time.Minute,
+		PendingBuyCoolDown:    5 * time.Minute,
+		MaxDailyTrades:        15,
+		MaxTotalTrades:        30,
 		AnalyzerConfig: analysis.NewMarketAnalyzer(analysis.MarketAnalyzer{
 			ATRPeriod:                15,
 			ADXPeriod:                15,
