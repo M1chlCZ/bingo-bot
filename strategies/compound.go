@@ -62,6 +62,7 @@ type PendingBuy struct {
 
 var pendingBuys sync.Map
 
+//nolint:funlen, has to be this way
 func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string, marketState models.MarketState, pendingCoolDown time.Duration) (int, error) {
 	if len(candles) == 0 {
 		return 0, nil
@@ -103,7 +104,12 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 	if bought == 1 {
 		return 1, nil
 	}
+
 	if bullishConditions {
+		if cs.alreadyInPendingBuys(pair) {
+			logger.DebugColorf(logger.Yellow, "[PENDING BUY] %s => already pending", pair)
+			return 0, nil
+		}
 		pbKey := fmt.Sprintf("%s_%d", pair, time.Now().UnixNano())
 		newPb := &PendingBuy{
 			ID:           pbKey,
@@ -144,7 +150,12 @@ func (cs *CompoundStrategy) checkBullishConditions(
 			if currentPrice < ci.MiddleBand {
 				//  also check MFI, CCI thresholds
 				if ci.MFIVal < float64(cs.MFI.Overbought) && ci.CCIVal < cs.CCI.Overbought {
-					return true
+					target := ci.UpperBand * 1.02
+					stop := ci.LowerBand
+					rr := cs.calcRR(currentPrice, stop, target)
+					if rr > cs.RiskRewardThreshold {
+						return true
+					}
 				}
 			}
 		}
@@ -152,25 +163,40 @@ func (cs *CompoundStrategy) checkBullishConditions(
 
 	case models.Trending:
 		// *Regular trend approach*
-		// MACD cross up, RSI < 70, no strict Bollinger check
+		// MACD cross up, RSI < 70
 		if ci.MacdIndicator == 1 && ci.RSIVal < float64(cs.RSI.Overbought) {
-			// check if CCI is not overbought
-			if ci.CCIVal < cs.CCI.Overbought {
-				return true
+			if currentPrice < ci.MiddleBand {
+				if ci.CCIVal < cs.CCI.Overbought {
+					target := ci.UpperBand
+					stop := ci.LowerBand
+					rr := cs.calcRR(currentPrice, stop, target)
+					if rr > cs.RiskRewardThreshold {
+						return true
+
+					}
+				}
 			}
 		}
 		return false
 
 	case models.RangeBound:
+		relaxedRR := cs.RiskRewardThreshold * 0.5
+		target := ci.UpperBand
+		stop := ci.LowerBand
+		rr := cs.calcRR(currentPrice, stop, target)
 		// *Mean reversion approach*
 		// Typically buy near lower Bollinger band or RSI < 30
 		// or Stoch oversold, etc.
 		if currentPrice <= ci.LowerBand && ci.RSIVal < 30 {
-			return true
+			if rr > relaxedRR {
+				return true
+			}
 		}
 		// Or if CCI < -100 => oversold
-		if ci.CCIVal < cs.CCI.Oversold {
-			return true
+		if ci.CCIVal <= cs.CCI.Oversold {
+			if rr > relaxedRR {
+				return true
+			}
 		}
 		return false
 
@@ -201,7 +227,13 @@ func (cs *CompoundStrategy) checkBullishConditions(
 	default:
 		// *Default fallback*
 		if ci.MacdIndicator == 1 && ci.MFIVal < float64(cs.MFI.Overbought) && ci.CCIVal < cs.CCI.Overbought {
-			return true
+			relaxedRR := cs.RiskRewardThreshold * 0.8
+			target := ci.UpperBand
+			stop := ci.LowerBand
+			rr := cs.calcRR(currentPrice, stop, target)
+			if rr > relaxedRR {
+				return true
+			}
 		}
 		return false
 	}
@@ -276,7 +308,7 @@ func (cs *CompoundStrategy) checkBearishConditions(
 	}
 }
 
-func (cs *CompoundStrategy) calcRR(currentPrice, stop, target float64, _ string) float64 {
+func (cs *CompoundStrategy) calcRR(currentPrice, stop, target float64) float64 {
 	risk := (currentPrice - stop) / currentPrice
 	reward := (target - currentPrice) / currentPrice
 	if risk <= 0 || reward <= 0 {
@@ -286,7 +318,7 @@ func (cs *CompoundStrategy) calcRR(currentPrice, stop, target float64, _ string)
 	return rr
 }
 
-func (cs *CompoundStrategy) calcRRForSell(currentPrice, stop, target float64, _ string) float64 {
+func (cs *CompoundStrategy) calcRRForSell(currentPrice, stop, target float64) float64 {
 	risk := (stop - currentPrice) / currentPrice
 	reward := (currentPrice - target) / currentPrice
 	if risk <= 0 || reward <= 0 {
@@ -378,6 +410,19 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 	return bought
 }
 
+func (cs *CompoundStrategy) alreadyInPendingBuys(pair string) bool {
+	inTheMap := false
+	pendingBuys.Range(func(_, val interface{}) bool {
+		pb := val.(*PendingBuy)
+		if pb.Pair == pair {
+			inTheMap = true
+			return false
+		}
+		return true
+	})
+	return inTheMap
+}
+
 func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentPrice float64) (int, error) {
 	breakevenPrice := trade.BuyPrice * (1 + cs.FeeRate)
 	profitMargin := (currentPrice - trade.BuyPrice) / trade.BuyPrice * 100
@@ -385,7 +430,7 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 	// HIGH PRICE since trade
 	athPrice, err := db2.SQLiteDB.GetAth(trade.Symbol)
 	if err != nil || currentPrice > athPrice {
-		logger.Infof("Setting new HIGH price for %s: %.8f", trade.Symbol, currentPrice)
+		logger.InfoColorf(logger.Cyan, "New HIGH price for %s: %.8f", trade.Symbol, currentPrice)
 		if e := db2.SQLiteDB.SetUpdateAth(trade.Symbol, currentPrice); e != nil {
 			logger.Errorf("Error updating ATH price for %s: %v", trade.Symbol, e)
 		}
@@ -395,7 +440,7 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 	// LOW PRICE since trade
 	atlPrice, err := db2.SQLiteDB.GetAtl(trade.Symbol)
 	if err != nil || currentPrice < atlPrice {
-		logger.Infof("Setting new LOW price for %s: %.8f", trade.Symbol, currentPrice)
+		logger.InfoColorf(logger.Yellow, "New LOW price for %s: %.8f", trade.Symbol, currentPrice)
 		if e := db2.SQLiteDB.SetUpdateAtl(trade.Symbol, currentPrice); e != nil {
 			logger.Errorf("Error updating ATL price for %s: %v", trade.Symbol, e)
 		}

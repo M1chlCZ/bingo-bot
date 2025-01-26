@@ -18,10 +18,10 @@ import (
 func main() {
 	// Set up logging
 	// Define a flag for log level
-	logLevel := flag.String("log", "info", "Log level: debug, info, warn, error")
-	colorEnabled := flag.Bool("color", true, "Enable colorized output")
+	logFlag := flag.String("log", logger.EnvOrDefault("LOG_LEVEL", "info"), "Log level")
+	colorFlag := flag.Bool("color", logger.EnvOrDefaultBool("COLOR_ENABLED", true), "Enable color?")
 	flag.Parse()
-	logger.InitLogger(logLevel, colorEnabled)
+	logger.InitLogger(logFlag, colorFlag)
 
 	err := godotenv.Load()
 	if err != nil {

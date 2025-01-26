@@ -1,5 +1,7 @@
 github.com/adshao/go-binance/v2 v2.7.1 h1:88R/rrQ3HYOV/TAy1uduSABOda6/JX4rIDaZK7yTV5w=
 github.com/adshao/go-binance/v2 v2.7.1/go.mod h1:LQeYDpETgzkWCCqfwr+O849hGAFc5ygMhhS0wm1vuvU=
+github.com/adshao/go-binance/v2 v2.7.2 h1:unCk+yn3feLfJcECHsTPnbRPXamY7BRyOgkLluqMSrU=
+github.com/adshao/go-binance/v2 v2.7.2/go.mod h1:LQeYDpETgzkWCCqfwr+O849hGAFc5ygMhhS0wm1vuvU=
 github.com/bitly/go-simplejson v0.5.1 h1:xgwPbetQScXt1gh9BmoJ6j9JMr3TElvuIyjR8pgdoow=
 github.com/bitly/go-simplejson v0.5.1/go.mod h1:YOPVLzCfwK14b4Sff3oP1AmGhI9T9Vsg84etUnlyp+Q=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=

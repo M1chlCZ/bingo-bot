@@ -63,7 +63,7 @@ var (
 
 	// ------------------ CHAOTIC ------------------
 	ChaoticMarketState = types.MarketStateStrategy{
-		Enabled: true, // you can enable if you want
+		Enabled: false, // you can enable if you want
 		Strategy: &strategies.CompoundStrategy{
 			PanicSell:           false,
 			RiskRewardThreshold: 0.7,
@@ -153,7 +153,7 @@ var (
 			},
 			CandleInterval:            "6h", // or "4h" or "8h" for trending
 			DesiredProfit:             4.0,  // more than default if we think it’s a real trend
-			HighestPriceFallOffMargin: 1.2,
+			HighestPriceFallOffMargin: 1.5,
 			FeeRate:                   0.001,
 			MarketState:               models.Trending,
 		},
@@ -202,7 +202,7 @@ var (
 			},
 			CandleInterval:            "1d", // For range-bound, a bigger timeframe might be okay
 			DesiredProfit:             2.5,  // modest
-			HighestPriceFallOffMargin: 1.2,
+			HighestPriceFallOffMargin: 1.5,
 			FeeRate:                   0.001,
 			MarketState:               models.RangeBound,
 		},
@@ -251,7 +251,7 @@ var (
 			},
 			CandleInterval:            "6h", // for strong trends, 6h might catch bigger moves
 			DesiredProfit:             8.0,
-			HighestPriceFallOffMargin: 1.2,
+			HighestPriceFallOffMargin: 1.5,
 			FeeRate:                   0.001,
 			MarketState:               models.StronglyTrending,
 		},
@@ -259,7 +259,7 @@ var (
 
 	// ------------------ TRANSITIONAL ------------------
 	TransitionalMarketState = types.MarketStateStrategy{
-		Enabled: true,
+		Enabled: false,
 		Strategy: &strategies.CompoundStrategy{
 			PanicSell:           false,
 			RiskRewardThreshold: 0.6,
@@ -300,7 +300,7 @@ var (
 			},
 			CandleInterval:            "4h",
 			DesiredProfit:             2.0, // slightly bigger than 1
-			HighestPriceFallOffMargin: 0.8,
+			HighestPriceFallOffMargin: 1.8,
 			FeeRate:                   0.001,
 			MarketState:               models.Transitional,
 		},

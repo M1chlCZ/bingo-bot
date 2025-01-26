@@ -66,6 +66,24 @@ func InitLogger(logLevel *string, colorEnabled *bool) {
 	Debug("This is a debug message")
 }
 
+func EnvOrDefault(key, def string) string {
+	if val, ok := os.LookupEnv(key); ok {
+		return val
+	}
+	return def
+}
+
+func EnvOrDefaultBool(key string, def bool) bool {
+	if val, ok := os.LookupEnv(key); ok {
+		if val == "false" || val == "0" {
+			return false
+		}
+		// otherwise treat anything else as true
+		return true
+	}
+	return def
+}
+
 // SetLogLevel sets the global log level
 func SetLogLevel(level LogLevel) {
 	currentLogLevel = level

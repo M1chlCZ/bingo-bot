@@ -330,6 +330,18 @@ func (s *SQLite) GetActiveTrade(symbol string) (*models.ActiveTrade, error) {
 	return &trade, nil
 }
 
+func (s *SQLite) GetActiveTradesCount() (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	query := `SELECT COUNT(*) FROM active_trades`
+	var count int
+	err := s.DB.QueryRow(query).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // GetActiveTrades fetches all active trades for a given symbol
 func (s *SQLite) GetActiveTrades(symbol string) ([]*models.ActiveTrade, error) {
 	s.mu.RLock()

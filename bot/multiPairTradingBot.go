@@ -276,21 +276,12 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 	tradeTicker := time.NewTicker(bot.config.TradingLoopInterval)
 	defer tradeTicker.Stop()
 
-	resetTicker := time.NewTicker(12 * time.Hour)
-	defer resetTicker.Stop()
-
 	logger.Infof("Started trading loop for %s", pair.Symbol)
-
-	tradesToday := 0
 
 	for {
 		select {
 		case <-bot.stopCh:
 			return
-
-		case <-resetTicker.C:
-			// Reset the daily trade counter at midnight
-			tradesToday = 0
 
 		case <-tradeTicker.C:
 			// Fetch strategy and market analysis for the pair
@@ -380,8 +371,14 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 					logger.Errorf("Error checking active trade for %s: %v", pair.Symbol, err)
 					continue
 				}
+
 				// Prevent overtrading
-				if tradesToday >= 25 {
+				i, err := db2.SQLiteDB.GetActiveTradesCount()
+				if err != nil {
+					logger.Errorf("Error fetching active trades count: %v", err)
+					continue
+				}
+				if i >= 15 {
 					logger.Infof("Maximum daily trades reached for %s. Skipping further trades.", pair.Symbol)
 					continue
 				}
@@ -396,7 +393,6 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 					// logger.Errorf("Error handling BUY for %s", pair.Symbol)
 					return
 				}
-				tradesToday++
 			}
 			if sngl < 0 { // SELL
 				// Check if the market is in an uptrend before selling

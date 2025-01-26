@@ -49,7 +49,7 @@ func DefaultMultiTradingConfig() MultiTrading {
 		AnalysisLoopInterval:  30 * time.Minute,
 		ThresholdStartTrading: 0,
 		ThresholdStopTrading:  0,
-		PendingBuyCoolDown:    2 * time.Minute,
+		PendingBuyCoolDown:    4 * time.Minute,
 		AnalyzerConfig: analysis.NewMarketAnalyzer(analysis.MarketAnalyzer{
 			ATRPeriod:                15,
 			ADXPeriod:                15,
@@ -72,12 +72,12 @@ func DefaultMultiTradingConfig() MultiTrading {
 }
 
 func MultiTradingConfigFromJSON(filePath string) (MultiTrading, error) {
-	configJson, err := os.ReadFile(filePath)
+	configJSON, err := os.ReadFile(filePath)
 	if err != nil {
 		return MultiTrading{}, err
 	}
 	var config MultiTrading
-	err = json.Unmarshal(configJson, &config)
+	err = json.Unmarshal(configJSON, &config)
 	if err != nil {
 		return MultiTrading{}, err
 	}

@@ -220,7 +220,7 @@ func (b *BinanceClient) GetCurrentPrice(symbol string) (float64, error) {
 			return Price{Value: 0}, fmt.Errorf("failed to parse price for %s: %w", symbol, err)
 		}
 
-		logger.Infof("Current price for %s: %.8f", symbol, price)
+		logger.Debugf("Current price for %s: %.8f", symbol, price)
 		return Price{Value: price}, nil
 	}
 
