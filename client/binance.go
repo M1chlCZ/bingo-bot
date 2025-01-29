@@ -68,7 +68,7 @@ func NewBinanceClient(apiKey, apiSecret string) (interfaces.ExchangeClient, erro
 		client:            client,
 		pairs:             make(map[string]*models.TradingPair),
 		candleCache:       make(map[string][]models.CandleStick),
-		maxRequests:       10,              // max requests
+		maxRequests:       15,              // max requests
 		interval:          1 * time.Second, // time window
 		highPriorityQueue: make(chan BinanceRequest, 100),
 		normalQueue:       make(chan BinanceRequest, 500),
@@ -137,6 +137,8 @@ func (b *BinanceClient) GetTradingPairs() map[string]*models.TradingPair {
 }
 
 // AddTradingPair adds a new trading pair to monitor
+//
+//nolint:gocognit, funlen, gocyclo
 func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
 	doFunc := func() (any, error) {
 		// Fetch exchange info for the trading pair
@@ -196,6 +198,7 @@ func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
 	return nil
 }
 
+// IsTickerTooNew checks if the ticker is too new to trade
 func (b *BinanceClient) IsTickerTooNew(symbol string) (bool, error) {
 
 	type Enough struct {
