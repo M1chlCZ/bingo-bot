@@ -1,7 +1,6 @@
 package bot
 
 import (
-	"fmt"
 	"github.com/M1chlCZ/bingo-bot/algos"
 	"github.com/M1chlCZ/bingo-bot/analysis"
 	"github.com/M1chlCZ/bingo-bot/config"
@@ -24,14 +23,11 @@ import (
 type MultiPairTradingBot struct {
 	exchange       interfaces.ExchangeClient
 	marketAnalyzer *analysis.MarketAnalyzer
-	analysisData   map[string]*analysis.PairAnalysis
-	analysisLock   sync.Mutex
+	analysisData   sync.Map
 	interval       string
-	pairs          map[string]*models.TradingPair
-	pairStrategies map[string]interfaces.Strategy
-	pairsMu        sync.RWMutex
-	candles        map[string][]models.CandleStick
-	candlesMu      sync.RWMutex
+	pairs          sync.Map
+	pairStrategies sync.Map
+	candles        sync.Map
 	wg             sync.WaitGroup
 	stopCh         chan struct{}
 	config         config.MultiTrading
@@ -77,42 +73,28 @@ func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, config *config.M
 	return &MultiPairTradingBot{
 		exchange:       exchange,
 		config:         *config,
-		interval:       "1d", //only for initial analysis
+		interval:       "1d", // only for initial analysis
 		marketAnalyzer: config.AnalyzerConfig,
-		pairs:          make(map[string]*models.TradingPair),
-		analysisData:   make(map[string]*analysis.PairAnalysis),
-		pairStrategies: make(map[string]interfaces.Strategy),
 		stopCh:         make(chan struct{}),
 	}
 }
 
-func (bot *MultiPairTradingBot) AddPair(pair *models.TradingPair) {
-	bot.pairsMu.Lock()
-	defer bot.pairsMu.Unlock()
-	bot.analysisLock.Lock()
-	defer bot.analysisLock.Unlock()
-
-	bot.pairs[pair.Symbol] = pair
+func (bot *MultiPairTradingBot) AddPair(pair *models.TradingPair, analysisData *models.AnalysisData) {
+	bot.pairs.Store(pair.Symbol, pair)
 
 	// Fetch candles and analyze the market
-	candles, err := bot.exchange.FetchCandles(pair.Symbol, bot.interval, 100)
-	if err != nil {
-		log.Printf("[WARN] Error fetching candles for %s: %v", pair.Symbol, err)
-		return
-	}
-	anls, atr, adx := bot.marketAnalyzer.AnalyzeMarket(candles)
-	strategy := bot.SuggestStrategy(anls)
-	bot.analysisData[pair.Symbol] = &analysis.PairAnalysis{
+	strategy := bot.SuggestStrategy(analysisData.MarketState)
+	bot.analysisData.Store(pair.Symbol, &analysis.PairAnalysis{
 		Pair:        pair,
-		MarketState: anls,
+		MarketState: analysisData.MarketState,
 		LastUpdated: time.Now().Unix(),
-		ATR:         atr,
-		ADX:         adx,
-	}
+		ATR:         analysisData.ATR,
+		ADX:         analysisData.ADX,
+	})
 
 	// Suggest a strategy based on the market state
-	bot.pairStrategies[pair.Symbol] = strategy
-	logger.Infof("Strategy assigned for %s:| Market State: %s", pair.Symbol, anls.String())
+	bot.pairStrategies.Store(pair.Symbol, strategy)
+	logger.Infof("xStrategy assigned for %s:| Market State: %s", pair.Symbol, analysisData.MarketState.String())
 }
 
 func (bot *MultiPairTradingBot) StartTrading() {
@@ -153,15 +135,14 @@ func (bot *MultiPairTradingBot) StartTrading() {
 	logger.Infof("Trading pairs initialized. Starting trading loops...")
 
 	// Launch trading routines for each pair
-	bot.pairsMu.RLock()
-	for _, pair := range bot.pairs {
+	bot.pairs.Range(func(k, v interface{}) bool {
 		bot.wg.Add(1)
 		go func(pair *models.TradingPair) {
 			defer bot.wg.Done()
 			bot.tradePair(pair)
-		}(pair)
-	}
-	bot.pairsMu.RUnlock()
+		}(v.(*models.TradingPair))
+		return true
+	})
 
 	// Wait for stop signal
 	<-stop
@@ -286,13 +267,23 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 
 		case <-tradeTicker.C:
 			// Fetch strategy and market analysis for the pair
-			bot.pairsMu.RLock()
-			strategy, hasStrategy := bot.pairStrategies[pair.Symbol]
-			anls, hasAnalysis := bot.analysisData[pair.Symbol]
-			bot.pairsMu.RUnlock()
+			strg, hasStrategy := bot.pairStrategies.Load(pair.Symbol)
+			anls, hasAnalysis := bot.analysisData.Load(pair.Symbol)
 
 			if !hasStrategy || !hasAnalysis {
 				logger.Warnf("Missing strategy or analysis for %s. Skipping trade cycle.", pair.Symbol)
+				continue
+			}
+
+			analys, ok := anls.(*analysis.PairAnalysis)
+			if !ok {
+				logger.Warnf("Missing analysis for %s. Skipping trade cycle.", pair.Symbol)
+				continue
+			}
+
+			strategy, ok := strg.(interfaces.Strategy)
+			if !ok {
+				logger.Warnf("Missing strategy for %s. Skipping trade cycle.", pair.Symbol)
 				continue
 			}
 
@@ -303,20 +294,14 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				continue
 			}
 
-			if bot.candles == nil {
-				bot.candles = make(map[string][]models.CandleStick)
-			}
-
 			// Update shared candle storage
-			bot.candlesMu.Lock()
-			bot.candles[pair.Symbol] = candles
-			bot.candlesMu.Unlock()
+			bot.candles.Store(pair.Symbol, candles)
 
 			// Detect trend
 			isUptrend := bot.marketAnalyzer.IsUptrend(candles)
 
 			// Calculate signal
-			sngl, err := strategy.Calculate(candles, pair.Symbol, anls.MarketState, bot.config.PendingBuyCoolDown)
+			sngl, err := strategy.Calculate(candles, pair.Symbol, analys.MarketState, bot.config.PendingBuyCoolDown)
 			if err != nil {
 				logger.Errorf("Error calculating signal for %s: %v", pair.Symbol, err)
 				continue
@@ -331,6 +316,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				// No action required for HOLD signal
 				continue
 			}
+			logger.Infof("Signal calculated for %s (%d)", pair.Symbol, sngl)
 
 			// Fetch balances
 			quoteBalance, err := bot.exchange.GetBalance(pair.QuoteAsset)
@@ -356,15 +342,15 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			currentPrice := candles[len(candles)-1].Close
 
 			// Determine trade size
-			tradeAmount := bot.calculateTradeAmountAdvance(sngl, pair.MinNotional, quoteBalance, baseBalance, pair.Symbol, anls.ATR, anls.ADX)
+			tradeAmount := bot.calculateTradeAmountAdvance(sngl, pair.MinNotional, quoteBalance, baseBalance, pair.Symbol, analys.ATR, analys.ADX)
 			if tradeAmount == 0 {
 				continue
 			}
 
 			// Execute trade based on signal
 			if sngl > 0 { // BUY
-				if !bot.isMarketStateEnabled(anls.MarketState) {
-					logger.Infof("Skipping BUY for %s: %s market detected.", pair.Symbol, anls.MarketState.String())
+				if !bot.isMarketStateEnabled(analys.MarketState) {
+					logger.Infof("Skipping BUY for %s: %s market detected.", pair.Symbol, analys.MarketState.String())
 					continue
 				}
 				active, err := db2.SQLiteDB.IsCurrentlyActiveTrade(pair.Symbol)
@@ -384,9 +370,11 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 					logger.Errorf("Error fetching today's active trades count: %v", err)
 					continue
 				}
-				if activeTradesTotal >= bot.config.MaxTotalTrades || todayTradeCount >= bot.config.MaxDailyTrades {
-					logger.InfoColorf(logger.Yellow, "Maximum daily trades reached. Skipping trade.")
-					continue
+				if analys.MarketState != models.StronglyTrending {
+					if activeTradesTotal >= bot.config.MaxTotalTrades || todayTradeCount >= bot.config.MaxDailyTrades {
+						logger.InfoColorf(logger.Yellow, "Maximum daily trades reached. Skipping trade.")
+						continue
+					}
 				}
 				if active {
 					logger.Debugf("Skipping BUY for %s: Active trade exists.", pair.Symbol)
@@ -567,18 +555,22 @@ func (bot *MultiPairTradingBot) updateMarketAnalysis() {
 
 			bot.performPairAdjustment()
 
-			bot.pairsMu.RLock()
-			pairsToAnalyze := make([]*models.TradingPair, 0, len(bot.pairs))
-			for _, pair := range bot.pairs {
-				pairsToAnalyze = append(pairsToAnalyze, pair)
-			}
-			bot.pairsMu.RUnlock()
+			pairsToAnalyze := make([]*models.TradingPair, 0)
+			bot.pairs.Range(func(k, v interface{}) bool {
+				pairsToAnalyze = append(pairsToAnalyze, v.(*models.TradingPair))
+				return true
+			})
+			//for _, pair := range bot.pairs {
+			//	pairsToAnalyze = append(pairsToAnalyze, pair)
+			//}
 			localCandles := make(map[string][]models.CandleStick)
 			for _, pair := range pairsToAnalyze {
-				bot.pairsMu.Lock()
-				strategy := bot.pairStrategies[pair.Symbol]
-				bot.pairsMu.Unlock()
-
+				strg, _ := bot.pairStrategies.Load(pair.Symbol)
+				strategy, ok := strg.(interfaces.Strategy)
+				if !ok {
+					logger.Warnf("Missing strategy for %s. Skipping trade cycle.", pair.Symbol)
+					continue
+				}
 				candles, err := bot.exchange.FetchCandles(pair.Symbol, strategy.GetCandleInterval(), 100)
 				if err != nil {
 					continue
@@ -592,10 +584,8 @@ func (bot *MultiPairTradingBot) updateMarketAnalysis() {
 					ADX:         adx,
 				}
 				newStrategy := bot.SuggestStrategy(analysisData.MarketState)
-				bot.pairsMu.Lock()
-				bot.analysisData[pair.Symbol] = &analysisData
-				bot.pairStrategies[pair.Symbol] = newStrategy
-				bot.pairsMu.Unlock()
+				bot.analysisData.Store(pair.Symbol, &analysisData)
+				bot.pairStrategies.Store(pair.Symbol, newStrategy)
 
 				localCandles[pair.Symbol] = candles
 
@@ -619,31 +609,25 @@ func (bot *MultiPairTradingBot) updateStrategies() {
 		case <-ticker.C:
 			logger.Infof("Updating strategies...")
 
-			bot.pairsMu.RLock()
-			pairsToUpdate := make([]string, 0, len(bot.pairs))
-			for symbol := range bot.pairs {
-				pairsToUpdate = append(pairsToUpdate, symbol)
-			}
-			bot.pairsMu.RUnlock()
+			pairsToUpdate := make([]string, 0)
+			bot.pairs.Range(func(k, v interface{}) bool {
+				pairsToUpdate = append(pairsToUpdate, k.(string))
+				return true
+			})
 
 			for _, symbol := range pairsToUpdate {
-				bot.pairsMu.RLock()
-				analysisData := bot.analysisData[symbol]
-				bot.pairsMu.RUnlock()
+				analysisData, ok := bot.analysisData.Load(symbol)
 
-				if analysisData == nil {
+				if !ok || analysisData == nil {
 					logger.Warnf("Missing analysis data for %s. Skipping strategy update.", symbol)
 					continue
 				}
-				bot.candlesMu.RLock()
-				newStrategy := bot.SuggestStrategy(analysisData.MarketState)
-				bot.candlesMu.RUnlock()
+				analData := analysisData.(*analysis.PairAnalysis)
+				newStrategy := bot.SuggestStrategy(analData.MarketState)
 
-				logger.Infof("New market state for %s: %s", symbol, analysisData.MarketState.String())
+				logger.Infof("New market state for %s: %s", symbol, analData.MarketState.String())
 
-				bot.pairsMu.Lock()
-				bot.pairStrategies[symbol] = newStrategy
-				bot.pairsMu.Unlock()
+				bot.pairStrategies.Store(symbol, newStrategy)
 			}
 
 			logger.Infof("Strategy updates completed.")
@@ -681,6 +665,7 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 
 	// Analyze markets and categorize them
 	trendingMarkets := make([]models.TradingPair, 0)
+	analysisData := make(map[string]models.AnalysisData)
 
 	for _, market := range allMarkets {
 		candles, err := bot.exchange.FetchCandles(market.Symbol, bot.interval, 100)
@@ -697,7 +682,12 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 			continue
 		}
 		// Analyze the market using ATR and ADX
-		marketState, _, _ := bot.marketAnalyzer.AnalyzeMarket(candles)
+		marketState, atr, adx := bot.marketAnalyzer.AnalyzeMarket(candles)
+		analysisData[market.Symbol] = models.AnalysisData{
+			MarketState: marketState,
+			ATR:         atr,
+			ADX:         adx,
+		}
 		if bot.isMarketStateEnabled(marketState) {
 			trendingMarkets = append(trendingMarkets, market)
 		}
@@ -719,10 +709,8 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 	pairsToRemove := make([]string, 0)
 	pairsToAdd := make([]models.TradingPair, 0)
 
-	bot.pairsMu.RLock()
-
 	// Add active trading pairs on program start, regardless of their market state
-	if bot.pairs == nil || len(bot.pairs) == 0 {
+	if utils.LenSyncMap(&bot.pairs) == 0 {
 		for _, market := range allMarkets {
 			if activeTradePairs[market.Symbol] && !containsPairs(trendingMarkets, market.Symbol) {
 				logger.Infof("Adding pair %s as it has active trades.", market.Symbol)
@@ -732,35 +720,35 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 	}
 
 	// On subsequent runs, remove pairs that are no longer trending and have no active trades
-	for symbol := range bot.pairs {
+	bot.pairs.Range(func(k, _ interface{}) bool {
+		symbol := k.(string)
 		if !containsPairs(trendingMarkets, symbol) && !activeTradePairs[symbol] {
 			pairsToRemove = append(pairsToRemove, symbol)
 		}
-	}
+		return true
+	})
 	// On subsequent runs, add new trending markets
 	for _, market := range trendingMarkets {
-		if _, exists := bot.pairs[market.Symbol]; !exists {
+		if _, exists := bot.pairs.Load(market.Symbol); !exists {
 			pairsToAdd = append(pairsToAdd, market)
 		}
 	}
-	bot.pairsMu.RUnlock()
 
 	// Remove pairs no longer trending unless they have active trades
-	bot.pairsMu.Lock()
 	for _, symbol := range pairsToRemove {
 		logger.Warnf("Removing pair %s as it is no longer trending and has no active trades.", symbol)
-		delete(bot.pairs, symbol)
+		bot.pairs.Delete(symbol)
 	}
-	bot.pairsMu.Unlock()
 
 	// Add new trending markets
 	var wg sync.WaitGroup
 	for _, pair := range pairsToAdd {
+		data, _ := analysisData[pair.Symbol]
 		wg.Add(1)
 		go func(pair models.TradingPair) {
 			defer wg.Done()
 			logger.Infof("Adding pair %s", pair.Symbol)
-			bot.AddPair(&pair)
+			bot.AddPair(&pair, &data)
 		}(pair)
 	}
 	wg.Wait()
@@ -916,14 +904,14 @@ func (bot *MultiPairTradingBot) checkMarketMeltdown() {
 	}
 	logger.Infof("Checking for market meltdown...")
 	localCandles := make(map[string][]models.CandleStick)
-	bot.pairsMu.RLock()
-	for sym := range bot.pairs {
-		cset, errC := bot.exchange.FetchCandles(sym, bot.interval, 100)
+	bot.pairs.Range(func(_, v interface{}) bool {
+		pair := v.(*models.TradingPair)
+		cset, errC := bot.exchange.FetchCandles(pair.Symbol, bot.interval, 100)
 		if errC == nil {
-			localCandles[sym] = cset
+			localCandles[pair.Symbol] = cset
 		}
-	}
-	bot.pairsMu.RUnlock()
+		return true
+	})
 
 	bot.checkEarlyWarning(localCandles)
 	logger.Infof("Market meltdown check completed.")

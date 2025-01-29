@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/goccy/go-json"
 	"runtime"
+	"sync"
 )
 
 func InlineIFT[T any](condition bool, a T, b T) T {
@@ -39,4 +40,13 @@ func PrintMemStats() {
 
 func bToMb(b uint64) uint64 {
 	return b / 1024 / 1024
+}
+
+func LenSyncMap(m *sync.Map) int {
+	var i int
+	m.Range(func(k, v interface{}) bool {
+		i++
+		return true
+	})
+	return i
 }

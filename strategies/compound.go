@@ -121,7 +121,7 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			MacdLine:     currentIndicators.MacdLine,
 		}
 		pendingBuys.Store(pbKey, newPb)
-		logger.DebugColorf(logger.Yellow, "[PENDING BUY] %s => price=%.2f, state=%v", pair, currentPrice, marketState)
+		logger.InfoColorf(logger.Yellow, "[PENDING BUY ADDED] %s => price=%.2f, state=%v", pair, currentPrice, marketState)
 		return 0, nil
 	}
 	if bearishConditions && isActive {
@@ -138,105 +138,97 @@ func (cs *CompoundStrategy) checkBullishConditions(
 	ci CurrentIndicators,
 	currentPrice float64,
 ) bool {
+	// Dynamic Risk/Reward based on ATR
+	atr := (ci.UpperBand - ci.LowerBand) / ci.MiddleBand
+	dynamicRR := cs.RiskRewardThreshold
+	if atr > 0.05 { // High volatility
+		dynamicRR *= 1.2
+	} else if atr < 0.02 { // Low volatility
+		dynamicRR *= 0.8
+	}
+
+	// Volume confirmation
+	volumeOk := ci.MFIVal > float64(cs.MFI.Oversold) && ci.MFIVal < float64(cs.MFI.Overbought)
+
+	// EMA alignment check
+	emaAlignment := ci.MacdLine > ci.SignalLine && ci.MacdLine > 0
 
 	switch state {
-
 	case models.StronglyTrending:
-		// *High momentum approach*
-		// require MACD > 0, RSI < 75, maybe Ichimoku bull,
-		// plus price near middle or lower Bollinger to buy pullbacks
-		if ci.MacdIndicator == 1 && ci.RSIVal < float64(cs.RSI.Overbought) {
-			//  ensure price is below middleBand, so we buy the dip
-			if currentPrice < ci.MiddleBand {
-				//  also check MFI, CCI thresholds
-				if ci.MFIVal < float64(cs.MFI.Overbought) && ci.CCIVal < cs.CCI.Overbought {
-					target := ci.UpperBand * 1.02
-					stop := ci.LowerBand
-					rr := cs.calcRR(currentPrice, stop, target)
-					if rr > cs.RiskRewardThreshold {
-						return true
-					}
-				}
-			}
+		target := ci.UpperBand * 1.02
+		stop := ci.LowerBand
+		rr := cs.calcRR(currentPrice, stop, target)
+		indicators := ci.MacdIndicator == 1 && ci.RSIVal < float64(cs.RSI.Overbought) && volumeOk && emaAlignment
+		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
+
+		if indicators {
+			reward := rr > dynamicRR
+			logger.DebugColorf(logger.BrightBlack, "Yes, we have a strong bullish signal for %s | Reward %t", state.String(), reward)
+			return reward
 		}
-		return false
 
 	case models.Trending:
-		// *Regular trend approach*
-		// MACD cross up, RSI < 70
-		if ci.MacdIndicator == 1 && ci.RSIVal < float64(cs.RSI.Overbought) {
-			if currentPrice < ci.MiddleBand {
-				if ci.CCIVal < cs.CCI.Overbought {
-					target := ci.UpperBand
-					stop := ci.LowerBand
-					rr := cs.calcRR(currentPrice, stop, target)
-					if rr > cs.RiskRewardThreshold {
-						return true
-
-					}
-				}
-			}
-		}
-		return false
-
-	case models.RangeBound:
-		relaxedRR := cs.RiskRewardThreshold * 0.5
 		target := ci.UpperBand
 		stop := ci.LowerBand
 		rr := cs.calcRR(currentPrice, stop, target)
-		// *Mean reversion approach*
-		// Typically buy near lower Bollinger band or RSI < 30
-		// or Stoch oversold, etc.
-		if currentPrice <= ci.LowerBand && ci.RSIVal < 30 {
-			if rr > relaxedRR {
-				return true
-			}
+		indicators := ci.MacdIndicator == 1 && ci.RSIVal < float64(cs.RSI.Overbought) && volumeOk && currentPrice < ci.UpperBand
+		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
+		if indicators {
+			reward := rr > dynamicRR
+			logger.DebugColorf(logger.BrightBlack, "Yes, we have a strong bullish signal for %s | Reward %t", state.String(), reward)
+			return reward
 		}
-		// Or if CCI < -100 => oversold
-		if ci.CCIVal <= cs.CCI.Oversold {
-			if rr > relaxedRR {
-				return true
-			}
+
+	case models.RangeBound:
+		indicators := (currentPrice <= ci.LowerBand && ci.RSIVal < 30) || (ci.CCIVal <= cs.CCI.Oversold)
+		target := ci.UpperBand
+		stop := ci.LowerBand
+		rr := cs.calcRR(currentPrice, stop, target)
+		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
+		if indicators {
+			reward := rr > (dynamicRR * 0.8)
+			logger.DebugColorf(logger.BrightBlack, "Yes, we have a strong bullish signal for %s | Reward %t", state.String(), reward)
+			return reward
 		}
-		return false
 
 	case models.Chaotic:
-		// *High-volatility or whipsaw approach*
-		// Possibly buy only if extremely oversold
-		// e.g. price well below lower band, RSI < 25, etc.
-		if currentPrice < ci.LowerBand && ci.RSIVal < 25 {
-			// or MFI < 20 => minor bounce attempt
-			if ci.MFIVal < float64(cs.MFI.Oversold) {
-				return true
-			}
+		target := ci.MiddleBand
+		stop := ci.LowerBand * 0.98
+		rr := cs.calcRR(currentPrice, stop, target)
+		indicators := currentPrice < ci.LowerBand && ci.RSIVal < 40 && ci.MFIVal < 30
+		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
+		if indicators {
+			reward := rr > (dynamicRR * 1.2)
+			logger.DebugColorf(logger.BrightBlack, "Yes, we have a strong bullish signal for %s | Reward %t", state.String(), reward)
+			return reward
 		}
-		return false
 
 	case models.Transitional:
-		// *Transitional logic: Could be reversing or about to break out*
-		// Maybe check volume expansions + RSI crossing 50
-		// or a mild MACD cross with smaller thresholds
-		if ci.MacdIndicator == 1 && ci.RSIVal > 45 && ci.RSIVal < 65 {
-			// also check if MFI is moderate
-			if ci.MFIVal > 35 && ci.MFIVal < 65 {
-				return true
-			}
+		target := ci.UpperBand
+		stop := ci.LowerBand
+		rr := cs.calcRR(currentPrice, stop, target)
+		indicators := ci.MacdIndicator == 1 && (ci.RSIVal > 40 && ci.RSIVal < 70) && (ci.MFIVal > 35 && ci.MFIVal < 65) && emaAlignment
+		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
+		if indicators {
+			reward := rr > dynamicRR
+			logger.DebugColorf(logger.BrightBlack, "Yes, we have a strong bullish signal for %s | Reward %t", state.String(), reward)
+			return reward
 		}
-		return false
 
 	default:
-		// *Default fallback*
-		if ci.MacdIndicator == 1 && ci.MFIVal < float64(cs.MFI.Overbought) && ci.CCIVal < cs.CCI.Overbought {
-			relaxedRR := cs.RiskRewardThreshold * 0.8
-			target := ci.UpperBand
-			stop := ci.LowerBand
-			rr := cs.calcRR(currentPrice, stop, target)
-			if rr > relaxedRR {
-				return true
-			}
+		indicators := ci.MacdIndicator == 1 && ci.MFIVal < float64(cs.MFI.Overbought) && volumeOk
+		target := ci.UpperBand
+		stop := ci.LowerBand
+		rr := cs.calcRR(currentPrice, stop, target)
+		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
+		if indicators {
+			reward := rr > (dynamicRR * 0.9)
+			logger.DebugColorf(logger.BrightBlack, "Yes, we have a strong bullish signal for %s | Reward %t", state.String(), reward)
+			return reward
 		}
-		return false
 	}
+
+	return false
 }
 
 // checkBearishConditions decides if we have a 'bearish' (short/exit) signal,
@@ -382,32 +374,68 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 			return true
 		}
 
-		// Check cooldown: don't confirm/cancel if not enough time
+		// Check cooldown and time decay
 		age := time.Since(pb.TriggerTime)
 		if age < pendingCoolDown {
 			logger.Debugf("Pending buy %s: age=%.1fsec < cooldown => skipping for now", pbKey, age.Seconds())
 			return true
 		}
 
-		if cs.checkBullishConditions(pb.MarketState, indicators, currentPrice) && currentPrice <= pb.TriggerPrice {
+		// Additional confirmation for pending buys
+		confirmation := cs.checkBuyConfirmation(indicators, currentPrice)
+		if !confirmation {
+			logger.InfoColorf(logger.Red, "Pending buy %s: confirmation failed => cancelling", pbKey)
+			pendingBuys.Delete(pbKey)
+			return true
+		}
+
+		// Execute buy if conditions are met
+		if cs.checkBullishConditions(pb.MarketState, indicators, currentPrice) &&
+			currentPrice <= pb.TriggerPrice {
 			logger.InfoColorf(logger.Green, "[PENDING BUY CONFIRMED] %s => actual buy now (State=%v)", pb.Pair, pb.MarketState)
 			pendingBuys.Delete(pbKey)
 			bought = 1
 			return false
 		}
 
-		if (currentPrice > pb.TriggerPrice*1.05) || // ran away
-			(indicators.MacdIndicator == -1) || // no longer bullish
-			(indicators.RSIVal > float64(cs.RSI.Overbought)) {
-			logger.Warnf("[PENDING BUY CANCELLED] %s => conditions reversed or price soared. (State=%v)", pb.Pair, pb.MarketState)
+		// Dynamic cancellation conditions
+		if (currentPrice > pb.TriggerPrice*1.05) || // Price ran away
+			(indicators.MacdIndicator == -1) || // MACD turned bearish
+			(indicators.RSIVal > float64(cs.RSI.Overbought)) || // Overbought
+			(indicators.MFIVal > float64(cs.MFI.Overbought)) { // Volume exhaustion
+			logger.Warnf("[PENDING BUY CANCELLED] %s => conditions reversed. (State=%v)", pb.Pair, pb.MarketState)
 			pendingBuys.Delete(pbKey)
-
 		}
 
 		return true
 	})
 
 	return bought
+}
+
+func (cs *CompoundStrategy) checkBuyConfirmation(
+	indicators CurrentIndicators,
+	currentPrice float64,
+) bool {
+	// Require at least 2 out of 3 confirmations
+	confirmations := 0
+
+	// 1. Volume confirmation
+	if indicators.MFIVal > 20 && indicators.MFIVal < 80 {
+		confirmations++
+	}
+
+	// 2. MACD confirmation
+	if indicators.MacdLine > indicators.SignalLine && indicators.MacdLine > 0 {
+		confirmations++
+	}
+
+	// 3. Price action confirmation
+	if currentPrice > indicators.LowerBand && currentPrice < indicators.MiddleBand {
+		confirmations++
+	}
+
+	return confirmations >= 2
 }
 
 func (cs *CompoundStrategy) alreadyInPendingBuys(pair string) bool {

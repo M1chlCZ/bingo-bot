@@ -216,18 +216,18 @@ var (
 			RiskRewardThreshold: 1.2,
 			StrategyType:        strategies.CompoundStrategyType,
 			RSI: &algos.RSIStrategy{
-				Overbought: 72,
-				Oversold:   28,
+				Overbought: 75,
+				Oversold:   35,
 				Period:     14,
 			},
 			MACD: &algos.MACDStrategy{
-				FastPeriod:   10,
-				SlowPeriod:   20,
-				SignalPeriod: 6,
+				FastPeriod:   6,
+				SlowPeriod:   19,
+				SignalPeriod: 4,
 			},
 			BollingerBands: &algos.BollingerBands{
-				Period: 20,
-				Width:  1.8,
+				Period: 18,
+				Width:  2.3,
 			},
 			Stochastic: &algos.StochasticOscillator{
 				Overbought: 80,
