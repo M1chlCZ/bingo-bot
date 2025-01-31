@@ -26,6 +26,7 @@ type Strategy interface {
 	Calculate(candles []models.CandleStick, pair string, marketState models.MarketState, pendingCoolDown time.Duration) (int, error)
 	GetCandleInterval() string
 	Clone() Strategy
+	GetMarketState() models.MarketState
 }
 
 // ExchangeClient interface defines methods our bot needs from an exchange client

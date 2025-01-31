@@ -52,7 +52,7 @@ var (
 				Overbought: 80,
 				Oversold:   20,
 			},
-
+			SellOnBearish:             true,
 			CandleInterval:            "12h",
 			DesiredProfit:             2.0,
 			HighestPriceFallOffMargin: 0.5,
@@ -63,7 +63,7 @@ var (
 
 	// ------------------ CHAOTIC ------------------
 	ChaoticMarketState = types.MarketStateStrategy{
-		Enabled: false, // you can enable if you want
+		Enabled: true, // you can enable if you want
 		Strategy: &strategies.CompoundStrategy{
 			PanicSell:           false,
 			RiskRewardThreshold: 0.7,
@@ -102,9 +102,10 @@ var (
 				Overbought: 75,
 				Oversold:   15,
 			},
-			CandleInterval:            "4h", // “chaotic” might need shorter intervals
+			SellOnBearish:             true,
+			CandleInterval:            "1h", // “chaotic” might need shorter intervals
 			DesiredProfit:             2.0,
-			HighestPriceFallOffMargin: 0.5,
+			HighestPriceFallOffMargin: 0.4,
 			FeeRate:                   0.001,
 			MarketState:               models.Chaotic,
 		},
@@ -151,9 +152,10 @@ var (
 				Overbought: 80,
 				Oversold:   20,
 			},
+			SellOnBearish:             true,
 			CandleInterval:            "1d",
 			DesiredProfit:             4.0,
-			HighestPriceFallOffMargin: 1.0,
+			HighestPriceFallOffMargin: 1.5,
 			FeeRate:                   0.001,
 			MarketState:               models.Trending,
 		},
@@ -200,6 +202,7 @@ var (
 				Overbought: 80,
 				Oversold:   20,
 			},
+			SellOnBearish:             true,
 			CandleInterval:            "1d",
 			DesiredProfit:             2.5,
 			HighestPriceFallOffMargin: 1.0,
@@ -249,9 +252,10 @@ var (
 				Overbought: 85,
 				Oversold:   15,
 			},
+			SellOnBearish:             false,
 			CandleInterval:            "6h",
 			DesiredProfit:             8.0,
-			HighestPriceFallOffMargin: 1.0,
+			HighestPriceFallOffMargin: 2.0,
 			FeeRate:                   0.001,
 			MarketState:               models.StronglyTrending,
 		},
@@ -298,6 +302,7 @@ var (
 				Overbought: 80,
 				Oversold:   20,
 			},
+			SellOnBearish:             false,
 			CandleInterval:            "4h",
 			DesiredProfit:             2.0, // slightly bigger than 1
 			HighestPriceFallOffMargin: 1.0,

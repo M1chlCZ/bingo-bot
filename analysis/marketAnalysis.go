@@ -379,30 +379,30 @@ func (ma *MarketAnalyzer) IsUptrend(candles []models.CandleStick) bool {
 		return false
 	}
 
-	// 1. Price Action Analysis
+	// Price Action Analysis
 	priceDirection := ma.analyzePriceDirection(candles)
 	if priceDirection == models.Downtrend {
 		return false
 	}
 
-	// 2. Momentum Confirmation
+	// Momentum Confirmation
 	momentum := ma.checkMomentum(candles)
 	if momentum == models.Weak {
 		return false
 	}
 
-	// 3. Volume Validation
+	// Volume Validation
 	if !ma.validateVolume(candles) {
 		return false
 	}
 
-	// 4. Trend Strength Check
+	// Trend Strength Check
 	trendStrength := ma.assessTrendStrength(candles)
 	if trendStrength == models.WeakTrend {
 		return false
 	}
 
-	// 5. Top Detection
+	// Top Detection
 	if ma.isNearTop(candles) {
 		logger.Debugf("Price is near a potential top, not confirming uptrend")
 		return false

@@ -3,9 +3,9 @@ module github.com/M1chlCZ/bingo-bot
 go 1.23
 
 require (
-	github.com/adshao/go-binance/v2 v2.7.2
+	github.com/adshao/go-binance/v2 v2.8.0
 	github.com/go-playground/validator/v10 v10.24.0
-	github.com/goccy/go-json v0.10.4
+	github.com/goccy/go-json v0.10.5
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.24
 )

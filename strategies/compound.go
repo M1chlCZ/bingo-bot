@@ -29,6 +29,7 @@ type CompoundStrategy struct {
 	HighestPriceFallOffMargin float64                     `validate:"gte=0" json:"highestPriceFallOffMargin"`
 	CandleInterval            string                      `validate:"required" json:"candleInterval"`
 	PanicSell                 bool                        `json:"panicSell"`
+	SellOnBearish             bool                        `json:"sellOnBearish"`
 	localIndicators           CurrentIndicators
 }
 
@@ -85,9 +86,12 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		return 0, err
 	}
 	cs.localIndicators = currentIndicators
+	bullishConditions := cs.checkBullishConditions(marketState, currentIndicators, currentPrice)
+	bearishConditions := cs.checkBearishConditions(marketState, currentIndicators, currentPrice)
+
 	// If a trade exists, handle P/L logic first
 	if trade != nil {
-		return cs.checkActiveTrade(trade, currentPrice)
+		return cs.checkActiveTrade(trade, currentPrice, bearishConditions && !bullishConditions)
 	}
 
 	logger.DebugColorf(logger.BrightBlack,
@@ -96,9 +100,6 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		currentIndicators.IchimokuRes.Bullish, currentIndicators.IchimokuRes.Bearish,
 		currentIndicators.MacdIndicator, currentIndicators.Histogram, currentIndicators.RSIVal, currentIndicators.StochasticK, currentIndicators.CCIVal, currentIndicators.MFIVal,
 	)
-
-	bullishConditions := cs.checkBullishConditions(marketState, currentIndicators, currentPrice)
-	bearishConditions := cs.checkBearishConditions(marketState, currentIndicators, currentPrice)
 
 	bought := cs.evaluatePendingBuys(pair, currentPrice, currentIndicators, pendingCoolDown)
 	if bought == 1 {
@@ -121,7 +122,7 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			MacdLine:     currentIndicators.MacdLine,
 		}
 		pendingBuys.Store(pbKey, newPb)
-		logger.InfoColorf(logger.Yellow, "[PENDING BUY ADDED] %s => price=%.2f, state=%v", pair, currentPrice, marketState)
+		logger.InfoColorf(logger.Blue, "[PENDING BUY ADDED] %s => price=%.2f, state=%v", pair, currentPrice, marketState)
 		return 0, nil
 	}
 	if bearishConditions && isActive {
@@ -451,14 +452,14 @@ func (cs *CompoundStrategy) alreadyInPendingBuys(pair string) bool {
 	return inTheMap
 }
 
-func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentPrice float64) (int, error) {
+func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentPrice float64, bearishSignal bool) (int, error) {
 	breakevenPrice := trade.BuyPrice * (1 + cs.FeeRate)
 	profitMargin := (currentPrice - trade.BuyPrice) / trade.BuyPrice * 100
 
 	// HIGH PRICE since trade
 	athPrice, err := db2.SQLiteDB.GetAth(trade.Symbol)
 	if err != nil || currentPrice > athPrice {
-		logger.InfoColorf(logger.Cyan, "New HIGH price for %s: %.8f", trade.Symbol, currentPrice)
+		logger.InfoColorf(logger.Green, "New HIGH price for %s: %.8f", trade.Symbol, currentPrice)
 		if e := db2.SQLiteDB.SetUpdateAth(trade.Symbol, currentPrice); e != nil {
 			logger.Errorf("Error updating ATH price for %s: %v", trade.Symbol, e)
 		}
@@ -468,7 +469,7 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 	// LOW PRICE since trade
 	atlPrice, err := db2.SQLiteDB.GetAtl(trade.Symbol)
 	if err != nil || currentPrice < atlPrice {
-		logger.InfoColorf(logger.Yellow, "New LOW price for %s: %.8f", trade.Symbol, currentPrice)
+		logger.InfoColorf(logger.BrightRed, "New LOW price for %s: %.8f", trade.Symbol, currentPrice)
 		if e := db2.SQLiteDB.SetUpdateAtl(trade.Symbol, currentPrice); e != nil {
 			logger.Errorf("Error updating ATL price for %s: %v", trade.Symbol, e)
 		}
@@ -489,6 +490,13 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 	if profitMargin < -cs.HighestPriceFallOffMargin {
 		if cs.PanicSell {
 			logger.InfoColorf(logger.BrightRed, "[PANIC SELL] %s: Price dropped below margin %.2f", trade.Symbol, profitMargin)
+			return -1, nil
+		}
+	}
+
+	if cs.SellOnBearish && bearishSignal {
+		if profitMargin > 0 {
+			logger.InfoColorf(logger.BrightRed, "[BEARISH SIGNAL] %s", trade.Symbol)
 			return -1, nil
 		}
 	}
@@ -667,7 +675,11 @@ func (cs *CompoundStrategy) Clone() interfaces.Strategy {
 		HighestPriceFallOffMargin: cs.HighestPriceFallOffMargin,
 		CandleInterval:            cs.CandleInterval,
 		PanicSell:                 cs.PanicSell,
+		SellOnBearish:             cs.SellOnBearish,
 		// lastIndicators stays zero or copy if needed
 	}
 	return newCS
+}
+func (cs *CompoundStrategy) GetMarketState() models.MarketState {
+	return cs.MarketState
 }

@@ -347,7 +347,7 @@ func (s *SQLite) GetActiveTradesCount() (int, error) {
 func (s *SQLite) GetTodaysTradeCount() (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	query := `SELECT COUNT(*) FROM trades WHERE date(timestamp) = date('now')`
+	query := `SELECT COUNT(*) FROM active_trades WHERE date(timestamp) = date('now')`
 	var count int
 	err := s.DB.QueryRow(query).Scan(&count)
 	if err != nil {

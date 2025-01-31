@@ -86,3 +86,7 @@ func (s *SpikeStrategy) Clone() interfaces.Strategy {
 		VolumeThreshold: s.VolumeThreshold,
 	}
 }
+
+func (s *SpikeStrategy) GetMarketState() models.MarketState {
+	return models.Default
+}

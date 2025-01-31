@@ -68,10 +68,10 @@ func NewBinanceClient(apiKey, apiSecret string) (interfaces.ExchangeClient, erro
 		client:            client,
 		pairs:             make(map[string]*models.TradingPair),
 		candleCache:       make(map[string][]models.CandleStick),
-		maxRequests:       15,              // max requests
+		maxRequests:       90,              // max requests
 		interval:          1 * time.Second, // time window
-		highPriorityQueue: make(chan BinanceRequest, 100),
-		normalQueue:       make(chan BinanceRequest, 500),
+		highPriorityQueue: make(chan BinanceRequest, 200),
+		normalQueue:       make(chan BinanceRequest, 600),
 		workerDone:        make(chan struct{}),
 	}
 	// Start the worker goroutine
@@ -222,7 +222,7 @@ func (b *BinanceClient) IsTickerTooNew(symbol string) (bool, error) {
 		}
 
 		// The earliest bar is klines[0]
-		firstTradeTime := time.Unix(0, int64(klines[0].OpenTime)*int64(time.Millisecond))
+		firstTradeTime := time.Unix(0, klines[0].OpenTime*int64(time.Millisecond))
 
 		logger.Debugf("Earliest known trading time for %s: %v\n", symbol, firstTradeTime)
 
@@ -550,7 +550,6 @@ func (b *BinanceClient) FetchMarkets(tickers []string, excludedMarkets []string,
 					QtyPrecision:   symbol.BaseAssetPrecision,
 					MinNotional:    minNotional,
 				}
-				logger.Infof("Found trading pair: %s", tp.Symbol)
 				logger.Debugf("Found trading pair: %s Base Assets %s Quote Asset %s MinNotional %.2f", tp.Symbol, tp.BaseAsset, tp.QuoteAsset, tp.MinNotional)
 				tradingPairs = append(tradingPairs, tp)
 			}
