@@ -46,4 +46,5 @@ type ExchangeClient interface {
 	GetTradingPairs() map[string]*models.TradingPair
 	FetchMarkets(tickers []string, excludedMarkets []string, excludedTradingPairs []models.TradingPair) ([]models.TradingPair, error)
 	FetchActiveTrades(symbol string) ([]*binance.TradeV3, error)
+	FetchHistoricalCandles(symbol string, interval string, startTime, endTime time.Time, limit int) ([]models.CandleStick, error)
 }
