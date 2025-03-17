@@ -9,6 +9,7 @@ import (
 	"github.com/M1chlCZ/bingo-bot/models"
 	"github.com/go-playground/validator/v10"
 	"github.com/goccy/go-json"
+	"log"
 	"sync"
 	"time"
 )
@@ -22,6 +23,7 @@ type CompoundStrategy struct {
 	Ichimoku                  *algos.IchimokuStrategy     `validate:"required" json:"ichimoku"`
 	CCI                       *algos.CCIStrategy          `validate:"required" json:"cci"`
 	MFI                       *algos.MFIStrategy          `validate:"required" json:"mfi"`
+	ADR                       *algos.ADRStrategy          `validate:"required" json:"adr"`
 	MarketState               models.MarketState          `validate:"marketStateEnum" json:"marketState"`
 	RiskRewardThreshold       float64                     `validate:"gte=0" json:"riskRewardThreshold"`
 	FeeRate                   float64                     `validate:"gte=0" json:"feeRate"`
@@ -49,6 +51,8 @@ type CurrentIndicators struct {
 	CCISignal     int
 	MFIVal        float64
 	MFiSignal     int
+	ADRVal        float64
+	ADRSignal     int
 }
 
 type PendingBuy struct {
@@ -139,96 +143,101 @@ func (cs *CompoundStrategy) checkBullishConditions(
 	ci CurrentIndicators,
 	currentPrice float64,
 ) bool {
-	// Dynamic Risk/Reward based on ATR
 	atr := (ci.UpperBand - ci.LowerBand) / ci.MiddleBand
 	dynamicRR := cs.RiskRewardThreshold
-	if atr > 0.05 { // High volatility
+	if atr > 0.05 {
 		dynamicRR *= 1.2
-	} else if atr < 0.02 { // Low volatility
+	} else if atr < 0.02 {
 		dynamicRR *= 0.8
 	}
 
-	// Volume confirmation
 	volumeOk := ci.MFIVal > float64(cs.MFI.Oversold) && ci.MFIVal < float64(cs.MFI.Overbought)
-
-	// EMA alignment check
 	emaAlignment := ci.MacdLine > ci.SignalLine && ci.MacdLine > 0
 
 	switch state {
 	case models.StronglyTrending:
+		adrConfirmation := ci.ADRSignal == 1 // low volatility confirms consolidation before breakout
 		target := ci.UpperBand * 1.02
 		stop := ci.LowerBand
 		rr := cs.calcRR(currentPrice, stop, target)
 		indicators := ci.MacdIndicator == 1 && ci.RSIVal < float64(cs.RSI.Overbought) && volumeOk && emaAlignment
-		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
 
-		if indicators {
+		logger.Debugf("State %s | Indicators: %t, ADR Low Volatility: %t, RR: %.2f Required RR %.2f",
+			state.String(), indicators, adrConfirmation, rr, dynamicRR)
+
+		if indicators && adrConfirmation {
 			reward := rr > dynamicRR
-			logger.DebugColorf(logger.BrightBlack, "Yes, we have a strong bullish signal for %s | Reward %t", state.String(), reward)
+			logger.DebugColorf(logger.BrightBlack, "Yes, bullish signal for %s with ADR low volatility confirmation | Reward %t",
+				state.String(), reward)
 			return reward
 		}
 
 	case models.Trending:
+		adrConfirmation := ci.ADRSignal >= 0 // neutral or low volatility is fine
 		target := ci.UpperBand
 		stop := ci.LowerBand
 		rr := cs.calcRR(currentPrice, stop, target)
 		indicators := ci.MacdIndicator == 1 && ci.RSIVal < float64(cs.RSI.Overbought) && volumeOk && currentPrice < ci.UpperBand
-		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
-		if indicators {
+
+		logger.Debugf("State %s | Indicators: %t, ADR Neutral/Low Volatility: %t, RR: %.2f Required RR %.2f",
+			state.String(), indicators, adrConfirmation, rr, dynamicRR)
+
+		if indicators && adrConfirmation {
 			reward := rr > dynamicRR
-			logger.DebugColorf(logger.BrightBlack, "Yes, we have a strong bullish signal for %s | Reward %t", state.String(), reward)
+			logger.DebugColorf(logger.BrightBlack, "Yes, bullish signal for %s with ADR volatility confirmation | Reward %t",
+				state.String(), reward)
 			return reward
 		}
 
 	case models.RangeBound:
+		adrConfirmation := ci.ADRSignal == 1 // low volatility
 		indicators := (currentPrice <= ci.LowerBand && ci.RSIVal < 30) || (ci.CCIVal <= cs.CCI.Oversold)
 		target := ci.UpperBand
 		stop := ci.LowerBand
 		rr := cs.calcRR(currentPrice, stop, target)
-		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
-		if indicators {
+		logger.Debugf("State %s | Indicators: %t, ADR Low Volatility: %t, RR: %.2f Required RR %.2f", state.String(), indicators, adrConfirmation, rr, dynamicRR)
+		if indicators && adrConfirmation {
 			reward := rr > (dynamicRR * 0.8)
-			logger.DebugColorf(logger.BrightBlack, "Yes, we have a strong bullish signal for %s | Reward %t", state.String(), reward)
+			logger.DebugColorf(logger.BrightBlack, "Yes, bullish for %s with ADR low volatility | Reward %t", state.String(), reward)
 			return reward
 		}
 
 	case models.Chaotic:
+		adrConfirmation := ci.ADRSignal == -1 // high volatility
 		target := ci.MiddleBand
 		stop := ci.LowerBand * 0.98
 		rr := cs.calcRR(currentPrice, stop, target)
 		indicators := currentPrice < ci.LowerBand && ci.RSIVal < 40 && ci.MFIVal < 30
-		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
-		if indicators {
+		logger.Debugf("State %s | Indicators: %t, ADR High Volatility: %t, RR: %.2f Required RR %.2f", state.String(), indicators, adrConfirmation, rr, dynamicRR)
+		if indicators && adrConfirmation {
 			reward := rr > (dynamicRR * 1.2)
-			logger.DebugColorf(logger.BrightBlack, "Yes, we have a strong bullish signal for %s | Reward %t", state.String(), reward)
-			return reward
-		}
-
-	case models.Transitional:
-		target := ci.UpperBand
-		stop := ci.LowerBand
-		rr := cs.calcRR(currentPrice, stop, target)
-		indicators := ci.MacdIndicator == 1 && (ci.RSIVal > 40 && ci.RSIVal < 70) && (ci.MFIVal > 35 && ci.MFIVal < 65) && emaAlignment
-		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
-		if indicators {
-			reward := rr > dynamicRR
-			logger.DebugColorf(logger.BrightBlack, "Yes, we have a strong bullish signal for %s | Reward %t", state.String(), reward)
+			logger.DebugColorf(logger.BrightBlack, "Yes, bullish for %s with ADR high volatility spike | Reward %t", state.String(), reward)
 			return reward
 		}
 
 	default:
-		indicators := ci.MacdIndicator == 1 && ci.MFIVal < float64(cs.MFI.Overbought) && volumeOk
-		target := ci.UpperBand
-		stop := ci.LowerBand
-		rr := cs.calcRR(currentPrice, stop, target)
-		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
-		if indicators {
-			reward := rr > (dynamicRR * 0.9)
-			logger.DebugColorf(logger.BrightBlack, "Yes, we have a strong bullish signal for %s | Reward %t", state.String(), reward)
-			return reward
-		}
+		return cs.checkBullishConditionsDefault(state, ci, currentPrice, dynamicRR, volumeOk, emaAlignment)
 	}
 
+	return false
+}
+
+func (cs *CompoundStrategy) checkBullishConditionsDefault(
+	state models.MarketState,
+	ci CurrentIndicators,
+	currentPrice, dynamicRR float64,
+	volumeOk, emaAlignment bool,
+) bool {
+	target := ci.UpperBand
+	stop := ci.LowerBand
+	rr := cs.calcRR(currentPrice, stop, target)
+	indicators := ci.MacdIndicator == 1 && ci.MFIVal < float64(cs.MFI.Overbought) && volumeOk
+	logger.Debugf("Default logic for %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
+	if indicators {
+		reward := rr > (dynamicRR * 0.9)
+		logger.DebugColorf(logger.BrightBlack, "Yes, default bullish %s | Reward %t", state.String(), reward)
+		return reward
+	}
 	return false
 }
 
@@ -353,11 +362,6 @@ func (cs *CompoundStrategy) GetCandleInterval() string {
 	return cs.CandleInterval
 }
 
-func (cs *CompoundStrategy) Validate() error {
-	v := validator.New()
-	return v.Struct(cs)
-}
-
 func (cs *CompoundStrategy) evaluatePendingBuys(
 	pair string,
 	currentPrice float64,
@@ -365,12 +369,9 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 	pendingCoolDown time.Duration,
 ) int {
 	var bought int
-
 	pendingBuys.Range(func(key, val interface{}) bool {
 		pbKey := key.(string)
 		pb := val.(*PendingBuy)
-
-		// Skip if it's for another pair
 		if pb.Pair != pair {
 			return true
 		}
@@ -382,35 +383,27 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 			return true
 		}
 
-		// Additional confirmation for pending buys
-		confirmation := cs.checkBuyConfirmation(indicators, currentPrice)
-		if !confirmation {
-			logger.InfoColorf(logger.Red, "Pending buy %s: confirmation failed => cancelling", pbKey)
+		// check if price ran too far away
+		if currentPrice > pb.TriggerPrice*1.03 {
+			logger.Warnf("[PENDING BUY CANCELLED] %s => Price soared 3%% above trigger (%.2f -> %.2f).",
+				pb.Pair, pb.TriggerPrice, currentPrice)
 			pendingBuys.Delete(pbKey)
 			return true
 		}
 
-		// Execute buy if conditions are met
-		if cs.checkBullishConditions(pb.MarketState, indicators, currentPrice) &&
-			currentPrice <= pb.TriggerPrice {
-			logger.InfoColorf(logger.Green, "[PENDING BUY CONFIRMED] %s => actual buy now (State=%v)", pb.Pair, pb.MarketState)
+		// If still bullish from your normal logic
+		if cs.checkBullishConditions(pb.MarketState, indicators, currentPrice) {
+			logger.InfoColorf(logger.Blue, "[PENDING BUY CONFIRMED] %s => Buying now at %.2f", pb.Pair, currentPrice)
 			pendingBuys.Delete(pbKey)
 			bought = 1
-			return false
+			return false // break Range loop
 		}
 
-		// Dynamic cancellation conditions
-		if (currentPrice > pb.TriggerPrice*1.05) || // Price ran away
-			(indicators.MacdIndicator == -1) || // MACD turned bearish
-			(indicators.RSIVal > float64(cs.RSI.Overbought)) || // Overbought
-			(indicators.MFIVal > float64(cs.MFI.Overbought)) { // Volume exhaustion
-			logger.Warnf("[PENDING BUY CANCELLED] %s => conditions reversed. (State=%v)", pb.Pair, pb.MarketState)
-			pendingBuys.Delete(pbKey)
-		}
-
+		// else conditions are no longer bullish => remove it
+		logger.Infof("[PENDING BUY CANCELLED] %s => conditions changed", pb.Pair)
+		pendingBuys.Delete(pbKey)
 		return true
 	})
-
 	return bought
 }
 
@@ -476,6 +469,12 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 		atlPrice = currentPrice
 	}
 
+	// Check last time it reached ATH
+	lastAthTime, err := db2.SQLiteDB.GetLastATHTimestamp(trade.Symbol)
+	if err != nil {
+		logger.Errorf("Error getting last ATH time for %s: %v", trade.Symbol, err)
+	}
+
 	// Percentage change since trade
 	profitMarginATH := (currentPrice - athPrice) / athPrice * 100
 	upliftFromAtl := (currentPrice - atlPrice) / atlPrice * 100
@@ -494,16 +493,23 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 		}
 	}
 
-	if cs.SellOnBearish && bearishSignal {
-		if profitMargin > 0 {
-			logger.InfoColorf(logger.BrightRed, "[BEARISH SIGNAL] %s", trade.Symbol)
+	if profitMarginATH < -cs.HighestPriceFallOffMargin {
+		if profitMargin > -1 {
+			logger.InfoColorf(logger.BrightRed, "[ATH FALL OFF SELL] %s: Desired profit dropped below set ATH dropoff margin: (%.2f%%)", trade.Symbol, profitMarginATH)
 			return -1, nil
 		}
 	}
 
-	if profitMarginATH < -cs.HighestPriceFallOffMargin {
+	if time.Since(lastAthTime) > 30*time.Minute {
 		if profitMargin > 0 {
-			logger.InfoColorf(logger.BrightBlack, "[ATH FALL OFF SELL] %s: Desired profit dropped below set ATH dropoff margin: (%.2f%%)", trade.Symbol, profitMarginATH)
+			logger.InfoColorf(logger.BrightRed, "[TIME ATH SELL] %s: Not reached new ATH in last 30 minutes", trade.Symbol)
+			return -1, nil
+		}
+	}
+
+	if cs.SellOnBearish && bearishSignal {
+		if profitMargin > 0 {
+			logger.InfoColorf(logger.BrightRed, "[BEARISH SIGNAL] %s", trade.Symbol)
 			return -1, nil
 		}
 	}
@@ -563,6 +569,11 @@ func (cs *CompoundStrategy) getIndicators(candles []models.CandleStick, pair str
 		logger.Errorf("Error calculating MFI: %v", err)
 	}
 
+	adrVal, adrSignal, err := cs.ADR.Calculate(candles, pair)
+	if err != nil {
+		logger.Errorf("Error calculating ADR: %v", err)
+	}
+
 	return CurrentIndicators{
 		RSIVal:        rsiVal,
 		Histogram:     macdHistogram,
@@ -579,8 +590,9 @@ func (cs *CompoundStrategy) getIndicators(candles []models.CandleStick, pair str
 		CCISignal:     cciSignal,
 		MFIVal:        mfiVal,
 		MFiSignal:     mfiSignal,
+		ADRVal:        adrVal,
+		ADRSignal:     adrSignal,
 	}, nil
-
 }
 
 func (cs *CompoundStrategy) GetLatestData() CurrentIndicators {
@@ -633,6 +645,10 @@ func (cs *CompoundStrategy) UnmarshalJSON(data []byte) error {
 func (cs *CompoundStrategy) Clone() interfaces.Strategy {
 	newCS := &CompoundStrategy{
 		StrategyType: cs.StrategyType,
+		ADR: &algos.ADRStrategy{
+			Period:     cs.ADR.Period,
+			Multiplier: cs.ADR.Multiplier,
+		},
 		RSI: &algos.RSIStrategy{
 			Overbought: cs.RSI.Overbought,
 			Oversold:   cs.RSI.Oversold,
@@ -676,10 +692,27 @@ func (cs *CompoundStrategy) Clone() interfaces.Strategy {
 		CandleInterval:            cs.CandleInterval,
 		PanicSell:                 cs.PanicSell,
 		SellOnBearish:             cs.SellOnBearish,
-		// lastIndicators stays zero or copy if needed
+	}
+	err := newCS.Validate()
+	if err != nil {
+		log.Panic("Error validating cloned strategy: ", err)
 	}
 	return newCS
 }
 func (cs *CompoundStrategy) GetMarketState() models.MarketState {
 	return cs.MarketState
+}
+
+func validMarketState(fl validator.FieldLevel) bool {
+	state := fl.Field().Int() // the int value
+	return state >= 0 && state <= 5
+}
+
+func (cs *CompoundStrategy) Validate() error {
+	v := validator.New()
+	err := v.RegisterValidation("marketStateEnum", validMarketState)
+	if err != nil {
+		panic(err)
+	}
+	return v.Struct(cs)
 }
