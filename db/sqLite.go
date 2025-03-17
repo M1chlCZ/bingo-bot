@@ -9,7 +9,9 @@ import (
 	_ "github.com/mattn/go-sqlite3" // Import go-sqlite3 library
 	"log"
 	"os"
+	"strings"
 	"sync"
+	"time"
 )
 
 const dbVersion = 13 // Increment this whenever a new schema change is added
@@ -353,7 +355,13 @@ func (s *SQLite) GetTodaysTradeCount() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return count, nil
+	query2 := `SELECT COUNT(*) FROM completed_trades WHERE date(buy_timestamp) = date('now')`
+	var count2 int
+	err = s.DB.QueryRow(query2).Scan(&count2)
+	if err != nil {
+		return 0, err
+	}
+	return count + count2, nil
 }
 
 // GetActiveTrades fetches all active trades for a given symbol
@@ -430,7 +438,7 @@ func (s *SQLite) GetAth(symbol string) (float64, error) {
 func (s *SQLite) SetUpdateAth(symbol string, ath float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `INSERT INTO pair_ath (symbol, ath_price) VALUES (?, ?) ON CONFLICT(symbol) DO UPDATE SET ath_price = excluded.ath_price;`
+	query := `INSERT INTO pair_ath (symbol, ath_price, timestamp) VALUES (?, ?, ?) ON CONFLICT(symbol) DO UPDATE SET ath_price = excluded.ath_price, timestamp = excluded.timestamp;`
 	_, err := s.DB.Exec(query, symbol, ath)
 	if err != nil {
 		return err
@@ -490,4 +498,73 @@ func (s *SQLite) RemoveActiveTrade(id int) error {
 	defer s.mu.Unlock()
 	_, err := s.DB.Exec(`DELETE FROM active_trades WHERE id = ?`, id)
 	return err
+}
+
+// RenameAllSymbolsUSDTtoUSDC finds all distinct symbols in the trades table
+// that end with "USDT" and updates them to end with "USDC".
+func (s *SQLite) RenameAllSymbolsUSDTtoUSDC() error {
+	// Acquire write lock since we are both reading and updating
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 1. Fetch all distinct symbols from trades
+	selectQuery := `SELECT DISTINCT symbol FROM active_trades`
+	rows, err := s.DB.Query(selectQuery)
+	if err != nil {
+		return fmt.Errorf("error retrieving distinct symbols: %v", err)
+	}
+	defer rows.Close()
+
+	var symbols []string
+	for rows.Next() {
+		var sym string
+		if err := rows.Scan(&sym); err != nil {
+			return fmt.Errorf("error scanning symbol: %v", err)
+		}
+		symbols = append(symbols, sym)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating rows: %v", err)
+	}
+
+	// 2. For each symbol that ends with "USDT", rename it to end with "USDC"
+	for _, oldSymbol := range symbols {
+		if strings.HasSuffix(oldSymbol, "USDT") {
+			newSymbol := strings.Replace(oldSymbol, "USDT", "USDC", 1)
+
+			// 3. Execute the UPDATE query
+			updateQuery := `UPDATE active_trades SET symbol = ? WHERE symbol = ?`
+			stmt, err := s.DB.Prepare(updateQuery)
+			if err != nil {
+				return fmt.Errorf("error preparing update query for symbol %s: %v", oldSymbol, err)
+			}
+
+			_, execErr := stmt.Exec(newSymbol, oldSymbol)
+			stmt.Close()
+			if execErr != nil {
+				return fmt.Errorf("error updating symbol from %s to %s: %v", oldSymbol, newSymbol, execErr)
+			}
+		}
+	}
+
+	return nil
+}
+
+// GetLastATHTimestamp fetches the last ATH timestamp for a given symbol
+func (s *SQLite) GetLastATHTimestamp(symbol string) (time.Time, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	query := `SELECT timestamp FROM pair_ath WHERE symbol = ?`
+	var timestamp string
+	err := s.DB.QueryRow(query, symbol).Scan(&timestamp)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	timestampParsed, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return timestampParsed, nil
 }
