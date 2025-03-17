@@ -108,7 +108,9 @@ func (bot *MultiPairTradingBot) StartTrading() {
 	bot.performPairAdjustment()
 
 	// Check for market meltdown
-	bot.checkMarketMeltdown()
+	if bot.config.ThresholdStartTrading != 0 && bot.config.ThresholdStopTrading != 0 {
+		bot.checkMarketMeltdown()
+	}
 
 	// Signal handling for graceful shutdown
 	stop := make(chan os.Signal, 1)
@@ -267,7 +269,9 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 		case <-tradeTicker.C:
 			// Fetch strategy and market analysis for the pair
 			if bot.analysisRunning {
-				continue
+				// slows down the trading loop
+				// so there is place for analysis to finish
+				time.Sleep(1 * time.Second)
 			}
 			strg, hasStrategy := bot.pairStrategies.Load(pair.Symbol)
 			anls, hasAnalysis := bot.analysisData.Load(pair.Symbol)
@@ -290,7 +294,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			}
 
 			// Fetch candles
-			candles, err := bot.exchange.FetchCandles(pair.Symbol, strategy.GetCandleInterval(), 100)
+			candles, err := bot.exchange.FetchCandles(pair.Symbol, strategy.GetCandleInterval(), 500)
 			if err != nil {
 				logger.Errorf("Error fetching candles for %s ", pair.Symbol)
 				continue
@@ -372,7 +376,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 					logger.Errorf("Error fetching today's active trades count: %v", err)
 					continue
 				}
-				if analys.MarketState != models.StronglyTrending {
+				if analys.MarketState != models.StronglyTrending && analys.MarketState != models.Trending {
 					logger.Infof("Today's trade count: %d | Total active trade count %d", todayTradeCount, activeTradesTotal)
 					if activeTradesTotal >= bot.config.MaxTotalTrades || todayTradeCount >= bot.config.MaxDailyTrades {
 						logger.InfoColorf(logger.Yellow, "Maximum daily trades reached. Skipping trade.")
@@ -403,7 +407,6 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 					logger.Errorf("Error handling SELL for %s", pair.Symbol)
 					return
 				}
-
 			} else {
 				logger.Debugf("UPTREND signal for %s, cancelling sell", pair.Symbol)
 			}
