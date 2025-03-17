@@ -104,6 +104,9 @@ func (ma *MarketAnalyzer) AnalyzeMarket(candles []models.CandleStick) (marketSta
 	volumeProfile := ma.analyzeVolumeProfile(candles)
 	trendTransition := ma.detectTrendTransitions(candles, adx)
 
+	// Measures price change over # of candles (e.g., 5)
+	priceChangePct := ma.shortTermPriceChange(candles, 5)
+
 	// OPTIONAL Indicators
 	var mfiVal float64
 	var mfiSignal int
@@ -230,7 +233,21 @@ func (ma *MarketAnalyzer) AnalyzeMarket(candles []models.CandleStick) (marketSta
 		transitionalScore += 1.5
 	}
 
-	logger.Debugf("[State Scores] Trending=%.2f | Chaotic=%.2f | RangeBound=%.2f", trendingScore, chaoticScore, rangeScore)
+	// Then, after we do the other big indicators, we incorporate this measure:
+	switch {
+	case priceChangePct < -3.0:
+		// If price dipped more than 3% over last 5 bars,
+		// let’s penalize trendingScore or boost chaoticScore
+		chaoticScore += 5.0
+		logger.Debugf("Significant price drop (%.2f%%). Boosting chaoticScore.", priceChangePct)
+
+	case priceChangePct > 5.0:
+		// If price pumped, we might favor trending or stronglyTrending
+		trendingScore += 5.0
+		logger.Debugf("Significant price pump (%.2f%%). Boosting trendingScore.", priceChangePct)
+	}
+
+	logger.Debugf("[State Scores] Trending=%.2f | Chaotic=%.2f | RangeBound=%.2f | Price change over 5 bars %.2f", trendingScore, chaoticScore, rangeScore, priceChangePct)
 
 	scores := map[models.MarketState]float64{
 		models.StronglyTrending: trendingScore * 1.2,
@@ -612,6 +629,27 @@ func (ma *MarketAnalyzer) isShortAboveLongForBars(shortSMA, longSMA []float64, b
 		}
 	}
 	return true
+}
+
+// shortTermPriceChange calculates how much the price moved (in %)
+// over the last `lookback` candles
+func (ma *MarketAnalyzer) shortTermPriceChange(candles []models.CandleStick, lookback int) float64 {
+	if len(candles) < lookback+1 {
+		return 0
+	}
+
+	end := len(candles) - 1
+	start := end - lookback
+
+	oldPrice := candles[start].Close
+	newPrice := candles[end].Close
+
+	if oldPrice == 0 {
+		return 0
+	}
+
+	pctChange := (newPrice - oldPrice) / oldPrice * 100.0
+	return pctChange
 }
 
 // Check if SMA is increasing over the last 'bars' periods
