@@ -45,14 +45,14 @@ func DefaultMultiTradingConfig() MultiTrading {
 		Transitional:          TransitionalMarketState,
 		StronglyTrending:      StronglyTrendingMarketState,
 		ExcludedMarkets:       []models.TradingPair{},
-		ExcludedQuoteMarkets:  []string{"USDC", "USDP", "FDUSD", "TUSD"},
-		IncludedBaseMarkets:   []string{"USDT"},
+		ExcludedQuoteMarkets:  []string{"USDT", "USDP", "FDUSD", "TUSD", "EURUSDT", "EURIUSDT", "EURUSDC", "EURIUSDC"},
+		IncludedBaseMarkets:   []string{"USDC"},
 		TradingLoopInterval:   10 * time.Second,
 		AnalysisLoopInterval:  30 * time.Minute,
-		ThresholdStartTrading: 65,
-		ThresholdStopTrading:  80,
-		PendingBuyCoolDown:    2 * time.Minute,
-		MaxDailyTrades:        10,
+		ThresholdStartTrading: 0,
+		ThresholdStopTrading:  0,
+		PendingBuyCoolDown:    3 * time.Minute,
+		MaxDailyTrades:        30,
 		MaxTotalTrades:        30,
 		AnalyzerConfig: analysis.NewMarketAnalyzer(analysis.MarketAnalyzer{
 			EMAPeriods:               []int{9, 21, 50},
@@ -118,7 +118,6 @@ func (c *MultiTrading) UpdateStrategy(state models.MarketState, strategy types.M
 		c.Transitional = strategy
 	case models.StronglyTrending:
 		c.StronglyTrending = strategy
-
 	}
 }
 

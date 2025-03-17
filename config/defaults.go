@@ -17,7 +17,10 @@ var (
 			PanicSell:           false,
 			RiskRewardThreshold: 0.6, // slightly higher than 0.5, so we skip lower-RR trades
 			StrategyType:        strategies.CompoundStrategyType,
-
+			ADR: &algos.ADRStrategy{
+				Period:     7,
+				Multiplier: 1.5,
+			},
 			RSI: &algos.RSIStrategy{
 				Overbought: 70, // slightly higher for crypto
 				Oversold:   30,
@@ -55,7 +58,7 @@ var (
 			SellOnBearish:             true,
 			CandleInterval:            "12h",
 			DesiredProfit:             2.0,
-			HighestPriceFallOffMargin: 0.5,
+			HighestPriceFallOffMargin: 0.8,
 			FeeRate:                   0.001,
 			MarketState:               models.Default,
 		},
@@ -68,6 +71,10 @@ var (
 			PanicSell:           false,
 			RiskRewardThreshold: 0.7,
 			StrategyType:        strategies.CompoundStrategyType,
+			ADR: &algos.ADRStrategy{
+				Period:     7,
+				Multiplier: 1.8,
+			},
 			RSI: &algos.RSIStrategy{
 				Overbought: 65,
 				Oversold:   28,
@@ -104,7 +111,7 @@ var (
 			},
 			SellOnBearish:             true,
 			CandleInterval:            "1h", // “chaotic” might need shorter intervals
-			DesiredProfit:             2.0,
+			DesiredProfit:             1.0,
 			HighestPriceFallOffMargin: 0.4,
 			FeeRate:                   0.001,
 			MarketState:               models.Chaotic,
@@ -118,6 +125,10 @@ var (
 			PanicSell:           false,
 			RiskRewardThreshold: 1.0,
 			StrategyType:        strategies.CompoundStrategyType,
+			ADR: &algos.ADRStrategy{
+				Period:     14,
+				Multiplier: 1.5,
+			},
 			RSI: &algos.RSIStrategy{
 				Overbought: 70, // slightly higher
 				Oversold:   30,
@@ -155,7 +166,7 @@ var (
 			SellOnBearish:             true,
 			CandleInterval:            "1d",
 			DesiredProfit:             4.0,
-			HighestPriceFallOffMargin: 1.5,
+			HighestPriceFallOffMargin: 1.0,
 			FeeRate:                   0.001,
 			MarketState:               models.Trending,
 		},
@@ -168,6 +179,10 @@ var (
 			PanicSell:           false,
 			RiskRewardThreshold: 0.8,
 			StrategyType:        strategies.CompoundStrategyType,
+			ADR: &algos.ADRStrategy{
+				Period:     7,
+				Multiplier: 1.5,
+			},
 			MACD: &algos.MACDStrategy{
 				FastPeriod:   9,
 				SlowPeriod:   21,
@@ -218,18 +233,22 @@ var (
 			PanicSell:           false,
 			RiskRewardThreshold: 1.2,
 			StrategyType:        strategies.CompoundStrategyType,
+			ADR: &algos.ADRStrategy{
+				Period:     7,
+				Multiplier: 1.2,
+			},
 			RSI: &algos.RSIStrategy{
-				Overbought: 75,
+				Overbought: 70,
 				Oversold:   35,
 				Period:     14,
 			},
 			MACD: &algos.MACDStrategy{
-				FastPeriod:   6,
-				SlowPeriod:   19,
+				FastPeriod:   5,
+				SlowPeriod:   21,
 				SignalPeriod: 4,
 			},
 			BollingerBands: &algos.BollingerBands{
-				Period: 18,
+				Period: 21,
 				Width:  2.3,
 			},
 			Stochastic: &algos.StochasticOscillator{
@@ -252,10 +271,10 @@ var (
 				Overbought: 85,
 				Oversold:   15,
 			},
-			SellOnBearish:             false,
+			SellOnBearish:             true,
 			CandleInterval:            "6h",
 			DesiredProfit:             8.0,
-			HighestPriceFallOffMargin: 2.0,
+			HighestPriceFallOffMargin: 1.0,
 			FeeRate:                   0.001,
 			MarketState:               models.StronglyTrending,
 		},
@@ -263,11 +282,15 @@ var (
 
 	// ------------------ TRANSITIONAL ------------------
 	TransitionalMarketState = types.MarketStateStrategy{
-		Enabled: false,
+		Enabled: true,
 		Strategy: &strategies.CompoundStrategy{
 			PanicSell:           false,
-			RiskRewardThreshold: 0.6,
+			RiskRewardThreshold: 0.8,
 			StrategyType:        strategies.CompoundStrategyType,
+			ADR: &algos.ADRStrategy{
+				Period:     10,
+				Multiplier: 1.4,
+			},
 			RSI: &algos.RSIStrategy{
 				Overbought: 70,
 				Oversold:   30,
@@ -304,7 +327,7 @@ var (
 			},
 			SellOnBearish:             false,
 			CandleInterval:            "4h",
-			DesiredProfit:             2.0, // slightly bigger than 1
+			DesiredProfit:             2.0,
 			HighestPriceFallOffMargin: 1.0,
 			FeeRate:                   0.001,
 			MarketState:               models.Transitional,
