@@ -68,14 +68,15 @@ func NewBinanceClient(apiKey, apiSecret string) (interfaces.ExchangeClient, erro
 		client:            client,
 		pairs:             make(map[string]*models.TradingPair),
 		candleCache:       make(map[string][]models.CandleStick),
-		maxRequests:       90,              // max requests
-		interval:          1 * time.Second, // time window
+		maxRequests:       1,                    // max requests
+		interval:          1 * time.Millisecond, // time window
 		highPriorityQueue: make(chan BinanceRequest, 200),
 		normalQueue:       make(chan BinanceRequest, 600),
 		workerDone:        make(chan struct{}),
 	}
 	// Start the worker goroutine
 	b.startWorker()
+	b.StartQueueMonitor()
 
 	return b, nil
 }
@@ -128,6 +129,27 @@ func (b *BinanceClient) enqueueRequest(doFn func() (interface{}, error), priorit
 	// Wait for result
 	r := <-req.resultChan
 	return r.data, r.err
+}
+
+func (b *BinanceClient) StartQueueMonitor() {
+	ticker := time.NewTicker(5 * time.Minute)
+	ctx := context.Background()
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done(): // or some stop channel you have
+				fmt.Println("Stopping queue monitor")
+				return
+			case <-ticker.C:
+				// Safely read channel lengths
+				hpLen := len(b.highPriorityQueue)
+				normalLen := len(b.normalQueue)
+
+				logger.Infof("[QUEUE MONITOR] HighPriorityLen=%d NormalLen=%d", hpLen, normalLen)
+			}
+		}
+	}()
 }
 
 // ==================== Public Methods Implementation ==================== //
@@ -677,4 +699,75 @@ func (b *BinanceClient) rateLimitWait() {
 	}
 
 	b.requestTimes = append(b.requestTimes, time.Now())
+}
+
+func (b *BinanceClient) FetchHistoricalCandles(
+	symbol string,
+	interval string,
+	startTime, endTime time.Time,
+	limit int,
+) ([]models.CandleStick, error) {
+
+	// We'll gather results in slices, possibly doing multiple API calls if needed.
+	var allCandles []models.CandleStick
+
+	// Convert start/end times to milliseconds
+	startMs := startTime.UnixNano() / int64(time.Millisecond)
+	endMs := endTime.UnixNano() / int64(time.Millisecond)
+
+	// We'll do a loop to fetch data in increments
+	var lastEnd time.Time
+	currentStart := startMs
+	for {
+		// Create the request
+		klines, err := b.client.NewKlinesService().
+			Symbol(symbol).
+			Interval(interval).
+			Limit(limit).
+			StartTime(currentStart).
+			EndTime(endMs).
+			Do(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("fetch klines error: %v", err)
+		}
+		if len(klines) == 0 {
+			break
+		}
+
+		// Convert them to your CandleStick model
+		for _, k := range klines {
+			open, _ := strconv.ParseFloat(k.Open, 64)
+			high, _ := strconv.ParseFloat(k.High, 64)
+			low, _ := strconv.ParseFloat(k.Low, 64)
+			closeP, _ := strconv.ParseFloat(k.Close, 64)
+			vol, _ := strconv.ParseFloat(k.Volume, 64)
+
+			c := models.CandleStick{
+				Timestamp: time.Unix(k.OpenTime/1000, 0),
+				Open:      open,
+				High:      high,
+				Low:       low,
+				Close:     closeP,
+				Volume:    vol,
+			}
+			allCandles = append(allCandles, c)
+		}
+
+		// Update currentStart to move to next batch
+		lastEnd = time.Unix(klines[len(klines)-1].CloseTime/1000, 0)
+		// e.g. add 1ms to avoid overlap
+		currentStart = (klines[len(klines)-1].CloseTime) + 1
+
+		// If we reached or passed endMs, break
+		if lastEnd.UnixNano()/int64(time.Millisecond) >= endMs {
+			break
+		}
+
+		// Possibly break if len(klines) < limit => means no more data
+		if len(klines) < limit {
+			break
+		}
+	}
+
+	return allCandles, nil
 }
