@@ -439,7 +439,7 @@ func (s *SQLite) SetUpdateAth(symbol string, ath float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	query := `INSERT INTO pair_ath (symbol, ath_price, timestamp) VALUES (?, ?, ?) ON CONFLICT(symbol) DO UPDATE SET ath_price = excluded.ath_price, timestamp = excluded.timestamp;`
-	_, err := s.DB.Exec(query, symbol, ath)
+	_, err := s.DB.Exec(query, symbol, ath, time.Now())
 	if err != nil {
 		return err
 	}
@@ -470,11 +470,11 @@ func (s *SQLite) GetAtl(symbol string) (float64, error) {
 	return ath, nil
 }
 
-func (s *SQLite) SetUpdateAtl(symbol string, ath float64) error {
+func (s *SQLite) SetUpdateAtl(symbol string, atl float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	query := `INSERT INTO pair_atl (symbol, atl_price) VALUES (?, ?) ON CONFLICT(symbol) DO UPDATE SET atl_price = excluded.atl_price;`
-	_, err := s.DB.Exec(query, symbol, ath)
+	query := `INSERT INTO pair_atl (symbol, atl_price, timestamp) VALUES (?, ?, ?) ON CONFLICT(symbol) DO UPDATE SET atl_price = excluded.atl_price, timestamp = excluded.timestamp;`
+	_, err := s.DB.Exec(query, symbol, atl, time.Now())
 	if err != nil {
 		return err
 	}
@@ -555,6 +555,44 @@ func (s *SQLite) GetLastATHTimestamp(symbol string) (time.Time, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	query := `SELECT timestamp FROM pair_ath WHERE symbol = ?`
+	var timestamp string
+	err := s.DB.QueryRow(query, symbol).Scan(&timestamp)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	timestampParsed, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return timestampParsed, nil
+}
+
+// GetLastBuySymbol fetches the last ATH timestamp for a given symbol
+func (s *SQLite) GetLastBuySymbol(symbol string) (time.Time, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	query := `SELECT timestamp FROM active_trades WHERE symbol = ?`
+	var timestamp string
+	err := s.DB.QueryRow(query, symbol).Scan(&timestamp)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	timestampParsed, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return timestampParsed, nil
+}
+
+// GetLastSellSymbol fetches the last ATH timestamp for a given symbol
+func (s *SQLite) GetLastSellSymbol(symbol string) (time.Time, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	query := `SELECT timestamp FROM completed_trades WHERE symbol = ?`
 	var timestamp string
 	err := s.DB.QueryRow(query, symbol).Scan(&timestamp)
 	if err != nil {

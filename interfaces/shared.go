@@ -33,7 +33,7 @@ type Strategy interface {
 type ExchangeClient interface {
 	AddTradingPair(pair models.TradingPair) error
 	GetCurrentPrice(symbol string) (float64, error)
-	FetchCandles(symbol, interval string, limit int) ([]models.CandleStick, error)
+	FetchCandles(symbol, interval string, limit int, priority bool) ([]models.CandleStick, error)
 	GetBalance(asset string) (float64, error)
 	CreateOrder(symbol, orderType, side string, amount string) (float64, error)
 	CreateMarketOrder(symbol, side, quantity string) (int64, float64, error)

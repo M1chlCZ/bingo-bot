@@ -307,7 +307,7 @@ func (b *BinanceClient) GetCurrentPrice(symbol string) (float64, error) {
 }
 
 // FetchCandles implements the Exchange interface
-func (b *BinanceClient) FetchCandles(symbol, interval string, limit int) ([]models.CandleStick, error) {
+func (b *BinanceClient) FetchCandles(symbol, interval string, limit int, priority bool) ([]models.CandleStick, error) {
 	doFunc := func() (any, error) {
 		var klines []*binance.Kline
 		err := retry(func() error {
@@ -348,7 +348,7 @@ func (b *BinanceClient) FetchCandles(symbol, interval string, limit int) ([]mode
 		return candles, nil
 	}
 
-	data, err := b.enqueueRequest(doFunc, false)
+	data, err := b.enqueueRequest(doFunc, priority)
 	if err != nil {
 		return nil, err
 	}

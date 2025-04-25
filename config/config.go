@@ -45,7 +45,7 @@ func DefaultMultiTradingConfig() MultiTrading {
 		Transitional:          TransitionalMarketState,
 		StronglyTrending:      StronglyTrendingMarketState,
 		ExcludedMarkets:       []models.TradingPair{},
-		ExcludedQuoteMarkets:  []string{"USDT", "USDP", "FDUSD", "TUSD", "EURUSDT", "EURIUSDT", "EURUSDC", "EURIUSDC"},
+		ExcludedQuoteMarkets:  []string{"USDT", "USDP", "FDUSD", "TUSD", "EURUSDT", "EURIUSDT"},
 		IncludedBaseMarkets:   []string{"USDC"},
 		TradingLoopInterval:   10 * time.Second,
 		AnalysisLoopInterval:  30 * time.Minute,
