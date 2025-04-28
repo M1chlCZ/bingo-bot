@@ -9,3 +9,4 @@ exclude.txt
 trades.db
 trades.db-shm
 trades.db-wal
+tasks.md

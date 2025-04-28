@@ -35,8 +35,8 @@ func CalculateMACD(candles []models.CandleStick, fastPeriod, slowPeriod, signalP
 	}
 
 	// Calculate EMAs
-	fastEMA := calculateEMA(candles, fastPeriod)
-	slowEMA := calculateEMA(candles, slowPeriod)
+	fastEMA := CalculateEMA(candles, fastPeriod)
+	slowEMA := CalculateEMA(candles, slowPeriod)
 
 	// Ensure fastEMA and slowEMA have valid lengths
 	if fastEMA == nil || slowEMA == nil {
@@ -62,7 +62,7 @@ func CalculateMACD(candles []models.CandleStick, fastPeriod, slowPeriod, signalP
 	}
 
 	// Calculate Signal Line (EMA of MACD values)
-	signalLine := calculateEMAFromValues(macdValues, signalPeriod)
+	signalLine := CalculateEMAFromValues(macdValues, signalPeriod)
 	if len(signalLine) == 0 {
 		return 0, 0, 0, fmt.Errorf("failed to calculate Signal Line: insufficient MACD values")
 	}
@@ -79,50 +79,4 @@ func CalculateMACD(candles []models.CandleStick, fastPeriod, slowPeriod, signalP
 	return macdLine, signalLine[len(signalLine)-1], histogram, nil
 }
 
-// Helper function to calculate EMA
-func calculateEMA(candles []models.CandleStick, period int) []float64 {
-	if len(candles) < period {
-		return nil // Not enough data to calculate EMA
-	}
-
-	ema := make([]float64, len(candles))
-	multiplier := 2.0 / (float64(period) + 1.0)
-
-	// First EMA value is the simple moving average of the first period
-	sum := 0.0
-	for i := 0; i < period; i++ {
-		sum += candles[i].Close
-	}
-	ema[period-1] = sum / float64(period)
-
-	// Calculate the rest of the EMA values
-	for i := period; i < len(candles); i++ {
-		ema[i] = ((candles[i].Close - ema[i-1]) * multiplier) + ema[i-1]
-	}
-
-	return ema[period-1:]
-}
-
-// Helper function to calculate EMA from arbitrary values
-func calculateEMAFromValues(values []float64, period int) []float64 {
-	if len(values) < period {
-		return nil // Not enough data to calculate EMA
-	}
-
-	ema := make([]float64, len(values))
-	multiplier := 2.0 / (float64(period) + 1.0)
-
-	// First EMA value is the simple moving average of the first period
-	sum := 0.0
-	for i := 0; i < period; i++ {
-		sum += values[i]
-	}
-	ema[period-1] = sum / float64(period)
-
-	// Calculate the rest of the EMA values
-	for i := period; i < len(values); i++ {
-		ema[i] = ((values[i] - ema[i-1]) * multiplier) + ema[i-1]
-	}
-
-	return ema[period-1:]
-}
+// Note: EMA calculation functions have been moved to ema.go

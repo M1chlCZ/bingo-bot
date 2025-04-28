@@ -1,0 +1,101 @@
+# Configuration file for golangci-lint
+# See https://golangci-lint.run/usage/configuration/ for more information
+
+run:
+  # Timeout for running linters, e.g. 30s, 5m, default is 1m
+  timeout: 5m
+  # Include test files or not, default is true
+  tests: true
+  # Allow multiple parallel golangci-lint instances running, default is false
+  allow-parallel-runners: true
+
+# Output configuration options
+output:
+  # Format: colored-line-number|line-number|json|tab|checkstyle|code-climate, default is "colored-line-number"
+  format: colored-line-number
+  # Print lines of code with issue, default is true
+  print-issued-lines: true
+  # Print linter name in the end of issue text, default is true
+  print-linter-name: true
+
+# All available linters
+linters:
+  disable-all: true
+  enable:
+    - errcheck      # Detect unchecked errors
+    - gosimple      # Simplify code
+    - govet         # Examine Go source code and reports suspicious constructs
+    - ineffassign   # Detect ineffectual assignments
+    - staticcheck   # Go static analysis
+    - typecheck     # Like the front-end of a Go compiler
+    - unused        # Check for unused constants, variables, functions and types
+    - gofmt         # Check if code was gofmt-ed
+    - goimports     # Check imports formatting
+    - misspell      # Find commonly misspelled English words
+    - gocyclo       # Computes and checks the cyclomatic complexity of functions
+    - dupl          # Tool for code clone detection
+    - goconst       # Find repeated strings that could be replaced by a constant
+    - unconvert     # Remove unnecessary type conversions
+    - nakedret      # Find naked returns in functions greater than a specified function length
+    - prealloc      # Find slice declarations that could potentially be preallocated
+    - exportloopref # Checks for pointers to enclosing loop variables
+
+# Linter settings
+linters-settings:
+  gocyclo:
+    # Minimal code complexity to report, 30 by default
+    min-complexity: 15
+  dupl:
+    # Tokens count to trigger issue, 150 by default
+    threshold: 100
+  goconst:
+    # Minimal length of string constant, 3 by default
+    min-len: 3
+    # Minimal occurrences count to trigger, 3 by default
+    min-occurrences: 3
+  nakedret:
+    # Make an issue if func has more lines of code than this setting and it has naked returns; default is 30
+    max-func-lines: 30
+  gofmt:
+    # Simplify code: gofmt with `-s` option, true by default
+    simplify: true
+
+# Issues configuration
+issues:
+  # Maximum issues count per one linter. Set to 0 to disable. Default is 50.
+  max-issues-per-linter: 0
+  # Maximum count of issues with the same text. Set to 0 to disable. Default is 3.
+  max-same-issues: 0
+  # Excluding configuration per-path, per-linter, per-text and per-source
+  exclude-rules:
+    # Exclude some linters from running on tests files.
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - dupl
+        - gosec
+    # Exclude known linters from specific files
+    - path: bot/multiPairTradingBot\.go
+      linters:
+        - gocyclo
+        - funlen
+    - path: strategies/compound\.go
+      linters:
+        - gocyclo
+        - funlen
+    - path: client/binance\.go
+      linters:
+        - gocyclo
+        - funlen
+    - path: db/sqLite\.go
+      linters:
+        - funlen
+    # Exclude some linters for specific functions
+    - text: "func \\(cs \\*CompoundStrategy\\) Calculate"
+      linters:
+        - gocyclo
+        - funlen
+    - text: "func \\(bot \\*MultiPairTradingBot\\) tradePair"
+      linters:
+        - gocyclo
+        - funlen

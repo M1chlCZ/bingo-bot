@@ -10,6 +10,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/goccy/go-json"
 	"log"
+	"math"
 	"sync"
 	"time"
 )
@@ -53,6 +54,7 @@ type CurrentIndicators struct {
 	MFiSignal     int
 	ADRVal        float64
 	ADRSignal     int
+	CandleSticks  []models.CandleStick
 }
 
 type PendingBuy struct {
@@ -138,116 +140,297 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 
 // checkBullishConditions decides if we have a 'bullish' signal,
 // given the current market state and the current indicators.
-//
-//nolint:funlen, main logic, has to be this way
 func (cs *CompoundStrategy) checkBullishConditions(
 	state models.MarketState,
 	ci CurrentIndicators,
 	currentPrice float64,
 	pair string,
 ) bool {
-	atr := (ci.UpperBand - ci.LowerBand) / ci.MiddleBand
-	dynamicRR := cs.RiskRewardThreshold
-	if atr > 0.05 {
-		dynamicRR *= 1.2
-	} else if atr < 0.02 {
-		dynamicRR *= 0.8
+	// Calculate dynamic risk-reward threshold
+	dynRR := cs.calculateDynamicRiskReward(ci)
+
+	mfiOK := ci.MFIVal > float64(cs.MFI.Oversold) &&
+		ci.MFIVal < float64(cs.MFI.Overbought)
+	cciOK := ci.CCIVal < cs.CCI.Overbought &&
+		ci.CCIVal > cs.CCI.Oversold
+	volCCIok := mfiOK || cciOK // renamed
+
+	emaUp := ci.MacdLine > ci.SignalLine &&
+		ci.MacdLine >= 0 // allow 0-line crossover
+
+	// Check if we're in a cooldown period after a losing trade
+	if cs.isInCooldownPeriod(pair) {
+		return false
 	}
 
-	volumeOk := ci.MFIVal > float64(cs.MFI.Oversold) && ci.MFIVal < float64(cs.MFI.Overbought)
-	emaAlignment := ci.MacdLine > ci.SignalLine && ci.MacdLine > 0
-
-	isActive, err := db2.SQLiteDB.IsCurrentlyActiveTrade(pair)
-	if err != nil {
-		logger.Errorf("Error checking active trade: %v", err.Error())
-		isActive = false
-	}
-	if !isActive {
-		timeLastSell, err := db2.SQLiteDB.GetLastSellSymbol(pair)
-		if err != nil {
-			logger.Debugf("Error getting last sell time for %s: %v", pair, err)
-		} else if time.Since(timeLastSell) < 5*time.Minute {
-			logger.InfoColorf(logger.BrightYellow, "[TIME SINCE LAST SELL] %s: Not enough time since last sell", pair)
-			return false
-		}
-	}
-
+	// Apply market-state specific logic
 	switch state {
 	case models.StronglyTrending:
-		adrConfirmation := ci.ADRSignal == 1 // low volatility confirms consolidation before breakout
-		target := ci.UpperBand * 1.02
-		stop := ci.LowerBand
-		rr := cs.calcRR(currentPrice, stop, target)
-		indicators := ci.MacdIndicator == 1 && ci.RSIVal < float64(cs.RSI.Overbought) && volumeOk && emaAlignment
-
-		logger.Debugf("State %s | Indicators: %t, ADR Low Volatility: %t, RR: %.2f Required RR %.2f",
-			state.String(), indicators, adrConfirmation, rr, dynamicRR)
-
-		if indicators && adrConfirmation {
-			reward := rr > dynamicRR
-			logger.DebugColorf(logger.BrightBlack, "Yes, bullish signal for %s with ADR low volatility confirmation | Reward %t",
-				state.String(), reward)
-			return reward
-		}
-
+		return cs.checkBullishStronglyTrending(ci, currentPrice, dynRR, volCCIok, emaUp, state)
 	case models.Trending:
-		adrConfirmation := ci.ADRSignal >= 0 // neutral or low volatility is fine
-		target := ci.UpperBand
-		stop := ci.LowerBand
-		rr := cs.calcRR(currentPrice, stop, target)
-		indicators := ci.MacdIndicator == 1 && ci.RSIVal < float64(cs.RSI.Overbought) && volumeOk && currentPrice < ci.UpperBand
-
-		logger.Debugf("State %s | Indicators: %t, ADR Neutral/Low Volatility: %t, RR: %.2f Required RR %.2f",
-			state.String(), indicators, adrConfirmation, rr, dynamicRR)
-
-		if indicators && adrConfirmation {
-			reward := rr > dynamicRR
-			logger.DebugColorf(logger.BrightBlack, "Yes, bullish signal for %s with ADR volatility confirmation | Reward %t",
-				state.String(), reward)
-			return reward
-		}
-
+		return cs.checkBullishTrending(ci, currentPrice, dynRR, volCCIok, state)
 	case models.RangeBound:
-		indicators := (currentPrice <= ci.LowerBand && ci.RSIVal < 30) || (ci.CCIVal <= cs.CCI.Oversold)
-		target := ci.UpperBand
-		stop := ci.LowerBand
-		rr := cs.calcRR(currentPrice, stop, target)
-		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
-		if indicators {
-			reward := rr > (dynamicRR * 0.8)
-			logger.DebugColorf(logger.BrightBlack, "Yes, bullish for %s with ADR low volatility | Reward %t", state.String(), reward)
-			return reward
-		}
-
+		return cs.checkBullishRangeBound(ci, currentPrice, dynRR, state)
 	case models.Chaotic:
-		target := ci.MiddleBand
-		stop := ci.LowerBand * 0.98
-		rr := cs.calcRR(currentPrice, stop, target)
-		indicators := currentPrice < ci.LowerBand && ci.RSIVal < 40 && ci.MFIVal < 30
-		logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
-		if indicators {
-			reward := rr > (dynamicRR * 1.2)
-			logger.DebugColorf(logger.BrightBlack, "Yes, bullish for %s with ADR high volatility spike | Reward %t", state.String(), reward)
-			return reward
-		}
-
+		return cs.checkBullishChaotic(ci, currentPrice, dynRR, state)
+	case models.Transitional:
+		return cs.checkBullishTransitional(ci, currentPrice, dynRR, emaUp, state)
 	default:
-		return cs.checkBullishConditionsDefault(state, ci, currentPrice, dynamicRR, volumeOk)
+		return cs.checkBullishConditionsDefault(state, ci, currentPrice, dynRR, volCCIok)
+	}
+}
+
+// calculateDynamicRiskReward calculates the adjusted risk-reward threshold based on volatility
+func (cs *CompoundStrategy) calculateDynamicRiskReward(ci CurrentIndicators) float64 {
+	atr := ci.ADRVal / ci.MiddleBand // normalised ATR (≈ volatility %)
+	dynRR := cs.RiskRewardThreshold
+	switch {
+	case atr > 0.05:
+		dynRR *= 1.25 // very volatile → demand more reward
+	case atr < 0.02:
+		dynRR *= 0.80 // sleepy → accept a bit less
+	}
+	return dynRR
+}
+
+var pairCooldownMu sync.Map
+
+// isInCooldownPeriod checks if we're in a cooldown period after a losing trade
+func (cs *CompoundStrategy) isInCooldownPeriod(pair string) bool {
+	muIface, _ := pairCooldownMu.LoadOrStore(pair, &sync.Mutex{})
+	mu := muIface.(*sync.Mutex)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if ok, tm, _ := db2.SQLiteDB.WasLastTradeLoss(pair); ok {
+		if time.Since(tm) < 10*time.Minute {
+			logger.InfoColorf(logger.Red,
+				"[COOL-DOWN] %s: last trade red → wait (%.1f min)",
+				pair, time.Since(tm).Minutes())
+			return true
+		}
+	}
+	return false
+}
+
+func atLeast(n int, flags ...bool) bool {
+	cnt := 0
+	for _, f := range flags {
+		if f {
+			cnt++
+		}
+	}
+	return cnt >= n
+}
+
+// checkBullishStronglyTrending checks bullish conditions for strongly trending markets
+func (cs *CompoundStrategy) checkBullishStronglyTrending(
+	ci CurrentIndicators,
+	currentPrice, dynamicRR float64,
+	volCCIok bool, emaUp bool,
+	state models.MarketState,
+) bool {
+
+	adrConfirmation := ci.ADRSignal == 1
+
+	// ---------- adaptive RSI ceiling ----------
+	rsiCeil := float64(cs.RSI.Overbought)
+
+	// if momentum is still accelerating, allow +5
+	if ci.MacdIndicator == 1 && ci.Histogram > 0 {
+		rsiCeil += 5
+	}
+	rsiOk := ci.RSIVal < rsiCeil
+
+	atr, err := algos.ATR(ci.CandleSticks, 14)
+	if err != nil {
+		atr = ci.MiddleBand
+	}
+	stop := currentPrice - 2.5*atr
+	target := math.Max(ci.UpperBand*1.02, currentPrice+2*atr)
+	rr := cs.calcRR(state, currentPrice, stop, target)
+
+	indicators := atLeast(2, volCCIok, emaUp, rsiOk)
+
+	logger.Debugf("STRONG %s | vote=%t (volCCI=%t emaUp=%t rsiOk=%t) "+
+		"ADRlow=%t RR=%.2f/%.2f", state, indicators, volCCIok, emaUp,
+		rsiOk, adrConfirmation, rr, dynamicRR)
+
+	return indicators && adrConfirmation && rr > dynamicRR
+}
+
+// checkBullishTrending checks bullish conditions for trending markets
+func (cs *CompoundStrategy) checkBullishTrending(
+	ci CurrentIndicators,
+	currentPrice, dynamicRR float64,
+	volCCIok bool,
+	state models.MarketState,
+) bool {
+
+	adrConfirmation := ci.ADRSignal >= 0
+
+	// adaptive RSI cap
+	rsiCeil := float64(cs.RSI.Overbought)
+	if ci.MacdIndicator == 1 && ci.Histogram > 0 {
+		rsiCeil += 5
+	}
+	rsiOk := ci.RSIVal < rsiCeil
+
+	// vote: need two of (volume/CCI, EMAup, RSI)
+	emaUp := ci.MacdLine > ci.SignalLine
+	indicators := atLeast(2, volCCIok, emaUp, rsiOk) &&
+		currentPrice < ci.MiddleBand // still want a dip
+
+	// risk
+	atr, _ := algos.ATR(ci.CandleSticks, 14)
+	stop := math.Min(ci.LowerBand, currentPrice-2.0*atr)
+	target := ci.UpperBand
+	rr := cs.calcRR(state, currentPrice, stop, target)
+
+	logger.Debugf("TREND %s | vote=%t (volCCI=%t emaUp=%t rsiOk=%t) "+
+		"ADRok=%t RR=%.2f/%.2f", state, indicators, volCCIok, emaUp,
+		rsiOk, adrConfirmation, rr, dynamicRR)
+
+	return indicators && adrConfirmation && rr > dynamicRR
+}
+
+// checkBullishRangeBound checks bullish conditions for range-bound markets
+func (cs *CompoundStrategy) checkBullishRangeBound(
+	ci CurrentIndicators,
+	currentPrice, dynamicRR float64,
+	state models.MarketState,
+) bool {
+	// ---- indicators ----
+	indicators := (currentPrice <= ci.LowerBand && ci.RSIVal < 30) ||
+		(ci.CCIVal <= cs.CCI.Oversold)
+
+	// ---- risk levels ----
+	atr, _ := algos.ATR(ci.CandleSticks, 14)
+	stop := math.Min(ci.LowerBand, currentPrice-2.0*atr) // ⬅︎ NEW
+	if stop >= currentPrice {                            // failsafe
+		stop = currentPrice - 0.002*currentPrice // 0.2 % gap
+	}
+	target := ci.UpperBand
+	rr := cs.calcRR(state, currentPrice, stop, target)
+
+	logger.Debugf("RANGE %s | ind=%t  RR=%.2f/%.2f",
+		state, indicators, rr, dynamicRR)
+
+	return indicators && rr > (dynamicRR*0.8)
+}
+
+func (cs *CompoundStrategy) checkBullishTransitional(ci CurrentIndicators, currentPrice, dynamicRR float64, emaAlignment bool, state models.MarketState) bool {
+	target := ci.UpperBand
+	stop := ci.LowerBand
+	rr := cs.calcRR(state, currentPrice, stop, target)
+	indicators := ci.MacdIndicator == 1 && (ci.RSIVal > 40 && ci.RSIVal < 70) && (ci.MFIVal > 35 && ci.MFIVal < 65) && emaAlignment
+	logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
+	if indicators {
+		reward := rr > dynamicRR
+		logger.DebugColorf(logger.BrightBlack, "Yes, we have a strong bullish signal for %s | Reward %t", state.String(), reward)
+		logger.DebugColorf(logger.BrightBlack, "Yes, bullish for %s with ADR high volatility spike | Reward %t", state.String(), reward)
+		return reward
 	}
 
+	return false
+}
+
+// checkBullishChaotic checks bullish conditions for chaotic markets
+func (cs *CompoundStrategy) checkBullishChaotic(ci CurrentIndicators, currentPrice, dynamicRR float64, state models.MarketState) bool {
+	target := ci.MiddleBand
+	stop := ci.LowerBand * 0.95
+	rr := cs.calcRR(state, currentPrice, stop, target)
+	indicators := currentPrice < ci.LowerBand && ci.RSIVal < 40 && ci.MFIVal < 30
+	logger.Debugf("State %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
+	if indicators {
+		reward := rr > (dynamicRR * 1.2)
+		logger.DebugColorf(logger.BrightBlack, "Yes, bullish for %s with ADR high volatility spike | Reward %t", state.String(), reward)
+		return reward
+	}
 	return false
 }
 
 func (cs *CompoundStrategy) checkBullishConditionsDefault(state models.MarketState, ci CurrentIndicators, currentPrice, dynamicRR float64, volumeOk bool) bool {
 	target := ci.UpperBand
 	stop := ci.LowerBand
-	rr := cs.calcRR(currentPrice, stop, target)
+	rr := cs.calcRR(state, currentPrice, stop, target)
 	indicators := ci.MacdIndicator == 1 && ci.MFIVal < float64(cs.MFI.Overbought) && volumeOk
 	logger.Debugf("Default logic for %s | Indicators: %t, RR: %.2f Required RR %.2f", state.String(), indicators, rr, dynamicRR)
 	if indicators {
 		reward := rr > (dynamicRR * 0.9)
 		logger.DebugColorf(logger.BrightBlack, "Yes, default bullish %s | Reward %t", state.String(), reward)
 		return reward
+	}
+	return false
+}
+
+// checkBearishStronglyTrending checks bearish conditions for strongly trending markets
+func (cs *CompoundStrategy) checkBearishStronglyTrending(ci CurrentIndicators, currentPrice float64) bool {
+	// In a strong uptrend, you might rarely short.
+	// But maybe you exit if RSI is extremely high, or price is far above upper band, etc.
+	// Example: If MACD goes negative or RSI > 80 => strong overbought
+	if ci.MacdIndicator == -1 && ci.RSIVal > 80 {
+		// also check if price is above upper band => blow-off top scenario
+		if currentPrice > ci.MiddleBand {
+			return true
+		}
+	}
+	return false
+}
+
+// checkBearishTrending checks bearish conditions for trending markets
+func (cs *CompoundStrategy) checkBearishTrending(ci CurrentIndicators) bool {
+	// Normal trending scenario: short if MACD crosses down and RSI is high.
+	if ci.MacdIndicator == -1 && ci.RSIVal > float64(cs.RSI.Overbought) {
+		return true
+	}
+	// Optionally, if CCI or MFI is also overbought => more confirmation
+	return false
+}
+
+// checkBearishRangeBound checks bearish conditions for range-bound markets
+func (cs *CompoundStrategy) checkBearishRangeBound(ci CurrentIndicators, currentPrice float64) bool {
+	// Mean reversion: we short near the upper band or if RSI > 70.
+	if currentPrice >= ci.MiddleBand && ci.RSIVal > 70 {
+		return true
+	}
+	// or if CCI is above +100 => overbought
+	if ci.CCIVal > cs.CCI.Overbought {
+		return true
+	}
+	return false
+}
+
+// checkBearishChaotic checks bearish conditions for chaotic markets
+func (cs *CompoundStrategy) checkBearishChaotic(ci CurrentIndicators, currentPrice float64) bool {
+	// In a chaotic market, you might consider shorting big spikes, e.g. if price is well above upper band
+	// and RSI is extreme. But also be careful—chaotic markets can whipsaw quickly.
+	if currentPrice > ci.MiddleBand && ci.RSIVal > 75 {
+		return true
+	}
+	return false
+}
+
+// checkBearishTransitional checks bearish conditions for transitional markets
+func (cs *CompoundStrategy) checkBearishTransitional(ci CurrentIndicators) bool {
+	// Possibly short if we suspect a new downtrend forming:
+	// e.g. MACD crossing below 0, RSI dropping from a moderate zone
+	if ci.MacdIndicator == -1 && ci.RSIVal > 50 {
+		// maybe also check MFI > 70 => distribution
+		if ci.MFIVal > 70 {
+			return true
+		}
+	}
+	return false
+}
+
+// checkBearishDefault checks bearish conditions for default market state
+func (cs *CompoundStrategy) checkBearishDefault(ci CurrentIndicators) bool {
+	// Fallback logic
+	// For example, short if MACD < 0 and RSI > Overbought
+	if ci.MacdIndicator == -1 && ci.RSIVal > float64(cs.RSI.Overbought) {
+		return true
 	}
 	return false
 }
@@ -261,83 +444,47 @@ func (cs *CompoundStrategy) checkBearishConditions(
 ) bool {
 	switch state {
 	case models.StronglyTrending:
-		// In a strong uptrend, you might rarely short.
-		// But maybe you exit if RSI is extremely high, or price is far above upper band, etc.
-		// Example: If MACD goes negative or RSI > 80 => strong overbought
-		if ci.MacdIndicator == -1 && ci.RSIVal > 80 {
-			// also check if price is above upper band => blow-off top scenario
-			if currentPrice > ci.MiddleBand {
-				return true
-			}
-		}
-		return false
-
+		return cs.checkBearishStronglyTrending(ci, currentPrice)
 	case models.Trending:
-		// Normal trending scenario: short if MACD crosses down and RSI is high.
-		if ci.MacdIndicator == -1 && ci.RSIVal > float64(cs.RSI.Overbought) {
-			return true
-		}
-		// Optionally, if CCI or MFI is also overbought => more confirmation
-		return false
-
+		return cs.checkBearishTrending(ci)
 	case models.RangeBound:
-		// Mean reversion: we short near the upper band or if RSI > 70.
-		if currentPrice >= ci.MiddleBand && ci.RSIVal > 70 {
-			return true
-		}
-		// or if CCI is above +100 => overbought
-		if ci.CCIVal > cs.CCI.Overbought {
-			return true
-		}
-		return false
-
+		return cs.checkBearishRangeBound(ci, currentPrice)
 	case models.Chaotic:
-		// In a chaotic market, you might consider shorting big spikes, e.g. if price is well above upper band
-		// and RSI is extreme. But also be careful—chaotic markets can whipsaw quickly.
-		if currentPrice > ci.MiddleBand && ci.RSIVal > 75 {
-			return true
-		}
-		return false
-
+		return cs.checkBearishChaotic(ci, currentPrice)
 	case models.Transitional:
-		// Possibly short if we suspect a new downtrend forming:
-		// e.g. MACD crossing below 0, RSI dropping from a moderate zone
-		if ci.MacdIndicator == -1 && ci.RSIVal > 50 {
-			// maybe also check MFI > 70 => distribution
-			if ci.MFIVal > 70 {
-				return true
-			}
-		}
-		return false
-
+		return cs.checkBearishTransitional(ci)
 	default:
-		// Fallback logic
-		// For example, short if MACD < 0 and RSI > Overbought
-		if ci.MacdIndicator == -1 && ci.RSIVal > float64(cs.RSI.Overbought) {
-			return true
-		}
-		return false
+		return cs.checkBearishDefault(ci)
 	}
 }
 
-func (cs *CompoundStrategy) calcRR(currentPrice, stop, target float64) float64 {
+func (cs *CompoundStrategy) calcRR(
+	state models.MarketState,
+	currentPrice, stop, target float64,
+) float64 {
+
+	if stop >= currentPrice || target <= currentPrice {
+		logger.Warnf("[calcRR] %s  invalid levels  stop=%.4f  cp=%.4f  target=%.4f",
+			state.String(), stop, currentPrice, target)
+		return 0
+	}
+
 	risk := (currentPrice - stop) / currentPrice
 	reward := (target - currentPrice) / currentPrice
-	if risk <= 0 || reward <= 0 {
-		return 0
-	}
-	rr := reward / risk
-	return rr
+	return reward / risk
 }
 
-func (cs *CompoundStrategy) calcRRForSell(currentPrice, stop, target float64) float64 {
-	risk := (stop - currentPrice) / currentPrice
-	reward := (currentPrice - target) / currentPrice
-	if risk <= 0 || reward <= 0 {
+func (cs *CompoundStrategy) calculateRiskRewardRatioForSell(
+	currentPrice, stop, target float64,
+) float64 {
+	if stop <= currentPrice || target >= currentPrice { // <-- NEW
+		logger.Warnf("calcRR-sell: invalid levels (stop %.4f, target %.4f, cp %.4f)",
+			stop, target, currentPrice)
 		return 0
 	}
-	rr := reward / risk
-	return rr
+	risk := (stop - currentPrice) / currentPrice
+	reward := (currentPrice - target) / currentPrice
+	return reward / risk
 }
 
 func (cs *CompoundStrategy) GetRSI(candles []models.CandleStick, pair string) (float64, int, error) {
@@ -455,41 +602,81 @@ func (cs *CompoundStrategy) alreadyInPendingBuys(pair string) bool {
 	return inTheMap
 }
 
-//nolint:funlen, main logic, has to be this way
-func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentPrice float64, bearishSignal bool) (int, error) {
-	breakevenPrice := trade.BuyPrice * (1 + cs.FeeRate)
-	profitMargin := (currentPrice - trade.BuyPrice) / trade.BuyPrice * 100
-
+// trackPriceExtremes updates and returns the all-time high and low prices for a trade
+func (cs *CompoundStrategy) trackPriceExtremes(symbol string, currentPrice float64) (athPrice, atlPrice float64, lastAthTime time.Time, err error) {
 	// HIGH PRICE since trade
-	athPrice, err := db2.SQLiteDB.GetAth(trade.Symbol)
+	athPrice, err = db2.SQLiteDB.GetAth(symbol)
 	if err != nil || currentPrice > athPrice {
-		logger.InfoColorf(logger.Green, "New HIGH price for %s: %.8f", trade.Symbol, currentPrice)
-		if e := db2.SQLiteDB.SetUpdateAth(trade.Symbol, currentPrice); e != nil {
-			logger.Errorf("Error updating ATH price for %s: %v", trade.Symbol, e)
+		logger.InfoColorf(logger.Green, "New HIGH price for %s: %.8f", symbol, currentPrice)
+		if e := db2.SQLiteDB.SetUpdateAth(symbol, currentPrice); e != nil {
+			logger.Errorf("Error updating ATH price for %s: %v", symbol, e)
 		}
 		athPrice = currentPrice
 	}
 
 	// LOW PRICE since trade
-	atlPrice, err := db2.SQLiteDB.GetAtl(trade.Symbol)
+	atlPrice, err = db2.SQLiteDB.GetAtl(symbol)
 	if err != nil || currentPrice < atlPrice {
-		logger.InfoColorf(logger.BrightRed, "New LOW price for %s: %.8f", trade.Symbol, currentPrice)
-		if e := db2.SQLiteDB.SetUpdateAtl(trade.Symbol, currentPrice); e != nil {
-			logger.Errorf("Error updating ATL price for %s: %v", trade.Symbol, e)
+		logger.InfoColorf(logger.BrightRed, "New LOW price for %s: %.8f", symbol, currentPrice)
+		if e := db2.SQLiteDB.SetUpdateAtl(symbol, currentPrice); e != nil {
+			logger.Errorf("Error updating ATL price for %s: %v", symbol, e)
 		}
 		atlPrice = currentPrice
 	}
 
 	// Check last time it reached ATH
-	lastAthTime, err := db2.SQLiteDB.GetLastATHTimestamp(trade.Symbol)
+	lastAthTime, err = db2.SQLiteDB.GetLastATHTimestamp(symbol)
 	if err != nil {
-		logger.Errorf("Error getting last ATH time for %s: %v", trade.Symbol, err)
+		logger.Errorf("Error getting last ATH time for %s: %v", symbol, err)
 	}
 
-	// Percentage change since trade
+	return athPrice, atlPrice, lastAthTime, nil
+}
+
+// checkPanicSellCondition checks if we should panic sell based on price drop
+func (cs *CompoundStrategy) checkPanicSellCondition(profitMargin float64) bool {
+	return profitMargin < -cs.HighestPriceFallOffMargin && (profitMargin > 0 || cs.PanicSell)
+}
+
+// checkAthFallOffSellCondition checks if we should sell based on drop from ATH
+func (cs *CompoundStrategy) checkAthFallOffSellCondition(profitMargin, profitMarginATH float64) bool {
+	return profitMarginATH < -cs.HighestPriceFallOffMargin && profitMargin > 0
+}
+
+// checkTimeSinceSellCondition checks if we should sell based on time since last ATH
+func (cs *CompoundStrategy) checkTimeSinceSellCondition(profitMargin float64, lastAthTime time.Time) bool {
+	return cs.getTimeSinceATHSell(lastAthTime, cs.MarketState) && profitMargin > 0
+}
+
+// checkBearishSignalSellCondition checks if we should sell based on bearish signal
+func (cs *CompoundStrategy) checkBearishSignalSellCondition(profitMargin float64, bearishSignal bool) bool {
+	return cs.SellOnBearish && bearishSignal && profitMargin > 0
+}
+
+// checkDesiredProfitSellCondition checks if we should sell based on desired profit
+func (cs *CompoundStrategy) checkDesiredProfitSellCondition(profitMargin float64) bool {
+	return profitMargin > cs.DesiredProfit
+}
+
+// checkActiveTrade evaluates an active trade to determine if it should be sold
+func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentPrice float64, bearishSignal bool) (int, error) {
+	breakevenPrice := trade.BuyPrice * (1 + cs.FeeRate)
+	profitMargin := (currentPrice - trade.BuyPrice) / trade.BuyPrice * 100
+
+	// QUICK-STOP window: 5–7 minutes after entry coin did not turn out to greens
+	if sell, _ := cs.getQuickStop(trade, profitMargin); sell {
+		logger.InfoColorf(logger.BrightRed, "[QUICK-STOP] %s: after %.1f min still red (%.2f%%) → exit", trade.Symbol, time.Since(trade.Timestamp).Minutes(), profitMargin)
+		return -1, nil
+	}
+
+	// Track price extremes
+	athPrice, atlPrice, lastAthTime, _ := cs.trackPriceExtremes(trade.Symbol, currentPrice)
+
+	// Calculate profit margins
 	profitMarginATH := (currentPrice - athPrice) / athPrice * 100
 	upliftFromAtl := (currentPrice - atlPrice) / atlPrice * 100
 
+	// Log trade monitoring information
 	logger.Infof("[Trade Monitoring] %s | Buy=%.2f | Current=%.2f | PM=%.2f%% | ATH=%.2f | PM ATH=%.2f%%",
 		trade.Symbol, trade.BuyPrice, currentPrice, profitMargin, athPrice, profitMarginATH)
 
@@ -497,32 +684,25 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 		logger.InfoColorf(logger.BrightYellow, "[ CurrentPrice is above ATL ] %s: Uplift from ATL (%.2f%%)", trade.Symbol, upliftFromAtl)
 	}
 
-	if profitMargin < -cs.HighestPriceFallOffMargin {
-		if profitMargin > 0 || cs.PanicSell {
-			logger.InfoColorf(logger.BrightRed, "[PANIC SELL] %s: Price dropped below margin %.2f", trade.Symbol, profitMargin)
-			return -1, nil
-		}
+	// Check sell conditions
+	if cs.checkPanicSellCondition(profitMargin) {
+		logger.InfoColorf(logger.BrightRed, "[PANIC SELL] %s: Price dropped below margin %.2f", trade.Symbol, profitMargin)
+		return -1, nil
 	}
 
-	if profitMarginATH < -cs.HighestPriceFallOffMargin {
-		if profitMargin > 0 {
-			logger.InfoColorf(logger.BrightRed, "[ATH FALL OFF SELL] %s: Desired profit dropped below set ATH dropoff margin: (%.2f%%)", trade.Symbol, profitMarginATH)
-			return -1, nil
-		}
+	if cs.checkAthFallOffSellCondition(profitMargin, profitMarginATH) {
+		logger.InfoColorf(logger.BrightRed, "[ATH FALL OFF SELL] %s: Desired profit dropped below set ATH dropoff margin: (%.2f%%)", trade.Symbol, profitMarginATH)
+		return -1, nil
 	}
 
-	if cs.getTimeSinceATHSell(lastAthTime, cs.MarketState) {
-		if profitMargin > 0 {
-			logger.InfoColorf(logger.BrightRed, "[TIME ATH SELL] %s: Not reached new ATH in last 30 minutes", trade.Symbol)
-			return -1, nil
-		}
+	if cs.checkTimeSinceSellCondition(profitMargin, lastAthTime) {
+		logger.InfoColorf(logger.BrightRed, "[TIME ATH SELL] %s: Not reached new ATH in last 30 minutes", trade.Symbol)
+		return -1, nil
 	}
 
-	if cs.SellOnBearish && bearishSignal {
-		if profitMargin > 0 {
-			logger.InfoColorf(logger.BrightRed, "[BEARISH SIGNAL] %s", trade.Symbol)
-			return -1, nil
-		}
+	if cs.checkBearishSignalSellCondition(profitMargin, bearishSignal) {
+		logger.InfoColorf(logger.BrightRed, "[BEARISH SIGNAL] %s", trade.Symbol)
+		return -1, nil
 	}
 
 	if currentPrice < breakevenPrice {
@@ -530,10 +710,11 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 		return 0, nil
 	}
 
-	if profitMargin > cs.DesiredProfit {
+	if cs.checkDesiredProfitSellCondition(profitMargin) {
 		logger.InfoColorf(logger.BrightBlack, "[SELL] %s: Desired profit reached (%.2f%%)", trade.Symbol, profitMargin)
 		return -1, nil
 	}
+
 	timeToMinutesParse := time.Since(lastAthTime).Minutes()
 	logger.InfoColorf(logger.BrightBlack, "[HOLD] %s: PM=%.2f%% < Desired=%.2f%% | Time since ATH %.2f m", trade.Symbol, profitMargin, cs.DesiredProfit, timeToMinutesParse)
 	return 0, nil
@@ -543,11 +724,11 @@ func (cs *CompoundStrategy) getTimeSinceATHSell(timeSinceAth time.Time, state mo
 
 	switch state {
 	case models.StronglyTrending:
-		if time.Since(timeSinceAth) > 120*time.Minute {
+		if time.Since(timeSinceAth) > 60*time.Minute {
 			return true
 		}
 	case models.Trending:
-		if time.Since(timeSinceAth) > 60*time.Minute {
+		if time.Since(timeSinceAth) > 45*time.Minute {
 			return true
 		}
 	case models.RangeBound:
@@ -564,77 +745,81 @@ func (cs *CompoundStrategy) getTimeSinceATHSell(timeSinceAth time.Time, state mo
 		}
 
 	case models.Default:
-		if time.Since(timeSinceAth) > 30*time.Minute {
+		if time.Since(timeSinceAth) > 20*time.Minute {
 			return true
 		}
 	}
 	return false
 }
 
+func (cs *CompoundStrategy) getQuickStop(trade *models.ActiveTrade, profitMargin float64) (bool, error) {
+	age := time.Since(trade.Timestamp)
+	if age >= 30*time.Minute && age <= 33*time.Minute && profitMargin <= 0 {
+		logger.InfoColorf(
+			logger.BrightRed,
+			"[QUICK-STOP] %s: after %.1f min still red (%.2f%%) → exit",
+			trade.Symbol, age.Minutes(), profitMargin,
+		)
+		return true, nil // force immediate sell
+	}
+	return false, nil
+}
+
 //nolint:funlen, a lot of indicators to calculate
 func (cs *CompoundStrategy) getIndicators(candles []models.CandleStick, pair string) (CurrentIndicators, error) {
 	rsiVal, _, err := cs.RSI.Calculate(candles, pair)
 	if err != nil {
-		logger.DebugColorf(logger.BrightRed, "Error calculating RSI: %v", err.Error())
-		return CurrentIndicators{}, err
-	}
-	macdHistogram, signalLine, macdLine, macdIndicatorSignal, err := cs.MACD.Calculate(candles)
-	if err != nil {
-		logger.DebugColorf(logger.BrightRed, "Error calculating MACD: %v", err)
-		return CurrentIndicators{}, err
+		return CurrentIndicators{}, fmt.Errorf("RSI: %w", err)
 	}
 
-	stochasticK, stochasticD, err := cs.Stochastic.Calculate(candles)
-	if err != nil {
-		logger.DebugColorf(logger.BrightRed, "Error calculating Stochastic: %v", err.Error())
-		return CurrentIndicators{}, err
+	macdHist, sigLn, macdLn, macdInd, err1 := cs.MACD.Calculate(candles)
+	if err1 != nil {
+		return CurrentIndicators{}, fmt.Errorf("MACD: %w", err1)
 	}
 
-	lowerBand, middleBand, upperBand, err := cs.BollingerBands.Calculate(candles)
-	if err != nil {
-		logger.DebugColorf(logger.BrightRed, "Error calculating Bollinger Bands: %v", err.Error())
-		return CurrentIndicators{}, err
+	stochK, stochD, err2 := cs.Stochastic.Calculate(candles)
+	if err2 != nil {
+		return CurrentIndicators{}, fmt.Errorf("Stochastic: %w", err2)
 	}
 
-	//ichimokuRes, err := cs.Ichimoku.Calculate(candles)
-	//if err != nil {
-	//	logger.DebugColorf(logger.BrightRed, "Error calculating Ichimoku: %v", err.Error())
-	//	return CurrentIndicators{}, err
-	//}
-
-	cciVal, cciSignal, err := cs.CCI.Calculate(candles, pair)
-	if err != nil {
-		logger.DebugColorf(logger.BrightRed, "Error calculating CCI: %v", err)
+	lowB, midB, upB, err3 := cs.BollingerBands.Calculate(candles)
+	if err3 != nil {
+		return CurrentIndicators{}, fmt.Errorf("Bollinger: %w", err3)
 	}
 
-	mfiVal, mfiSignal, err := cs.MFI.Calculate(candles, pair)
-	if err != nil {
-		logger.DebugColorf(logger.BrightRed, "Error calculating MFI: %v", err)
+	cciVal, cciSig, err4 := cs.CCI.Calculate(candles, pair)
+	if err4 != nil {
+		return CurrentIndicators{}, fmt.Errorf("CCI: %w", err4)
 	}
 
-	adrVal, adrSignal, err := cs.ADR.Calculate(candles, pair)
-	if err != nil {
-		logger.DebugColorf(logger.BrightRed, "Error calculating ADR: %v", err)
+	mfiVal, mfiSig, err5 := cs.MFI.Calculate(candles, pair)
+	if err5 != nil {
+		return CurrentIndicators{}, fmt.Errorf("MFI: %w", err5)
+	}
+
+	adrVal, adrSig, err6 := cs.ADR.Calculate(candles, pair)
+	if err6 != nil {
+		return CurrentIndicators{}, fmt.Errorf("ADR: %w", err6)
 	}
 
 	return CurrentIndicators{
 		RSIVal:        rsiVal,
-		Histogram:     macdHistogram,
-		SignalLine:    signalLine,
-		MacdLine:      macdLine,
-		MacdIndicator: macdIndicatorSignal,
-		StochasticK:   stochasticK,
-		StochasticD:   stochasticD,
-		LowerBand:     lowerBand,
-		MiddleBand:    middleBand,
-		UpperBand:     upperBand,
-		IchimokuRes:   algos.IchimokuResult{},
+		Histogram:     macdHist,
+		SignalLine:    sigLn,
+		MacdLine:      macdLn,
+		MacdIndicator: macdInd,
+		StochasticK:   stochK,
+		StochasticD:   stochD,
+		LowerBand:     lowB,
+		MiddleBand:    midB,
+		UpperBand:     upB,
 		CCIVal:        cciVal,
-		CCISignal:     cciSignal,
+		CCISignal:     cciSig,
 		MFIVal:        mfiVal,
-		MFiSignal:     mfiSignal,
+		MFiSignal:     mfiSig,
 		ADRVal:        adrVal,
-		ADRSignal:     adrSignal,
+		ADRSignal:     adrSig,
+		CandleSticks:  candles,
 	}, nil
 }
 

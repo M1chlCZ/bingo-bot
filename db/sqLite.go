@@ -606,3 +606,39 @@ func (s *SQLite) GetLastSellSymbol(symbol string) (time.Time, error) {
 
 	return timestampParsed, nil
 }
+
+// WasLastTradeLoss fetches the last trade's timestamp and profit/loss for a given symbol
+func (s *SQLite) WasLastTradeLoss(symbol string) (bool, time.Time, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var (
+		tsStr string
+		pnl   float64
+	)
+
+	query := `SELECT timestamp, profit_loss
+              FROM completed_trades
+              WHERE symbol = ?
+              ORDER BY timestamp DESC
+              LIMIT 1`
+
+	err := s.DB.QueryRow(query, symbol).Scan(&tsStr, &pnl)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, time.Time{}, nil // no trades yet
+		}
+		return false, time.Time{}, fmt.Errorf("failed to fetch last trade: %w", err)
+	}
+
+	if pnl >= 0 {
+		return false, time.Time{}, nil // last trade was profitable → no cool‑down
+	}
+
+	ts, err := time.Parse(time.RFC3339, tsStr)
+	if err != nil {
+		return true, time.Time{}, fmt.Errorf("invalid timestamp in DB: %w", err)
+	}
+
+	return true, ts, nil
+}

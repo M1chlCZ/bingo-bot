@@ -101,7 +101,7 @@ func (bot *MultiPairTradingBot) StartTrading() {
 		bot.stopCh = make(chan struct{})
 	}
 
-	//// Resync trades Exchange v DB
+	// Resync trades Exchange v DB
 	bot.resyncTrades()
 
 	// Perform initial pair adjustment
@@ -120,18 +120,6 @@ func (bot *MultiPairTradingBot) StartTrading() {
 	go bot.updateMarketAnalysis()
 
 	// TODO: Add manual pair trading for chosen pairs instead of auto trading
-	// Fetch all trading pairs from the exchange and add them (TODO only for manually added pairs)
-	// var wg sync.WaitGroup
-	//tradingPairs := bot.exchange.GetTradingPairs()
-	//for _, pair := range tradingPairs {
-	//	wg.Add(1)
-	//	go func(p types.TradingPair) {
-	//		defer wg.Done()
-	//		bot.AddPair(pair)
-	//		logger.Infof("Successfully added trading pair: %s", pair.Symbol)
-	//	}(*pair)
-	//}
-	//wg.Wait()
 	utils.PrintMemStats()
 	logger.Infof("Trading pairs initialized. Starting trading loops...")
 
@@ -227,7 +215,7 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional
 		}
 
 		if quoteBalance < minBuyAbsolute {
-			logger.Infof("Skipping BUY for %s: Insufficient USDT balance. Need %.4f Have %.4f", pair, minBuyAbsolute, quoteBalance)
+			logger.Infof("Skipping BUY for %s: Insufficient USDC balance. Need %.4f Have %.4f", pair, minBuyAbsolute, quoteBalance)
 			return 0
 		}
 
@@ -266,7 +254,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			if bot.analysisRunning {
 				// slows down the trading loop
 				// so there is place for analysis to finish
-				time.Sleep(1 * time.Second)
+				time.Sleep(5 * time.Second)
 			}
 			strg, hasStrategy := bot.pairStrategies.Load(pair.Symbol)
 			anls, hasAnalysis := bot.analysisData.Load(pair.Symbol)
@@ -288,12 +276,6 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				continue
 			}
 
-			//isActiveTrade, err := db2.SQLiteDB.IsCurrentlyActiveTrade(pair.Symbol)
-			//if err != nil {
-			//	logger.Errorf("Error checking active trade for %s: %v", pair.Symbol, err)
-			//	continue
-			//}
-
 			// Fetch candles
 			candles, err := bot.exchange.FetchCandles(pair.Symbol, strategy.GetCandleInterval(), 1000, false)
 			if err != nil {
@@ -308,7 +290,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			isUptrend := bot.marketAnalyzer.IsUptrend(candles)
 
 			// Calculate signal
-			sngl, err := strategy.Calculate(candles, pair.Symbol, analys.MarketState, bot.config.PendingBuyCoolDown)
+			tradeSignal, err := strategy.Calculate(candles, pair.Symbol, analys.MarketState, bot.config.PendingBuyCoolDown)
 			if err != nil {
 				logger.Errorf("Error calculating signal for %s: %v", pair.Symbol, err)
 				continue
@@ -316,14 +298,14 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 
 			// If stopAllBuys is set, force a SELL all to QUOTE BALANCE
 			if bot.stopAllBuys {
-				sngl = -2
+				tradeSignal = -2
 			}
 
-			if sngl == 0 {
+			if tradeSignal == 0 {
 				// No action required for HOLD signal
 				continue
 			}
-			logger.Infof("Signal calculated for %s (%d)", pair.Symbol, sngl)
+			logger.Infof("Signal calculated for %s (%d)", pair.Symbol, tradeSignal)
 
 			// Fetch balances
 			quoteBalance, err := bot.exchange.GetBalance(pair.QuoteAsset)
@@ -348,13 +330,13 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			currentPrice := candles[len(candles)-1].Close
 
 			// Determine trade size
-			tradeAmount := bot.calculateTradeAmountAdvance(sngl, pair.MinNotional, quoteBalance, baseBalance, pair.Symbol, analys.ATR, analys.ADX)
+			tradeAmount := bot.calculateTradeAmountAdvance(tradeSignal, pair.MinNotional, quoteBalance, baseBalance, pair.Symbol, analys.ATR, analys.ADX)
 			if tradeAmount == 0 {
 				continue
 			}
 
 			// Execute trade based on signal
-			if sngl > 0 { // BUY
+			if tradeSignal > 0 { // BUY
 				if !bot.isMarketStateEnabled(analys.MarketState) {
 					logger.Infof("Skipping BUY for %s: %s market detected.", pair.Symbol, analys.MarketState.String())
 					continue
@@ -376,7 +358,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				//	logger.Errorf("Error fetching today's active trades count: %v", err)
 				//	continue
 				//}
-				//if analys.MarketState != models.StronglyTrending && analys.MarketState != models.Trending {
+				//if analys.MarketState != models.StronglyTrending && analys.MarketState != models.Trending  {
 				//	logger.Infof("Today's trade count: %d | Total active trade count %d", todayTradeCount, activeTradesTotal)
 				//	if activeTradesTotal >= bot.config.MaxTotalTrades || todayTradeCount >= bot.config.MaxDailyTrades {
 				//		logger.InfoColorf(logger.Yellow, "Maximum daily trades reached. Skipping trade.")
@@ -391,13 +373,12 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 					pair.Symbol, tradeAmount/currentPrice, currentPrice, quoteBalance)
 
 				if !bot.handleBuy(pair, strategy, tradeAmount/currentPrice, currentPrice, quoteBalance) {
-					// logger.Errorf("Error handling BUY for %s", pair.Symbol)
 					return
 				}
 			}
-			if sngl < 0 { // SELL
+			if tradeSignal < 0 { // SELL
 				// Check if the market is in an uptrend before selling
-				if isUptrend && sngl != -2 { // sngl == 2 > panic sell
+				if isUptrend && tradeSignal != -2 { // tradeSignal == -2 > panic sell
 					logger.InfoColorf(logger.BrightBlack, "UPTREND signal for %s, cancelling sell", pair.Symbol)
 					continue
 				}
@@ -416,11 +397,10 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 
 func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, strategy interfaces.Strategy, tradeAmount, currentPrice, quoteBalance float64) bool {
 	if tradeAmount*currentPrice < pair.MinNotional {
-		// logger.Infof("BUY amount too small for %s. Adjusting to minimum notional.", pair.Symbol)
 		tradeAmount = pair.MinNotional
 
 		if tradeAmount > quoteBalance {
-			logger.Infof("Skipping BUY for %s: Insufficient USDT balance. Need %.4f Have %.4f", pair.Symbol, tradeAmount, quoteBalance)
+			logger.Infof("Skipping BUY for %s: Insufficient USDC balance. Need %.4f Have %.4f", pair.Symbol, tradeAmount, quoteBalance)
 			return false
 		}
 	}
@@ -470,7 +450,6 @@ func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, strategy int
 //nolint:funlen, its okay
 func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount, currentPrice, baseBalance float64) bool {
 	if tradeAmount*currentPrice < pair.MinNotional {
-		// logger.Infof("SELL amount too small for %s. Adjusting to minimum notional.", pair.Symbol)
 		tradeAmount = pair.MinNotional / currentPrice
 
 		if tradeAmount > baseBalance {

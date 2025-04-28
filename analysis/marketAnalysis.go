@@ -25,13 +25,13 @@ type MarketAnalyzer struct {
 	EMAPeriods []int `json:"emaPeriods" validate:"required"` // Periods for EMA calculation
 
 	// Optional Indicators (MFI, CCI)
-	MFIPeriod     int     `json:"mfiPeriod"`
-	MFIOverbought float64 `json:"mfiOverbought"`
-	MFIOversold   float64 `json:"mfiOversold"`
+	MFIPeriod     int     `json:"mfiPeriod" validate:"omitempty,gt=0"`
+	MFIOverbought float64 `json:"mfiOverbought" validate:"omitempty,gt=0"`
+	MFIOversold   float64 `json:"mfiOversold" validate:"omitempty,lt=100"`
 
-	CCIPeriod     int     `json:"cciPeriod"`
-	CCIOverbought float64 `json:"cciOverbought"`
-	CCIOversold   float64 `json:"cciOversold"`
+	CCIPeriod     int     `json:"cciPeriod" validate:"omitempty,gt=0"`
+	CCIOverbought float64 `json:"cciOverbought" validate:"omitempty,gt=0"`
+	CCIOversold   float64 `json:"cciOversold" validate:"omitempty,lt=0"`
 }
 
 var mfiAlgo *algos.MFIStrategy
@@ -806,7 +806,7 @@ func (ma *MarketAnalyzer) detectTrendTransitions(candles []models.CandleStick, a
 	}
 
 	// Check for emerging trends
-	if ma.isTrendEmerging(candles, adx) { // here its missing implementation
+	if ma.isTrendEmerging(candles, adx) {
 		return models.Transitional
 	}
 
