@@ -252,7 +252,7 @@ func (b *BinanceClient) IsTickerTooNew(symbol string) (bool, error) {
 		logger.Debugf("Earliest known trading time for %s: %v\n", symbol, firstTradeTime)
 
 		// For a 7-day threshold:
-		if time.Since(firstTradeTime) < 14*24*time.Hour {
+		if time.Since(firstTradeTime) < 7*24*time.Hour {
 			logger.Debugf("%s is newer than 1 week—skipping.\n", symbol)
 			return Enough{IsEnough: false}, nil
 		}
@@ -272,7 +272,7 @@ func (b *BinanceClient) IsTickerTooNew(symbol string) (bool, error) {
 	return t.IsEnough, nil
 }
 
-	// GetCurrentPrice fetches the current price for a given symbol
+// GetCurrentPrice fetches the current price for a given symbol
 func (b *BinanceClient) GetCurrentPrice(symbol string) (float64, error) {
 	// Fetch the price from the Binance API
 	type Price struct {
