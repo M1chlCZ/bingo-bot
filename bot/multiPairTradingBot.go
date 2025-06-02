@@ -251,10 +251,16 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 
 		case <-tradeTicker.C:
 			// Fetch strategy and market analysis for the pair
-			if bot.analysisRunning {
+			active, err := db2.SQLiteDB.IsCurrentlyActiveTrade(pair.Symbol)
+			if err != nil {
+				logger.Errorf("Error checking active trade for %s: %v", pair.Symbol, err)
+				continue
+			}
+			if bot.analysisRunning && !active {
 				// slows down the trading loop
 				// so there is place for analysis to finish
-				time.Sleep(5 * time.Second)
+				logger.Debugf("Analysis is running, skipping trade cycle for %s", pair.Symbol)
+				continue
 			}
 			strg, hasStrategy := bot.pairStrategies.Load(pair.Symbol)
 			anls, hasAnalysis := bot.analysisData.Load(pair.Symbol)
@@ -341,30 +347,25 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 					logger.Infof("Skipping BUY for %s: %s market detected.", pair.Symbol, analys.MarketState.String())
 					continue
 				}
-				active, err := db2.SQLiteDB.IsCurrentlyActiveTrade(pair.Symbol)
-				if err != nil {
-					logger.Errorf("Error checking active trade for %s: %v", pair.Symbol, err)
-					continue
-				}
 
 				//Prevent overtrading
-				//activeTradesTotal, err := db2.SQLiteDB.GetActiveTradesCount()
-				//if err != nil {
-				//	logger.Errorf("Error fetching active trades count: %v", err)
-				//	continue
-				//}
-				//todayTradeCount, err := db2.SQLiteDB.GetTodaysTradeCount()
-				//if err != nil {
-				//	logger.Errorf("Error fetching today's active trades count: %v", err)
-				//	continue
-				//}
-				//if analys.MarketState != models.StronglyTrending && analys.MarketState != models.Trending  {
-				//	logger.Infof("Today's trade count: %d | Total active trade count %d", todayTradeCount, activeTradesTotal)
-				//	if activeTradesTotal >= bot.config.MaxTotalTrades || todayTradeCount >= bot.config.MaxDailyTrades {
-				//		logger.InfoColorf(logger.Yellow, "Maximum daily trades reached. Skipping trade.")
-				//		continue
-				//	}
-				//}
+				activeTradesTotal, err := db2.SQLiteDB.GetActiveTradesCount()
+				if err != nil {
+					logger.Errorf("Error fetching active trades count: %v", err)
+					continue
+				}
+				todayTradeCount, err := db2.SQLiteDB.GetTodaysTradeCount()
+				if err != nil {
+					logger.Errorf("Error fetching today's active trades count: %v", err)
+					continue
+				}
+				if analys.MarketState != models.StronglyTrending && analys.MarketState != models.Trending {
+					logger.Infof("Today's trade count: %d | Total active trade count %d", todayTradeCount, activeTradesTotal)
+					if activeTradesTotal >= bot.config.MaxTotalTrades || todayTradeCount >= bot.config.MaxDailyTrades {
+						logger.InfoColorf(logger.Yellow, "Maximum daily trades reached. Skipping trade.")
+						continue
+					}
+				}
 				if active {
 					logger.Debugf("Skipping BUY for %s: Active trade exists.", pair.Symbol)
 					continue
@@ -386,7 +387,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 					pair.Symbol, tradeAmount, currentPrice, baseBalance)
 				if !bot.handleSell(pair, tradeAmount, currentPrice, baseBalance) {
 					logger.Errorf("Error handling SELL for %s", pair.Symbol)
-					return
+					continue
 				}
 			} else {
 				logger.Debugf("UPTREND signal for %s, cancelling sell", pair.Symbol)
@@ -610,15 +611,15 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 			logger.Errorf("Error fetching candles for %s | Sleeping for 3 minutes", market.Symbol)
 			continue // Skip this market
 		}
-		isOkay, err := bot.exchange.IsTickerTooNew(market.Symbol)
-		if err != nil {
-			logger.Errorf("Error checking if ticker is too new for %s: %v", market.Symbol, err)
-			continue
-		}
-		if !isOkay {
-			logger.Infof("Skipping trading pair: %s Too new for trading", market.Symbol)
-			continue
-		}
+		//isOkay, err := bot.exchange.IsTickerTooNew(market.Symbol)
+		//if err != nil {
+		//	logger.Errorf("Error checking if ticker is too new for %s: %v", market.Symbol, err)
+		//	continue
+		//}
+		//if !isOkay {
+		//	logger.Infof("Skipping trading pair: %s Too new for trading", market.Symbol)
+		//	continue
+		//}
 		// Analyze the market using ATR and ADX
 		marketState, atr, adx := bot.marketAnalyzer.AnalyzeMarket(candles)
 		analysisData[market.Symbol] = models.AnalysisData{
