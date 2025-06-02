@@ -19,8 +19,8 @@ var (
 			CandleInterval: "4h",
 
 			RiskRewardThreshold:       0.6,
-			DesiredProfit:             1.6,
-			HighestPriceFallOffMargin: 1.0,
+			DesiredProfit:             1.8,
+			HighestPriceFallOffMargin: 0.75,
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 
@@ -43,9 +43,9 @@ var (
 			MarketState:    models.Chaotic,
 			CandleInterval: "1h",
 
-			RiskRewardThreshold:       0.9,
-			DesiredProfit:             1.2,
-			HighestPriceFallOffMargin: 0.6,
+			RiskRewardThreshold:       1.05,
+			DesiredProfit:             1.5,
+			HighestPriceFallOffMargin: 0.75,
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 
@@ -70,14 +70,14 @@ var (
 
 			RiskRewardThreshold:       1.1,
 			DesiredProfit:             4.0,
-			HighestPriceFallOffMargin: 1.0,
+			HighestPriceFallOffMargin: 0.75,
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 
-			ADR:            &algos.ADRStrategy{Period: 14, Multiplier: 1.2},
-			RSI:            &algos.RSIStrategy{Period: 14, Overbought: 70, Oversold: 40},
-			MACD:           &algos.MACDStrategy{FastPeriod: 8, SlowPeriod: 21, SignalPeriod: 5},
-			BollingerBands: &algos.BollingerBands{Period: 20, Width: 2.2},
+			ADR:            &algos.ADRStrategy{Period: 14, Multiplier: 1.5},
+			RSI:            &algos.RSIStrategy{Period: 14, Overbought: 70, Oversold: 30},
+			MACD:           &algos.MACDStrategy{FastPeriod: 10, SlowPeriod: 24, SignalPeriod: 5},
+			BollingerBands: &algos.BollingerBands{Period: 26, Width: 2.2},
 			Stochastic:     &algos.StochasticOscillator{Period: 14, DPeriod: 3, Overbought: 80, Oversold: 20},
 			Ichimoku:       &algos.IchimokuStrategy{ConversionPeriod: 9, BasePeriod: 26, SpanBPeriod: 52},
 			CCI:            &algos.CCIStrategy{Period: 20, Overbought: 100, Oversold: -100},
@@ -94,8 +94,8 @@ var (
 			CandleInterval: "4h",
 
 			RiskRewardThreshold:       0.7,
-			DesiredProfit:             1.5,
-			HighestPriceFallOffMargin: 1.0,
+			DesiredProfit:             2.25,
+			HighestPriceFallOffMargin: 0.75,
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 
@@ -118,16 +118,16 @@ var (
 			MarketState:    models.StronglyTrending,
 			CandleInterval: "4h",
 
-			RiskRewardThreshold:       1.3,
+			RiskRewardThreshold:       1.1,
 			DesiredProfit:             6.0,
-			HighestPriceFallOffMargin: 1.0,
+			HighestPriceFallOffMargin: 0.75,
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 
-			ADR:            &algos.ADRStrategy{Period: 7, Multiplier: 1.2},
-			RSI:            &algos.RSIStrategy{Period: 14, Overbought: 70, Oversold: 40},
-			MACD:           &algos.MACDStrategy{FastPeriod: 5, SlowPeriod: 21, SignalPeriod: 4},
-			BollingerBands: &algos.BollingerBands{Period: 21, Width: 2.3},
+			ADR:            &algos.ADRStrategy{Period: 14, Multiplier: 1.2},
+			RSI:            &algos.RSIStrategy{Period: 14, Overbought: 72, Oversold: 35},
+			MACD:           &algos.MACDStrategy{FastPeriod: 8, SlowPeriod: 20, SignalPeriod: 4},
+			BollingerBands: &algos.BollingerBands{Period: 34, Width: 2.3},
 			Stochastic:     &algos.StochasticOscillator{Period: 14, DPeriod: 3, Overbought: 80, Oversold: 20},
 			Ichimoku:       &algos.IchimokuStrategy{ConversionPeriod: 9, BasePeriod: 26, SpanBPeriod: 52},
 			CCI:            &algos.CCIStrategy{Period: 20, Overbought: 150, Oversold: -150},
@@ -143,9 +143,9 @@ var (
 			MarketState:    models.Transitional,
 			CandleInterval: "4h",
 
-			RiskRewardThreshold:       0.8,
-			DesiredProfit:             2.0,
-			HighestPriceFallOffMargin: 1.0,
+			RiskRewardThreshold:       1.2,
+			DesiredProfit:             1.8,
+			HighestPriceFallOffMargin: 0.75,
 			FeeRate:                   0.0009,
 			SellOnBearish:             false,
 

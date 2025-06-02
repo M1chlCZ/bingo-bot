@@ -54,7 +54,7 @@ func DefaultMultiTradingConfig() MultiTrading {
 		IncludedBaseMarkets:  []string{"USDC"},
 
 		TradingLoopInterval:  15 * time.Second,
-		AnalysisLoopInterval: 20 * time.Minute,
+		AnalysisLoopInterval: 120 * time.Minute,
 
 		ThresholdStartTrading: 0,
 		ThresholdStopTrading:  0,

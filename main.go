@@ -64,7 +64,10 @@ func main() {
 	if err != nil {
 		errors.LogFatal(err, "Failed to initialize database")
 	}
-
+	err = sqlite.SQLiteDB.RenameAllSymbolsUSDTtoUSDC()
+	if err != nil {
+		errors.LogFatal(err, "Failed to rename symbols in database")
+	}
 	// Initialize secure credentials
 	err = client.InitSecureCredentials(
 		os.Getenv("BINANCE_API_KEY"),
