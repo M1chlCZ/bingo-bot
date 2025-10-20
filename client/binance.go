@@ -3,6 +3,13 @@ package client
 import (
 	"context"
 	"fmt"
+	"log"
+	"math"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/M1chlCZ/bingo-bot/audit"
 	"github.com/M1chlCZ/bingo-bot/errors"
 	"github.com/M1chlCZ/bingo-bot/interfaces"
@@ -10,15 +17,8 @@ import (
 	"github.com/M1chlCZ/bingo-bot/models"
 	"github.com/M1chlCZ/bingo-bot/validation"
 	"github.com/adshao/go-binance/v2"
-	"log"
-	"math"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 )
 
-// BinanceClient implements the Exchange interface
 type BinanceClient struct {
 	client      *binance.Client
 	pairs       map[string]*models.TradingPair
@@ -26,44 +26,37 @@ type BinanceClient struct {
 	candleCache map[string][]models.CandleStick
 	cacheMutex  sync.RWMutex
 
-	// Fields for rate limiting
 	requestsMu   sync.Mutex
 	requestTimes []time.Time
 	maxRequests  int
 	interval     time.Duration
 
-	// Fields for priority queue approach
 	highPriorityQueue chan BinanceRequest
 	normalQueue       chan BinanceRequest
 
-	// Worker fields
 	workerStarted bool
 	workerDone    chan struct{}
 	workerOnce    sync.Once
 }
 
 func (b *BinanceClient) CreateOrder(symbol, orderType, side string, amount string) (float64, error) {
-	//TODO implement me
+
 	panic("implement me")
 }
 
-// BinanceRequest is our encapsulation of a single Binance operation
 type BinanceRequest struct {
-	// The function that actually does the work (place order, fetch data, etc.)
 	Do func() (any, error)
-	// Priority = true => goes to highPriorityQueue
+
 	Priority bool
-	// The channel to send back the result
+
 	resultChan chan resultWrapper
 }
 
-// resultWrapper carries the returned any plus error
 type resultWrapper struct {
 	data any
 	err  error
 }
 
-// NewBinanceClient creates a new Binance client instance
 func NewBinanceClient(apiKey, apiSecret string) (interfaces.ExchangeClient, error) {
 	client := binance.NewClient(apiKey, apiSecret)
 	logger.Info("Started trading using Binance")
@@ -77,7 +70,7 @@ func NewBinanceClient(apiKey, apiSecret string) (interfaces.ExchangeClient, erro
 		normalQueue:       make(chan BinanceRequest, 600),
 		workerDone:        make(chan struct{}),
 	}
-	// Start the worker goroutine
+
 	b.startWorker()
 	b.StartQueueMonitor()
 
@@ -101,7 +94,6 @@ func (b *BinanceClient) requestWorker() {
 			req = <-b.normalQueue
 		}
 
-		// If the request is nil, channels might be closed -> exit worker
 		if req.Do == nil && req.resultChan == nil {
 			logger.Infof("[Worker] Received nil request; shutting down?")
 			return
@@ -113,23 +105,20 @@ func (b *BinanceClient) requestWorker() {
 	}
 }
 
-// enqueueRequest is used internally to place a request into one of the queues
 func (b *BinanceClient) enqueueRequest(doFn func() (interface{}, error), priority bool) (interface{}, error) {
-	// Prepare the request object
+
 	req := BinanceRequest{
 		Do:         doFn,
 		Priority:   priority,
 		resultChan: make(chan resultWrapper, 1),
 	}
 
-	// push into queue
 	if priority {
 		b.highPriorityQueue <- req
 	} else {
 		b.normalQueue <- req
 	}
 
-	// Wait for result
 	r := <-req.resultChan
 	return r.data, r.err
 }
@@ -145,7 +134,7 @@ func (b *BinanceClient) StartQueueMonitor() {
 				fmt.Println("Stopping queue monitor")
 				return
 			case <-ticker.C:
-				// Safely read channel lengths
+
 				hpLen := len(b.highPriorityQueue)
 				normalLen := len(b.normalQueue)
 
@@ -155,24 +144,18 @@ func (b *BinanceClient) StartQueueMonitor() {
 	}()
 }
 
-// ==================== Public Methods Implementation ==================== //
-
 func (b *BinanceClient) GetTradingPairs() map[string]*models.TradingPair {
 	return b.pairs
 }
 
-// AddTradingPair adds a new trading pair to monitor
-//
-//nolint:gocognit, funlen, gocyclo
 func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
 	doFunc := func() (any, error) {
-		// Fetch exchange info for the trading pair
+
 		info, err := b.client.NewExchangeInfoService().Do(context.Background())
 		if err != nil {
 			return nil, errors.WrapWithType(err, errors.ErrNetworkError, fmt.Sprintf("failed to get exchange info for %s", pair.Symbol))
 		}
 
-		// Loop through symbols to find the matching one
 		var symbolFound bool
 		for _, symbol := range info.Symbols {
 			if symbol.Symbol == pair.Symbol {
@@ -182,7 +165,6 @@ func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
 				pair.PricePrecision = symbol.QuotePrecision
 				pair.QtyPrecision = symbol.BaseAssetPrecision
 
-				// Parse filters to extract trading rules
 				for _, filter := range symbol.Filters {
 					if filter["filterType"] == "NOTIONAL" {
 						minNotionalStr, ok := filter["minNotional"].(string)
@@ -196,7 +178,6 @@ func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
 					}
 				}
 
-				// Safely add the pair to the map
 				b.pairsMutex.Lock()
 				b.pairs[pair.Symbol] = &pair
 				b.pairsMutex.Unlock()
@@ -218,12 +199,10 @@ func (b *BinanceClient) AddTradingPair(pair models.TradingPair) error {
 		return err
 	}
 
-	// Not used
 	_ = data
 	return nil
 }
 
-// IsTickerTooNew checks if the ticker is too new to trade
 func (b *BinanceClient) IsTickerTooNew(symbol string) (bool, error) {
 
 	type Enough struct {
@@ -232,8 +211,7 @@ func (b *BinanceClient) IsTickerTooNew(symbol string) (bool, error) {
 	doFunc := func() (any, error) {
 		klines, err := b.client.NewKlinesService().
 			Symbol(symbol).
-			Interval("1d").
-			Limit(1).
+			Interval("1h").
 			StartTime(0).
 			Do(context.Background())
 		if err != nil {
@@ -241,23 +219,16 @@ func (b *BinanceClient) IsTickerTooNew(symbol string) (bool, error) {
 		}
 
 		if len(klines) == 0 {
-			// Means Binance has no data for this symbol—possibly newly listed
+
 			logger.Debugf("%s has no historical data.\n", symbol)
 			return Enough{IsEnough: false}, nil
 		}
 
-		// The earliest bar is klines[0]
-		firstTradeTime := time.Unix(0, klines[0].OpenTime*int64(time.Millisecond))
-
-		logger.Debugf("Earliest known trading time for %s: %v\n", symbol, firstTradeTime)
-
-		// For a 7-day threshold:
-		if time.Since(firstTradeTime) < 7*24*time.Hour {
-			logger.Debugf("%s is newer than 1 week—skipping.\n", symbol)
+		if len(klines) < 21 {
+			logger.Debugf("%s has less than 21 candles.\n", symbol)
 			return Enough{IsEnough: false}, nil
 		}
 
-		logger.Debugf("%s is older than 1 week—OK to trade.\n", symbol)
 		return Enough{IsEnough: true}, nil
 	}
 
@@ -272,9 +243,8 @@ func (b *BinanceClient) IsTickerTooNew(symbol string) (bool, error) {
 	return t.IsEnough, nil
 }
 
-// GetCurrentPrice fetches the current price for a given symbol
 func (b *BinanceClient) GetCurrentPrice(symbol string) (float64, error) {
-	// Fetch the price from the Binance API
+
 	type Price struct {
 		Value float64 `json:"price"`
 	}
@@ -288,7 +258,6 @@ func (b *BinanceClient) GetCurrentPrice(symbol string) (float64, error) {
 			return Price{Value: 0}, errors.NewWithType(errors.ErrNotFound, fmt.Sprintf("no price data returned for symbol %s", symbol))
 		}
 
-		// Parse the price as a float
 		price, err := strconv.ParseFloat(prices[0].Price, 64)
 		if err != nil {
 			return Price{Value: 0}, errors.WrapWithType(err, errors.ErrInvalidInput, fmt.Sprintf("failed to parse price for %s", symbol))
@@ -309,9 +278,8 @@ func (b *BinanceClient) GetCurrentPrice(symbol string) (float64, error) {
 	return pv.Value, nil
 }
 
-// FetchCandles implements the Exchange interface
 func (b *BinanceClient) FetchCandles(symbol, interval string, limit int, priority bool) ([]models.CandleStick, error) {
-	// Validate input parameters
+
 	if err := validation.ValidateSymbol(symbol); err != nil {
 		return nil, errors.WrapWithType(err, errors.ErrInvalidInput, fmt.Sprintf("invalid symbol: %s", symbol))
 	}
@@ -373,12 +341,10 @@ func (b *BinanceClient) FetchCandles(symbol, interval string, limit int, priorit
 	return candles, nil
 }
 
-// GetBalance implements the Exchange interface
 func (b *BinanceClient) GetBalance(asset string) (float64, error) {
-	// Audit log the attempt
+
 	audit.LogAccess("client.BinanceClient", "GetBalance", asset, true, "Attempting to get balance", nil)
 
-	// Validate input parameter
 	if err := validation.ValidateAsset(asset); err != nil {
 		// Audit log the validation failure
 		audit.LogAccess("client.BinanceClient", "GetBalance", asset, false, "Asset validation failed", map[string]interface{}{

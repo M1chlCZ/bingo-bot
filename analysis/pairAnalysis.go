@@ -4,7 +4,6 @@ import (
 	"github.com/M1chlCZ/bingo-bot/models"
 )
 
-// PairAnalysis holds the analysis data for a specific pair
 type PairAnalysis struct {
 	Pair        *models.TradingPair // Reference to the trading pair
 	MarketState models.MarketState  // Current market state for the pair

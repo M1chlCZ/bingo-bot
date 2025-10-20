@@ -20,16 +20,14 @@ func (m *MarketStateStrategy) IsZero() bool {
 
 func (m *MarketStateStrategy) Validate() error {
 	if !m.Enabled {
-		// When not enabled, no need to validate the strategy
+
 		return nil
 	}
 
-	// If enabled, then ensure Strategy is not nil and valid
 	if m.Strategy == nil {
 		return errors.New("strategy is required when Enabled is true")
 	}
 
-	// If Strategy is not nil and you still want to validate it with validator:
 	v := validator.New()
 	return v.Struct(m)
 }
@@ -45,11 +43,10 @@ func (m *MarketStateStrategy) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	// Keep the "Enabled" from JSON
 	m.Enabled = aux.Enabled
 
 	if len(aux.Strategy) == 0 {
-		// No strategy data present, so we can return early
+
 		return nil
 	}
 

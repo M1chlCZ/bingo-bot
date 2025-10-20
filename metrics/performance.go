@@ -13,9 +13,8 @@ import (
 	"github.com/M1chlCZ/bingo-bot/logger"
 )
 
-// calculatePerformance calculates the performance metrics by fetching current prices dynamically.
 func calculatePerformance(db *sql.DB, binanceClient interfaces.ExchangeClient) (float64, float64, float64, error) {
-	// Query total profit/loss from completed trades
+
 	queryCompleted := `
 		SELECT 
 			SUM(profit_loss) as total_profit_loss
@@ -26,7 +25,6 @@ func calculatePerformance(db *sql.DB, binanceClient interfaces.ExchangeClient) (
 		return 0, 0, 0, fmt.Errorf("error calculating completed trades profit/loss: %w", err)
 	}
 
-	// Query active trades
 	queryActive := `
 		SELECT 
 			symbol, buy_price, quantity 
@@ -52,14 +50,12 @@ func calculatePerformance(db *sql.DB, binanceClient interfaces.ExchangeClient) (
 			return 0, 0, 0, fmt.Errorf("error scanning active trades: %w", err)
 		}
 
-		// Fetch the current price dynamically
 		currentPrice, err := binanceClient.GetCurrentPrice(symbol) // Assuming this function exists
 		if err != nil {
 			logger.Warnf("Failed to fetch current price for %s: %v", symbol, err)
 			continue
 		}
 
-		// Calculate profit/loss for this trade
 		diff := (currentPrice - buyPrice) * quantity
 		if diff > 0 {
 			unrealizedProfit += diff
@@ -81,14 +77,13 @@ func MonitorPerformance(binanceClient interfaces.ExchangeClient) {
 	for {
 		select {
 		case <-ticker.C:
-			// Fetch performance metrics
+
 			totalProfitLoss, unrealizedProfit, unrealizedLoss, err := calculatePerformance(db2.SQLiteDB.DB, binanceClient)
 			if err != nil {
 				logger.Errorf("Failed to calculate performance: %v", err)
 				continue
 			}
 
-			// Create a new metric entry
 			metric := models.PerformanceMetrics{
 				Timestamp:        time.Now(),
 				TotalProfitLoss:  totalProfitLoss,
@@ -96,12 +91,10 @@ func MonitorPerformance(binanceClient interfaces.ExchangeClient) {
 				UnrealizedLoss:   unrealizedLoss,
 			}
 
-			// Append to CSV file
 			if err := utils.AppendMetricsToCSV("/app/data/metrics.csv", metric); err != nil {
 				logger.Errorf("Failed to append metrics to CSV: %v", err)
 			}
 
-			// Log the performance summary
 			logger.Infof("\n")
 			logger.Infof("=========================================")
 			logger.Infof("Performance Summary (Hourly):")

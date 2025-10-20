@@ -84,7 +84,7 @@ issues:
 2. **Line-specific exclusions** in code:
 
 ```go
-//nolint:linter1,linter2
+ 
 func someFunction() {
     // Code that would trigger linting errors
 }

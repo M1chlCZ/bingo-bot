@@ -28,7 +28,6 @@ type SQLite struct {
 
 var SQLiteDB SQLite
 
-// InitDB initializes the SQLite database
 func InitDB() error {
 	dbPath := "/app/data/trades.db" // Adjusted to match the Docker mount
 

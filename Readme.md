@@ -90,7 +90,7 @@ You can find the default strategies in the `./strategies/` folder. To add your o
 type MyCustomStrategy struct {}
 
 func (self *MyCustomStrategy) Calculate(candles []models.CandleStick, pair string, trend bool) (int, error) {
-    // Custom logic here
+ 
     return 0, nil
 }
 ```

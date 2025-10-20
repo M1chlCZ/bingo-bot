@@ -11,7 +11,6 @@ type IchimokuStrategy struct {
 	SpanBPeriod      int `json:"spanBPeriod"`
 }
 
-// IchimokuResult holds computed values for interpretation
 type IchimokuResult struct {
 	Tenkan       float64
 	Kijun        float64
@@ -32,12 +31,9 @@ func (i *IchimokuStrategy) Calculate(candles []models.CandleStick) (IchimokuResu
 	kijun := midpoint(candles[len(candles)-i.BasePeriod:])
 	spanA := (tenkan + kijun) / 2.0
 
-	// SpanB is midpoint of last 52 periods (standard setting)
 	spanB := midpoint(candles[len(candles)-i.SpanBPeriod:])
 	currentPrice := candles[len(candles)-1].Close
 
-	// Chikou Span (lagging line) is usually price shifted back 26 periods
-	// Check we have data:
 	chikouIndex := len(candles) - 1 - i.BasePeriod
 	var chikou float64
 	if chikouIndex >= 0 {
@@ -46,10 +42,6 @@ func (i *IchimokuStrategy) Calculate(candles []models.CandleStick) (IchimokuResu
 		chikou = currentPrice // fallback if not enough data
 	}
 
-	// Interpret the signals:
-	// Price above cloud (above both SpanA and SpanB) and Tenkan > Kijun => Bullish
-	// Price below cloud and Tenkan < Kijun => Bearish
-	// Else, neutral
 	bullish := currentPrice > spanA && currentPrice > spanB && tenkan > kijun
 	bearish := currentPrice < spanA && currentPrice < spanB && tenkan < kijun
 
@@ -65,7 +57,6 @@ func (i *IchimokuStrategy) Calculate(candles []models.CandleStick) (IchimokuResu
 	}, nil
 }
 
-// midpoint finds (HighestHigh + LowestLow)/2 for a given slice of candles
 func midpoint(c []models.CandleStick) float64 {
 	high := c[0].High
 	low := c[0].Low

@@ -2,8 +2,9 @@ package algos
 
 import (
 	"fmt"
-	"github.com/M1chlCZ/bingo-bot/models"
 	"math"
+
+	"github.com/M1chlCZ/bingo-bot/models"
 )
 
 type CCIStrategy struct {
@@ -12,48 +13,55 @@ type CCIStrategy struct {
 	Oversold   float64 `json:"oversold"`
 }
 
-// Calculate CCI and return (latestCCI, signal, error).
-// signal = -1 if cci > Overbought, +1 if cci < Oversold, else 0
+// Returns (cci, signal, error) where:
+//   - signal = -1 if cci > Overbought (sell), +1 if cci < Oversold (buy), else 0 (hold).
 func (c *CCIStrategy) Calculate(candles []models.CandleStick, _ string) (float64, int, error) {
+	if c.Period < 2 {
+		return 0, 0, fmt.Errorf("CCI: period must be >= 2 (got %d)", c.Period)
+	}
 	if len(candles) < c.Period {
-		return 0, 0, fmt.Errorf("not enough data for CCI: need %d, got %d", c.Period, len(candles))
+		return 0, 0, fmt.Errorf("CCI: not enough data, need %d candles, got %d", c.Period, len(candles))
 	}
 
-	// Compute typical prices
-	typicalPrices := make([]float64, len(candles))
-	for i := 0; i < len(candles); i++ {
-		cndl := candles[i]
-		tp := (cndl.High + cndl.Low + cndl.Close) / 3.0
-		typicalPrices[i] = tp
-	}
+	start := len(candles) - c.Period
 
-	// Compute the SMA of typical prices for the last c.Period
-	var sum float64
-	startIdx := len(candles) - c.Period
-	for i := startIdx; i < len(candles); i++ {
-		sum += typicalPrices[i]
+	// 1) SMA of Typical Price over the window
+	sumTP := 0.0
+	for i := start; i < len(candles); i++ {
+		cd := candles[i]
+		sumTP += (cd.High + cd.Low + cd.Close) / 3.0
 	}
-	smaTP := sum / float64(c.Period)
+	smaTP := sumTP / float64(c.Period)
 
-	// Mean deviation
-	var meanDev float64
-	for i := startIdx; i < len(candles); i++ {
-		dev := math.Abs(typicalPrices[i] - smaTP)
-		meanDev += dev
+	// 2) Mean absolute deviation from SMA over the same window
+	meanDev := 0.0
+	for i := start; i < len(candles); i++ {
+		cd := candles[i]
+		tp := (cd.High + cd.Low + cd.Close) / 3.0
+		meanDev += math.Abs(tp - smaTP)
 	}
 	meanDev /= float64(c.Period)
 
-	if meanDev == 0 {
-		// no volatility
+	// If there is effectively no volatility, CCI is undefined; treat as neutral.
+	if meanDev == 0 || math.IsNaN(meanDev) || math.IsInf(meanDev, 0) {
 		return 0, 0, nil
 	}
 
-	cci := (typicalPrices[len(typicalPrices)-1] - smaTP) / (0.015 * meanDev)
+	// 3) Current TP and CCI
+	last := candles[len(candles)-1]
+	curTP := (last.High + last.Low + last.Close) / 3.0
 
-	if cci > c.Overbought {
-		return cci, -1, nil // Sell
-	} else if cci < c.Oversold {
-		return cci, 1, nil // Buy
+	cci := (curTP - smaTP) / (0.015 * meanDev)
+	if math.IsNaN(cci) || math.IsInf(cci, 0) {
+		return 0, 0, nil
 	}
-	return cci, 0, nil // hold
+
+	// 4) Signals
+	if cci > c.Overbought {
+		return cci, -1, nil // sell / overbought
+	}
+	if cci < c.Oversold {
+		return cci, 1, nil // buy / oversold
+	}
+	return cci, 0, nil
 }

@@ -2,8 +2,9 @@ package algos
 
 import (
 	"fmt"
-	"github.com/M1chlCZ/bingo-bot/models"
 	"math"
+
+	"github.com/M1chlCZ/bingo-bot/models"
 )
 
 type StochasticOscillator struct {
@@ -13,70 +14,116 @@ type StochasticOscillator struct {
 	DPeriod    int `json:"dPeriod"`
 }
 
-// Calculate the Stochastic Oscillator (%K and %D).
-// %K = (Current Close - Lowest Low over N) / (Highest High over N) * 100
-// %D = SMA of %K over DPeriod bars (commonly 3)
 func (so *StochasticOscillator) Calculate(candles []models.CandleStick) (k, d float64, err error) {
-	if so.DPeriod == 0 {
-		so.DPeriod = 3 // Default to 3 if not set
+	p := so.Period
+	dp := so.DPeriod
+	if dp == 0 {
+		dp = 3 // default 3 if not set
+	}
+	if p < 2 {
+		return 0, 0, fmt.Errorf("stochastic: period must be >= 2 (got %d)", p)
+	}
+	if dp < 1 {
+		return 0, 0, fmt.Errorf("stochastic: dPeriod must be >= 1 (got %d)", dp)
 	}
 
-	if len(candles) < so.Period+so.DPeriod-1 {
-		return 0, 0, fmt.Errorf("not enough data to calculate Stochastic Oscillator")
+	need := p + dp - 1
+	if len(candles) < need {
+		return 0, 0, fmt.Errorf("stochastic: not enough data (need >= %d candles, got %d)", need, len(candles))
 	}
 
-	// We'll calculate %K for each of the last (so.DPeriod) candles
-	// to get a proper SMA for %D.
-	var kValues []float64
+	start := len(candles) - need
+	end := len(candles) - 1 // inclusive
 
-	startIndex := len(candles) - so.Period - (so.DPeriod - 1)
-	endIndex := len(candles) - 1
+	type deque struct{ idx []int }
 
-	// Calculate %K for each candle needed to form a DPeriod of %K values
-	for i := startIndex; i <= endIndex; i++ {
-		// Find Highest High and Lowest Low over the last so.Period candles ending at i
-		lowIndex := i - so.Period + 1
-		if lowIndex < 0 {
-			lowIndex = 0
+	pushMax := func(dq *deque, arr []float64, i int) {
+		for len(dq.idx) > 0 && arr[dq.idx[len(dq.idx)-1]] <= arr[i] {
+			dq.idx = dq.idx[:len(dq.idx)-1]
+		}
+		dq.idx = append(dq.idx, i)
+	}
+	pushMin := func(dq *deque, arr []float64, i int) {
+		for len(dq.idx) > 0 && arr[dq.idx[len(dq.idx)-1]] >= arr[i] {
+			dq.idx = dq.idx[:len(dq.idx)-1]
+		}
+		dq.idx = append(dq.idx, i)
+	}
+	popOut := func(dq *deque, left int) {
+
+		for len(dq.idx) > 0 && dq.idx[0] < left {
+			dq.idx = dq.idx[1:]
+		}
+	}
+
+	n := len(candles)
+	highs := make([]float64, n)
+	lows := make([]float64, n)
+	closes := make([]float64, n)
+	for i := 0; i < n; i++ {
+		highs[i] = candles[i].High
+		lows[i] = candles[i].Low
+		closes[i] = candles[i].Close
+	}
+
+	var maxDQ, minDQ deque
+	kVals := make([]float64, 0, dp)
+
+	firstEnd := start + p - 1
+	for i := start; i <= firstEnd; i++ {
+		pushMax(&maxDQ, highs, i)
+		pushMin(&minDQ, lows, i)
+	}
+
+	clamp01 := func(v float64) float64 {
+		if v < 0 {
+			return 0
+		}
+		if v > 100 {
+			return 100
+		}
+		return v
+	}
+
+	for i := firstEnd; i <= end; i++ {
+		left := i - p + 1
+		popOut(&maxDQ, left)
+		popOut(&minDQ, left)
+
+		if i > firstEnd {
+			pushMax(&maxDQ, highs, i)
+			pushMin(&minDQ, lows, i)
 		}
 
-		highestHigh := -math.MaxFloat64
-		lowestLow := math.MaxFloat64
+		highest := highs[maxDQ.idx[0]]
+		lowest := lows[minDQ.idx[0]]
 
-		for j := lowIndex; j <= i; j++ {
-			if candles[j].High > highestHigh {
-				highestHigh = candles[j].High
-			}
-			if candles[j].Low < lowestLow {
-				lowestLow = candles[j].Low
-			}
-		}
-
-		currentClose := candles[i].Close
-		if highestHigh == lowestLow {
-			// Avoid division by zero if all prices are the same
-			kVal := 50.0 // If there's no range, %K is neutral
-			kValues = append(kValues, kVal)
+		var kNow float64
+		den := highest - lowest
+		if math.Abs(den) < 1e-12 {
+			kNow = 50.0 // flat range → neutral
 		} else {
-			kVal := ((currentClose - lowestLow) / (highestHigh - lowestLow)) * 100.0
-			kValues = append(kValues, kVal)
+			kNow = (closes[i] - lowest) / den * 100.0
 		}
+		kVals = append(kVals, clamp01(kNow))
 	}
 
-	// The last calculated %K is the most recent candle's %K
-	k = kValues[len(kValues)-1]
+	if len(kVals) < dp {
 
-	// Now calculate %D as the SMA of the last so.DPeriod %K values
-	if len(kValues) < so.DPeriod {
-		// Not enough %K values to form %D - return %K as %D as fallback
-		return k, k, nil
+		last := 50.0
+		if len(kVals) > 0 {
+			last = kVals[len(kVals)-1]
+		}
+		return last, last, nil
 	}
 
-	var sumK float64
-	for i := len(kValues) - so.DPeriod; i < len(kValues); i++ {
-		sumK += kValues[i]
+	k = kVals[len(kVals)-1]
+
+	sum := 0.0
+	for i := len(kVals) - dp; i < len(kVals); i++ {
+		sum += kVals[i]
 	}
-	d = sumK / float64(so.DPeriod)
+	d = clamp01(sum / float64(dp))
 
 	return k, d, nil
 }

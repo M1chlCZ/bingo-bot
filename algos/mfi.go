@@ -2,6 +2,8 @@ package algos
 
 import (
 	"fmt"
+	"math"
+
 	"github.com/M1chlCZ/bingo-bot/models"
 )
 
@@ -11,73 +13,94 @@ type MFIStrategy struct {
 	Period     int `json:"period"`
 }
 
-// Calculate returns (latestMFI, signal, error)
+// signal: -1 if MFI > Overbought, +1 if MFI < Oversold, else 0.
 func (m *MFIStrategy) Calculate(candles []models.CandleStick, _ string) (float64, int, error) {
+	if m.Period < 2 {
+		return 0, 0, fmt.Errorf("MFI: period must be >= 2 (got %d)", m.Period)
+	}
+	// Need at least Period+1 candles to form Period money-flow windows (TR-like)
 	if len(candles) < m.Period+1 {
 		return 0, 0, fmt.Errorf("not enough data for MFI: need %d, got %d", m.Period+1, len(candles))
 	}
 
-	// MoneyFlow arrays
-	posFlow := make([]float64, len(candles)-1)
-	negFlow := make([]float64, len(candles)-1)
+	// Build positive/negative raw money flow over each bar (except the very first)
+	nFlow := len(candles) - 1
+	posFlow := make([]float64, nFlow)
+	negFlow := make([]float64, nFlow)
 
 	for i := 1; i < len(candles); i++ {
-		typicalPrev := (candles[i-1].High + candles[i-1].Low + candles[i-1].Close) / 3.0
-		typicalCurr := (candles[i].High + candles[i].Low + candles[i].Close) / 3.0
-		moneyFlow := typicalCurr * candles[i].Volume
+		prev := candles[i-1]
+		curr := candles[i]
 
-		if typicalCurr > typicalPrev {
-			posFlow[i-1] = moneyFlow
+		typPrev := (prev.High + prev.Low + prev.Close) / 3.0
+		typCurr := (curr.High + curr.Low + curr.Close) / 3.0
+		rawMF := typCurr * curr.Volume
+		if rawMF < 0 || math.IsNaN(rawMF) || math.IsInf(rawMF, 0) {
+			rawMF = 0 // defensive
+		}
+
+		switch {
+		case typCurr > typPrev:
+			posFlow[i-1] = rawMF
 			negFlow[i-1] = 0
-		} else {
+		case typCurr < typPrev:
 			posFlow[i-1] = 0
-			negFlow[i-1] = moneyFlow
+			negFlow[i-1] = rawMF
+		default:
+			// equal typical price → neither positive nor negative
+			posFlow[i-1] = 0
+			negFlow[i-1] = 0
 		}
 	}
 
-	// initial sums
-	avgPosFlow := 0.0
-	avgNegFlow := 0.0
-
-	for i := 0; i < m.Period; i++ {
-		avgPosFlow += posFlow[i]
-		avgNegFlow += negFlow[i]
+	// Rolling sums over 'Period' of pos/neg flow on the posFlow/negFlow arrays.
+	// Window ends at index i, starting at i = Period-1.
+	win := m.Period
+	if nFlow < win {
+		return 0, 0, fmt.Errorf("internal: flow length %d < window %d", nFlow, win)
 	}
 
-	// MFI array
-	mfiCount := len(candles) - m.Period
-	mfiValues := make([]float64, mfiCount)
-
-	// first MFI
-	mfiValues[0] = calcMFI(avgPosFlow, avgNegFlow)
-
-	// subsequent MFI with rolling sums
-	for i := m.Period; i < len(posFlow); i++ {
-		avgPosFlow = avgPosFlow - posFlow[i-m.Period] + posFlow[i]
-		avgNegFlow = avgNegFlow - negFlow[i-m.Period] + negFlow[i]
-
-		idx := i - (m.Period - 1)
-		if idx < 0 || idx >= len(mfiValues) {
-			return 0, 0, fmt.Errorf("index error in MFI")
-		}
-		mfiValues[idx] = calcMFI(avgPosFlow, avgNegFlow)
+	sumPos, sumNeg := 0.0, 0.0
+	for i := 0; i < win; i++ {
+		sumPos += posFlow[i]
+		sumNeg += negFlow[i]
 	}
 
-	latestMFI := mfiValues[len(mfiValues)-1]
-	var signal int
+	// We only need the latest MFI, but keeping the rolling logic simple & clear.
+	latestMFI := mfiFromSums(sumPos, sumNeg)
+
+	for i := win; i < nFlow; i++ {
+		sumPos += posFlow[i] - posFlow[i-win]
+		sumNeg += negFlow[i] - negFlow[i-win]
+		latestMFI = mfiFromSums(sumPos, sumNeg)
+	}
+
+	if math.IsNaN(latestMFI) || math.IsInf(latestMFI, 0) {
+		latestMFI = 50 // neutral fallback
+	}
+
+	signal := 0
 	if latestMFI > float64(m.Overbought) {
-		signal = -1 // SELL
+		signal = -1
 	} else if latestMFI < float64(m.Oversold) {
-		signal = 1 // BUY
+		signal = 1
 	}
 
 	return latestMFI, signal, nil
 }
 
-func calcMFI(posFlow, negFlow float64) float64 {
-	if negFlow == 0 {
+// mfiFromSums computes the MFI given windowed sums of positive/negative money flow.
+func mfiFromSums(sumPos, sumNeg float64) float64 {
+	// Handle degenerate cases first
+	if sumPos == 0 && sumNeg == 0 {
+		return 50
+	}
+	if sumNeg == 0 {
 		return 100
 	}
-	moneyFlowRatio := posFlow / negFlow
-	return 100 - (100 / (1 + moneyFlowRatio))
+	if sumPos == 0 {
+		return 0
+	}
+	ratio := sumPos / sumNeg
+	return 100.0 - (100.0 / (1.0 + ratio))
 }

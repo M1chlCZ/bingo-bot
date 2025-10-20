@@ -8,24 +8,20 @@ import (
 	"time"
 )
 
-// MockExchangeClient implements the interfaces.ExchangeClient interface for backtesting purposes.
-// It simulates trading without making actual API calls by using historical data.
 type MockExchangeClient struct {
-	// Historical candle data for each symbol and interval
 	historicalData map[string]map[string][]models.CandleStick
-	// Current position in the historical data for each symbol
+
 	currentIndex map[string]int
-	// Trading pairs being tracked
+
 	tradingPairs map[string]*models.TradingPair
-	// Simulated balances for each asset
+
 	balances map[string]float64
-	// Transaction history for performance analysis
+
 	transactions []Transaction
-	// Fee rate for simulated trades (e.g., 0.001 for 0.1%)
+
 	feeRate float64
 }
 
-// Transaction represents a simulated trade for backtesting
 type Transaction struct {
 	Symbol    string
 	Side      string
@@ -35,7 +31,6 @@ type Transaction struct {
 	Fee       float64
 }
 
-// NewMockExchangeClient creates a new instance of MockExchangeClient
 func NewMockExchangeClient(initialBalances map[string]float64, feeRate float64) *MockExchangeClient {
 	if initialBalances == nil {
 		initialBalances = make(map[string]float64)
@@ -51,7 +46,6 @@ func NewMockExchangeClient(initialBalances map[string]float64, feeRate float64) 
 	}
 }
 
-// LoadHistoricalData loads historical candle data for backtesting
 func (m *MockExchangeClient) LoadHistoricalData(symbol, interval string, candles []models.CandleStick) {
 	if _, ok := m.historicalData[symbol]; !ok {
 		m.historicalData[symbol] = make(map[string][]models.CandleStick)
@@ -60,31 +54,26 @@ func (m *MockExchangeClient) LoadHistoricalData(symbol, interval string, candles
 	m.currentIndex[symbol] = 0
 }
 
-// ResetBacktest resets the backtesting state
 func (m *MockExchangeClient) ResetBacktest(initialBalances map[string]float64) {
 	m.currentIndex = make(map[string]int)
 	m.balances = initialBalances
 	m.transactions = []Transaction{}
 }
 
-// GetTransactions returns all transactions made during the backtest
 func (m *MockExchangeClient) GetTransactions() []Transaction {
 	return m.transactions
 }
 
-// AddTradingPair implements interfaces.ExchangeClient
 func (m *MockExchangeClient) AddTradingPair(pair models.TradingPair) error {
 	m.tradingPairs[pair.Symbol] = &pair
 	return nil
 }
 
-// GetCurrentPrice implements interfaces.ExchangeClient
 func (m *MockExchangeClient) GetCurrentPrice(symbol string) (float64, error) {
 	if _, ok := m.historicalData[symbol]; !ok {
 		return 0, fmt.Errorf("no historical data for symbol %s", symbol)
 	}
 
-	// Use the current candle's close price as the current price
 	for _, candles := range m.historicalData[symbol] {
 		if len(candles) == 0 {
 			continue
@@ -101,7 +90,6 @@ func (m *MockExchangeClient) GetCurrentPrice(symbol string) (float64, error) {
 	return 0, fmt.Errorf("no candle data available for %s", symbol)
 }
 
-// FetchCandles implements interfaces.ExchangeClient
 func (m *MockExchangeClient) FetchCandles(symbol, interval string, limit int, priority bool) ([]models.CandleStick, error) {
 	if _, ok := m.historicalData[symbol]; !ok {
 		return nil, fmt.Errorf("no historical data for symbol %s", symbol)
@@ -118,7 +106,6 @@ func (m *MockExchangeClient) FetchCandles(symbol, interval string, limit int, pr
 		return nil, fmt.Errorf("reached end of historical data for %s", symbol)
 	}
 
-	// Return up to 'limit' candles ending at the current index
 	start := idx - limit + 1
 	if start < 0 {
 		start = 0
@@ -127,7 +114,6 @@ func (m *MockExchangeClient) FetchCandles(symbol, interval string, limit int, pr
 	return candles[start : idx+1], nil
 }
 
-// GetBalance implements interfaces.ExchangeClient
 func (m *MockExchangeClient) GetBalance(asset string) (float64, error) {
 	balance, ok := m.balances[asset]
 	if !ok {
@@ -136,7 +122,6 @@ func (m *MockExchangeClient) GetBalance(asset string) (float64, error) {
 	return balance, nil
 }
 
-// CreateOrder implements interfaces.ExchangeClient
 func (m *MockExchangeClient) CreateOrder(symbol, orderType, side string, amount string) (float64, error) {
 	price, err := m.GetCurrentPrice(symbol)
 	if err != nil {
@@ -148,39 +133,33 @@ func (m *MockExchangeClient) CreateOrder(symbol, orderType, side string, amount 
 		return 0, err
 	}
 
-	// Extract base and quote assets from the symbol (e.g., "BTCUSDT" -> "BTC", "USDT")
 	baseAsset, quoteAsset := extractAssets(symbol)
 
-	// Calculate the total value and fee
 	totalValue := price * quantity
 	fee := totalValue * m.feeRate
 
-	// Update balances based on the trade
 	if side == "BUY" {
-		// Check if we have enough quote asset (e.g., USDT) to buy
+
 		quoteBalance, _ := m.GetBalance(quoteAsset)
 		if quoteBalance < totalValue+fee {
 			return 0, fmt.Errorf("insufficient balance of %s for buy order", quoteAsset)
 		}
 
-		// Deduct quote asset and add base asset
 		m.balances[quoteAsset] -= (totalValue + fee)
 		m.balances[baseAsset] += quantity
 	} else if side == "SELL" {
-		// Check if we have enough base asset (e.g., BTC) to sell
+
 		baseBalance, _ := m.GetBalance(baseAsset)
 		if baseBalance < quantity {
 			return 0, fmt.Errorf("insufficient balance of %s for sell order", baseAsset)
 		}
 
-		// Deduct base asset and add quote asset
 		m.balances[baseAsset] -= quantity
 		m.balances[quoteAsset] += (totalValue - fee)
 	} else {
 		return 0, fmt.Errorf("invalid order side: %s", side)
 	}
 
-	// Record the transaction
 	m.transactions = append(m.transactions, Transaction{
 		Symbol:    symbol,
 		Side:      side,
@@ -193,14 +172,12 @@ func (m *MockExchangeClient) CreateOrder(symbol, orderType, side string, amount 
 	return price, nil
 }
 
-// CreateMarketOrder implements interfaces.ExchangeClient
 func (m *MockExchangeClient) CreateMarketOrder(symbol, side, quantity string) (int64, float64, error) {
 	price, err := m.CreateOrder(symbol, "MARKET", side, quantity)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	// Return a dummy order ID and the execution price
 	return time.Now().UnixNano(), price, nil
 }
 
@@ -259,8 +236,8 @@ func (m *MockExchangeClient) FetchHistoricalCandles(symbol string, interval stri
 	for _, candle := range candles {
 		// Use Timestamp for start time comparison
 		// For end time, we can estimate it based on the interval
-		if (candle.Timestamp.After(startTime) || candle.Timestamp.Equal(startTime)) && 
-		   (candle.Timestamp.Before(endTime) || candle.Timestamp.Equal(endTime)) {
+		if (candle.Timestamp.After(startTime) || candle.Timestamp.Equal(startTime)) &&
+			(candle.Timestamp.Before(endTime) || candle.Timestamp.Equal(endTime)) {
 			filteredCandles = append(filteredCandles, candle)
 		}
 	}

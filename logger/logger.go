@@ -41,7 +41,6 @@ const (
 	FATAL
 )
 
-// LogEntry represents a structured log entry
 type LogEntry struct {
 	Timestamp string                 `json:"timestamp"`
 	Level     string                 `json:"level"`
@@ -55,21 +54,26 @@ var enableColors ColorsEnabled
 var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime)
 
 func InitLogger(logLevel *string, colorEnabled *bool) {
-	switch *logLevel {
-	case "trace":
-		SetLogLevel(TRACE)
-	case "debug":
-		SetLogLevel(DEBUG)
-	case "info":
+
+	if logLevel == nil {
 		SetLogLevel(INFO)
-	case "warn":
-		SetLogLevel(WARN)
-	case "error":
-		SetLogLevel(ERROR)
-	case "fatal":
-		SetLogLevel(FATAL)
-	default:
-		SetLogLevel(INFO)
+	} else {
+		switch *logLevel {
+		case "trace":
+			SetLogLevel(TRACE)
+		case "debug":
+			SetLogLevel(DEBUG)
+		case "info":
+			SetLogLevel(INFO)
+		case "warn":
+			SetLogLevel(WARN)
+		case "error":
+			SetLogLevel(ERROR)
+		case "fatal":
+			SetLogLevel(FATAL)
+		default:
+			SetLogLevel(INFO)
+		}
 	}
 
 	if colorEnabled == nil {
@@ -82,7 +86,6 @@ func InitLogger(logLevel *string, colorEnabled *bool) {
 	Debug("This is a debug message")
 }
 
-// LogWithFields logs a message with structured fields
 func LogWithFields(level LogLevel, msg string, fields map[string]interface{}) {
 	if level < currentLogLevel {
 		return
@@ -102,7 +105,6 @@ func LogWithFields(level LogLevel, msg string, fields map[string]interface{}) {
 	}
 }
 
-// getLevelString returns the string representation of a log level
 func getLevelString(level LogLevel) string {
 	switch level {
 	case TRACE:
@@ -134,18 +136,16 @@ func EnvOrDefaultBool(key string, def bool) bool {
 		if val == "false" || val == "0" {
 			return false
 		}
-		// otherwise treat anything else as true
+
 		return true
 	}
 	return def
 }
 
-// SetLogLevel sets the global log level
 func SetLogLevel(level LogLevel) {
 	currentLogLevel = level
 }
 
-// SetColorEnabled sets the global color enabled flag
 func SetColorEnabled(colors ColorsEnabled) {
 	enableColors = colors
 }
@@ -157,7 +157,6 @@ func colorize(color Color, s string, params ...any) string {
 	return color.String() + fmt.Sprintf(s, params...) + Reset.String()
 }
 
-// Trace logs trace-level messages
 func Trace(v ...interface{}) {
 	if currentLogLevel <= TRACE {
 		logger.SetPrefix("[TRACE] ")
@@ -165,7 +164,6 @@ func Trace(v ...interface{}) {
 	}
 }
 
-// TraceColor logs trace-level messages
 func TraceColor(color Color, v ...interface{}) {
 	if currentLogLevel <= TRACE {
 		logger.SetPrefix("[TRACE] ")
@@ -173,7 +171,6 @@ func TraceColor(color Color, v ...interface{}) {
 	}
 }
 
-// Tracef logs trace-level formatted messages
 func Tracef(format string, v ...interface{}) {
 	if currentLogLevel <= TRACE {
 		logger.SetPrefix("[TRACE] ")
@@ -181,7 +178,6 @@ func Tracef(format string, v ...interface{}) {
 	}
 }
 
-// TraceColorf logs trace-level formatted messages in color
 func TraceColorf(color Color, format string, v ...interface{}) {
 	if currentLogLevel <= TRACE {
 		logger.SetPrefix("[TRACE] ")
@@ -189,12 +185,10 @@ func TraceColorf(color Color, format string, v ...interface{}) {
 	}
 }
 
-// TraceWithFields logs trace-level messages with structured fields
 func TraceWithFields(msg string, fields map[string]interface{}) {
 	LogWithFields(TRACE, msg, fields)
 }
 
-// Debug logs debug-level messages
 func Debug(v ...interface{}) {
 	if currentLogLevel <= DEBUG {
 		logger.SetPrefix("[DEBUG] ")
@@ -202,7 +196,6 @@ func Debug(v ...interface{}) {
 	}
 }
 
-// DebugColor logs debug-level messages
 func DebugColor(color Color, v ...interface{}) {
 	if currentLogLevel <= DEBUG {
 		logger.SetPrefix("[DEBUG] ")
@@ -210,7 +203,6 @@ func DebugColor(color Color, v ...interface{}) {
 	}
 }
 
-// Debugf logs debug-level formatted messages
 func Debugf(format string, v ...interface{}) {
 	if currentLogLevel <= DEBUG {
 		logger.SetPrefix("[DEBUG] ")
@@ -218,7 +210,6 @@ func Debugf(format string, v ...interface{}) {
 	}
 }
 
-// DebugColorf logs debug-level formatted messages in color
 func DebugColorf(color Color, format string, v ...interface{}) {
 	if currentLogLevel <= DEBUG {
 		logger.SetPrefix("[DEBUG] ")
@@ -226,12 +217,10 @@ func DebugColorf(color Color, format string, v ...interface{}) {
 	}
 }
 
-// DebugWithFields logs debug-level messages with structured fields
 func DebugWithFields(msg string, fields map[string]interface{}) {
 	LogWithFields(DEBUG, msg, fields)
 }
 
-// Info logs info-level messages
 func Info(v ...interface{}) {
 	if currentLogLevel <= INFO {
 		logger.SetPrefix("[INFO] ")
@@ -239,7 +228,6 @@ func Info(v ...interface{}) {
 	}
 }
 
-// InfoColor logs info-level messages in Color
 func InfoColor(color Color, v ...interface{}) {
 	if currentLogLevel <= INFO {
 		logger.SetPrefix("[INFO] ")
@@ -247,7 +235,6 @@ func InfoColor(color Color, v ...interface{}) {
 	}
 }
 
-// Infof logs info-level formatted messages
 func Infof(format string, v ...interface{}) {
 	if currentLogLevel <= INFO {
 		logger.SetPrefix("[INFO] ")
@@ -255,7 +242,6 @@ func Infof(format string, v ...interface{}) {
 	}
 }
 
-// InfoColorf logs info-level formatted messages in Color
 func InfoColorf(color Color, format string, v ...interface{}) {
 	if currentLogLevel <= INFO {
 		logger.SetPrefix("[INFO] ")
@@ -263,12 +249,11 @@ func InfoColorf(color Color, format string, v ...interface{}) {
 	}
 }
 
-// InfoWithFields logs info-level messages with structured fields
 func InfoWithFields(msg string, fields map[string]interface{}) {
-	LogWithFields(INFO, msg, fields)
+	return
+
 }
 
-// Warn logs warning-level messages
 func Warn(v ...interface{}) {
 	if currentLogLevel <= WARN {
 		logger.SetPrefix("[WARN] ")
@@ -276,7 +261,6 @@ func Warn(v ...interface{}) {
 	}
 }
 
-// Warnf logs warning-level formatted messages
 func Warnf(format string, v ...interface{}) {
 	if currentLogLevel <= WARN {
 		logger.SetPrefix("[WARN] ")
@@ -284,12 +268,10 @@ func Warnf(format string, v ...interface{}) {
 	}
 }
 
-// WarnWithFields logs warning-level messages with structured fields
 func WarnWithFields(msg string, fields map[string]interface{}) {
 	LogWithFields(WARN, msg, fields)
 }
 
-// Error logs error-level messages
 func Error(v ...interface{}) {
 	if currentLogLevel <= ERROR {
 		logger.SetPrefix("[ERROR] ")
@@ -297,7 +279,6 @@ func Error(v ...interface{}) {
 	}
 }
 
-// Errorf logs error-level formatted messages
 func Errorf(format string, v ...interface{}) {
 	if currentLogLevel <= ERROR {
 		logger.SetPrefix("[ERROR] ")
@@ -305,12 +286,11 @@ func Errorf(format string, v ...interface{}) {
 	}
 }
 
-// ErrorWithFields logs error-level messages with structured fields
 func ErrorWithFields(msg string, fields map[string]interface{}) {
-	LogWithFields(ERROR, msg, fields)
+	return
+
 }
 
-// Fatal logs fatal-level messages and exits the program
 func Fatal(v ...interface{}) {
 	if currentLogLevel <= FATAL {
 		logger.SetPrefix("[FATAL] ")
@@ -319,7 +299,6 @@ func Fatal(v ...interface{}) {
 	}
 }
 
-// Fatalf logs fatal-level formatted messages and exits the program
 func Fatalf(format string, v ...interface{}) {
 	if currentLogLevel <= FATAL {
 		logger.SetPrefix("[FATAL] ")
@@ -328,7 +307,6 @@ func Fatalf(format string, v ...interface{}) {
 	}
 }
 
-// FatalWithFields logs fatal-level messages with structured fields and exits the program
 func FatalWithFields(msg string, fields map[string]interface{}) {
 	LogWithFields(FATAL, msg, fields)
 	os.Exit(1)

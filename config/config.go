@@ -3,14 +3,15 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
+	"time"
+
 	"github.com/M1chlCZ/bingo-bot/analysis"
 	"github.com/M1chlCZ/bingo-bot/logger"
 	"github.com/M1chlCZ/bingo-bot/models"
 	"github.com/M1chlCZ/bingo-bot/types"
 	"github.com/go-playground/validator/v10"
 	"github.com/goccy/go-json"
-	"os"
-	"time"
 )
 
 type MultiTrading struct {
@@ -42,45 +43,45 @@ func DefaultMultiTradingConfig() MultiTrading {
 	return MultiTrading{
 		AutoTrading: true,
 
-		Default:          DefaultMarketState,
-		Chaotic:          ChaoticMarketState,
-		Trending:         TrendingMarketState,
-		RangeBound:       RangeBoundMarketState,
-		Transitional:     TransitionalMarketState,
-		StronglyTrending: StronglyTrendingMarketState,
-
-		ExcludedMarkets:      []models.TradingPair{},
-		ExcludedQuoteMarkets: []string{"USDT", "USDP", "FDUSD", "TUSD", "EUR", "EURI"},
-		IncludedBaseMarkets:  []string{"USDC"},
-
-		TradingLoopInterval:  15 * time.Second,
-		AnalysisLoopInterval: 120 * time.Minute,
-
+		Default:               DefaultMarketState,
+		Chaotic:               ChaoticMarketState,
+		Trending:              TrendingMarketState,
+		RangeBound:            RangeBoundMarketState,
+		Transitional:          TransitionalMarketState,
+		StronglyTrending:      StronglyTrendingMarketState,
+		ExcludedMarkets:       []models.TradingPair{},
+		ExcludedQuoteMarkets:  []string{"USDT", "BUSD", "TUSD", "FDUSD", "USDP", "DAI", "EUR", "EURI", "GBP", "TRY", "RUB", "BRL", "UAH"},
+		IncludedBaseMarkets:   []string{"USDC"},
+		TradingLoopInterval:   15 * time.Second,
+		AnalysisLoopInterval:  30 * time.Minute,
 		ThresholdStartTrading: 0,
 		ThresholdStopTrading:  0,
-
-		PendingBuyCoolDown: 2 * time.Minute,
-		MaxDailyTrades:     40,
-		MaxTotalTrades:     40,
-
+		PendingBuyCoolDown:    75 * time.Second,
+		MaxDailyTrades:        50,
+		MaxTotalTrades:        50,
 		AnalyzerConfig: analysis.NewMarketAnalyzer(analysis.MarketAnalyzer{
-			EMAPeriods:               []int{9, 21, 55},
-			ATRPeriod:                14,
-			ADXPeriod:                14,
-			HighVolatilityThreshold:  0.035,
-			StrongTrendThreshold:     25,
-			IchimokuConversionPeriod: 9,
-			IchimokuBasePeriod:       26,
-			IchimokuSpanBPeriod:      52,
-			VolumeThreshold:          15000,
-			FractalLookback:          20,
-
-			MFIPeriod:     14,
-			MFIOverbought: 80,
-			MFIOversold:   20,
-			CCIPeriod:     20,
-			CCIOverbought: 100,
-			CCIOversold:   -100,
+			EMAPeriods:               []int{8, 21, 50},
+			ATRPeriod:                12,
+			ADXPeriod:                12,
+			HighVolatilityThreshold:  0.032,
+			StrongTrendThreshold:     22,
+			IchimokuConversionPeriod: 8,
+			IchimokuBasePeriod:       24,
+			IchimokuSpanBPeriod:      48,
+			VolumeThreshold:          12000,
+			FractalLookback:          18,
+			MFIPeriod:                12,
+			MFIOverbought:            78,
+			MFIOversold:              22,
+			CCIPeriod:                18,
+			CCIOverbought:            110,
+			CCIOversold:              -110,
+			MarketRegimePeriod:       40,
+			VolatilityPeriod:         16,
+			CorrelationPeriod:        20,
+			NoiseFilterThreshold:     0.012,
+			ConfidenceThreshold:      0.58,
+			AdaptiveLookback:         80,
 		}),
 	}
 }
@@ -104,7 +105,7 @@ func MultiTradingConfigFromJSON(filePath string) (MultiTrading, error) {
 }
 
 func (c *MultiTrading) UpdateStrategy(state models.MarketState, strategy types.MarketStateStrategy) error {
-	// Validate the market state
+
 	if state < models.Default || state > models.StronglyTrending {
 		return fmt.Errorf("invalid market state: %v", state)
 	}
@@ -174,7 +175,7 @@ func (c *MultiTrading) UpdateAnalysisLoopInterval(interval time.Duration) error 
 }
 
 func (c *MultiTrading) UpdateExcludedMarkets(markets []models.TradingPair) error {
-	// Validate each trading pair in the excluded markets
+
 	for i, market := range markets {
 		if market.Symbol == "" {
 			return fmt.Errorf("excluded market at index %d has empty symbol", i)
@@ -218,13 +219,11 @@ func validMarketState(fl validator.FieldLevel) bool {
 	return state >= 0 && state <= 5
 }
 
-// validPositiveDuration validates that a time.Duration is positive
 func validPositiveDuration(fl validator.FieldLevel) bool {
 	duration := fl.Field().Interface().(time.Duration)
 	return duration > 0
 }
 
-// validThresholds validates that ThresholdStartTrading is less than or equal to ThresholdStopTrading
 func validThresholds(sl validator.StructLevel) {
 	config := sl.Current().Interface().(MultiTrading)
 	if config.ThresholdStartTrading > config.ThresholdStopTrading && config.ThresholdStopTrading > 0 {
@@ -232,7 +231,6 @@ func validThresholds(sl validator.StructLevel) {
 	}
 }
 
-// validMaxTrades validates that MaxDailyTrades is less than or equal to MaxTotalTrades
 func validMaxTrades(sl validator.StructLevel) {
 	config := sl.Current().Interface().(MultiTrading)
 	if config.MaxDailyTrades > config.MaxTotalTrades && config.MaxTotalTrades > 0 {
@@ -243,7 +241,6 @@ func validMaxTrades(sl validator.StructLevel) {
 func (c *MultiTrading) Validate() error {
 	validate := validator.New()
 
-	// Register custom validation functions
 	if err := validate.RegisterValidation("marketStateEnum", validMarketState); err != nil {
 		return fmt.Errorf("failed to register marketStateEnum validation: %w", err)
 	}
@@ -252,7 +249,6 @@ func (c *MultiTrading) Validate() error {
 		return fmt.Errorf("failed to register min validation: %w", err)
 	}
 
-	// Register struct-level validations
 	validate.RegisterStructValidation(validThresholds, MultiTrading{})
 	validate.RegisterStructValidation(validMaxTrades, MultiTrading{})
 

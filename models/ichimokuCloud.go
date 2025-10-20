@@ -3,19 +3,18 @@ package models
 type IchimokuCloud int
 
 const (
-	Neutral IchimokuCloud = iota
-	Bullish
-	Bearish
+	NeutralIchi IchimokuCloud = iota
+	BullishIchi
+	BearishIchi
 )
 
-// String converts MarketState to a string representation
 func (i IchimokuCloud) String() string {
 	switch i {
-	case Neutral:
+	case NeutralIchi:
 		return "neutral"
-	case Bullish:
+	case BullishIchi:
 		return "bullish"
-	case Bearish:
+	case BearishIchi:
 		return "bearish"
 	default:
 		return "neutral"

@@ -2,93 +2,103 @@ package algos
 
 import (
 	"fmt"
-	"github.com/M1chlCZ/bingo-bot/models"
 	"math"
+
+	"github.com/M1chlCZ/bingo-bot/models"
 )
 
-// ATRStrategy represents a trading strategy based on the Average True Range (ATR) indicator.
 // ATR measures market volatility and can be used to set stop-loss levels or identify potential breakouts.
 type ATRStrategy struct {
 	Period     int     `json:"period"`     // The number of periods to use for ATR calculation
 	Multiplier float64 `json:"multiplier"` // Multiplier for ATR to determine significant price movements
 }
 
-// Calculate computes the ATR value and returns a signal based on price movements relative to ATR.
-// Returns:
-// - float64: The current ATR value
-// - int: Signal (-1 for sell, 0 for hold, 1 for buy)
-// - error: Any error encountered during calculation
+// ATR returns the latest Wilder ATR value for the given period.
+// Keeps the original signature but switches implementation to canonical Wilder smoothing:
+//
+// 1) TR[i] = max(H-L, |H-prevClose|, |L-prevClose|)
+// 2) ATR_seed = average(TR[0:p])
+// 3) ATR_t = (ATR_{t-1}*(p-1) + TR_t) / p
 func ATR(candles []models.CandleStick, period int) (float64, error) {
+	if period <= 0 {
+		return 0, fmt.Errorf("ATR period must be greater than zero")
+	}
+	// Need at least p+1 candles to compute p TR values (TR starts from index 1)
 	if len(candles) < period+1 {
-		return 0, fmt.Errorf("too few candles")
+		return 0, fmt.Errorf("not enough data to calculate ATR: need at least %d candles, got %d", period+1, len(candles))
 	}
-	var trSum float64
-	for i := len(candles) - period; i < len(candles); i++ {
-		high := candles[i].High
-		low := candles[i].Low
-		prevClose := candles[i-1].Close
-		tr := math.Max(high-low, math.Max(
-			math.Abs(high-prevClose),
-			math.Abs(low-prevClose)))
-		trSum += tr
+
+	// Build TR series for all consecutive pairs
+	tr := make([]float64, 0, len(candles)-1)
+	for i := 1; i < len(candles); i++ {
+		h := candles[i].High
+		l := candles[i].Low
+		pc := candles[i-1].Close
+		trueRange := math.Max(h-l, math.Max(math.Abs(h-pc), math.Abs(l-pc)))
+		tr = append(tr, trueRange)
 	}
-	return trSum / float64(period), nil
+
+	// Seed ATR as simple average of the first `period` TRs
+	sum := 0.0
+	for i := 0; i < period; i++ {
+		sum += tr[i]
+	}
+	atr := sum / float64(period)
+
+	// Wilder smoothing forward to the end
+	for i := period; i < len(tr); i++ {
+		atr = ((atr * float64(period-1)) + tr[i]) / float64(period)
+	}
+
+	return atr, nil
 }
 
-// calculateATR computes the Average True Range for the given candles and period.
-// ATR is calculated as the exponential moving average of the true range.
-// True Range is the greatest of:
-// 1. Current High - Current Low
-// 2. |Current High - Previous Close|
-// 3. |Current Low - Previous Close|
+// calculateATR computes the full Wilder ATR series (one value per candle after the seed).
+// Returns a slice aligned so that atr[0] is the first ATR after seeding, and
+// len(atr) == len(candles) - period.
 func calculateATR(candles []models.CandleStick, period int) ([]float64, error) {
 	if period <= 0 {
 		return nil, fmt.Errorf("ATR period must be greater than zero")
 	}
-
 	if len(candles) < period+1 {
 		return nil, fmt.Errorf("not enough data to calculate ATR: need at least %d candles, got %d", period+1, len(candles))
 	}
 
-	// Calculate True Range for each candle
-	trueRanges := make([]float64, len(candles)-1)
-
+	// Build TR series
+	tr := make([]float64, 0, len(candles)-1)
 	for i := 1; i < len(candles); i++ {
-		// Calculate the three differences
-		highLowDiff := candles[i].High - candles[i].Low
-		highCloseDiff := math.Abs(candles[i].High - candles[i-1].Close)
-		lowCloseDiff := math.Abs(candles[i].Low - candles[i-1].Close)
-
-		// True Range is the maximum of the three differences
-		trueRanges[i-1] = math.Max(highLowDiff, math.Max(highCloseDiff, lowCloseDiff))
+		h := candles[i].High
+		l := candles[i].Low
+		pc := candles[i-1].Close
+		trueRange := math.Max(h-l, math.Max(math.Abs(h-pc), math.Abs(l-pc)))
+		tr = append(tr, trueRange)
 	}
 
-	// Calculate ATR using simple moving average for the first period
-	if len(trueRanges) < period {
-		return nil, fmt.Errorf("not enough data to calculate initial ATR")
-	}
-
-	// Calculate the first ATR as a simple average of the first 'period' true ranges
-	firstATR := 0.0
+	// Seed ATR with SMA of first `period` TRs
+	sum := 0.0
 	for i := 0; i < period; i++ {
-		firstATR += trueRanges[i]
+		sum += tr[i]
 	}
-	firstATR /= float64(period)
+	seed := sum / float64(period)
 
-	// ATR array starts after 'period' candles of data have been processed
-	atrCount := len(candles) - period
-	atr := make([]float64, atrCount)
-	atr[0] = firstATR
+	// Allocate output: one ATR value per additional TR after the seed
+	// If there are N TR values, we produce N - period + 1 ATR values (including the seed position).
+	// To stay consistent with your original docstring, we return len == len(candles)-period.
+	atr := make([]float64, len(candles)-period)
+	atr[0] = seed
 
-	// Calculate subsequent ATR values using the smoothing formula:
-	// ATR(t) = [(ATR(t-1) * (period-1)) + TR(t)] / period
-	for i := 1; i < atrCount; i++ {
-		trIndex := i + period - 1
-		if trIndex >= len(trueRanges) {
-			return nil, fmt.Errorf("index out of range while calculating ATR")
+	// Wilder smoothing forward
+	prev := seed
+	outIdx := 1
+	for i := period; i < len(tr); i++ {
+		next := ((prev * float64(period-1)) + tr[i]) / float64(period)
+		if outIdx >= len(atr) {
+			// Should not happen, but guard anyway
+			break
 		}
-
-		atr[i] = ((atr[i-1] * float64(period-1)) + trueRanges[trIndex]) / float64(period)
+		atr[outIdx] = next
+		prev = next
+		outIdx++
 	}
 
 	return atr, nil

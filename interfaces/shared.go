@@ -2,59 +2,18 @@ package interfaces
 
 import (
 	"github.com/M1chlCZ/bingo-bot/models"
-	//"github.com/M1chlCZ/bingo-bot/strategies"
 
-	//"github.com/M1chlCZ/bingo-bot/strategies"
 	"github.com/adshao/go-binance/v2"
 	"time"
 )
 
-// Exchange interface defines methods our bot needs from an exchange.
-// This is a simplified interface for basic exchange operations.
 type Exchange interface {
-	// FetchCandles retrieves historical candlestick data for a trading pair.
-	//
-	// Parameters:
-	//   - symbol: The trading pair symbol (e.g., "BTCUSDT")
-	//   - interval: The time interval for each candle (e.g., "1m", "1h", "1d")
-	//   - limit: Maximum number of candles to retrieve
-	//
-	// Returns:
-	//   - []models.CandleStick: Array of candlestick data
-	//   - error: Any error encountered during the operation
 	FetchCandles(symbol string, interval string, limit int) ([]models.CandleStick, error)
 
-	// CreateOrder places a new order on the exchange.
-	//
-	// Parameters:
-	//   - symbol: The trading pair symbol (e.g., "BTCUSDT")
-	//   - orderType: Type of order (e.g., "MARKET", "LIMIT")
-	//   - side: Order side ("BUY" or "SELL")
-	//   - amount: Quantity to buy or sell
-	//
-	// Returns:
-	//   - error: Any error encountered during the operation
 	CreateOrder(symbol, orderType, side string, amount float64) error
 
-	// CreateLimitOrder places a limit order on the exchange.
-	//
-	// Parameters:
-	//   - symbol: The trading pair symbol (e.g., "BTCUSDT")
-	//   - side: Order side ("BUY" or "SELL")
-	//   - quantity: Amount to buy or sell
-	//   - price: Limit price for the order
-	//
-	// Returns:
-	//   - int64: Order ID
-	//   - error: Any error encountered during the operation
 	CreateLimitOrder(symbol, side, quantity, price string) (int64, error)
 
-	// CreateStopLossLimitOrder places a stop-loss limit order on the exchange.
-	//
-	// Parameters:
-	//   - symbol: The trading pair symbol (e.g., "BTCUSDT")
-	//   - side: Order side ("BUY" or "SELL")
-	//   - quantity: Amount to buy or sell
 	//   - price: Limit price for the order
 	//   - stopLoss: Stop price that triggers the limit order
 	//

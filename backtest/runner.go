@@ -9,37 +9,33 @@ import (
 	"time"
 )
 
-// BacktestConfig holds the configuration for a backtest run
 type BacktestConfig struct {
-	// Initial balances for each asset
 	InitialBalances map[string]float64
-	// Trading fee rate (e.g., 0.001 for 0.1%)
+
 	FeeRate float64
-	// Trading pairs to include in the backtest
+
 	TradingPairs []models.TradingPair
-	// Historical data for each symbol and interval
+
 	HistoricalData map[string]map[string][]models.CandleStick
-	// Strategy to evaluate
+
 	Strategy interfaces.Strategy
-	// Start time for the backtest
+
 	StartTime time.Time
-	// End time for the backtest
+
 	EndTime time.Time
-	// Time step for each iteration (e.g., 1h, 4h, 1d)
+
 	TimeStep time.Duration
-	// Risk percentage for position sizing (0.01 = 1%)
+
 	RiskPercentage float64
-	// Minimum notional value for trades
+
 	MinNotional float64
 }
 
-// BacktestResult holds the results of a backtest run
 type BacktestResult struct {
-	// Final balances for each asset
 	FinalBalances map[string]float64
-	// All transactions made during the backtest
+
 	Transactions []Transaction
-	// Performance metrics
+
 	TotalTrades      int
 	WinningTrades    int
 	LosingTrades     int
@@ -58,14 +54,12 @@ type BacktestResult struct {
 	PercentageReturn float64
 }
 
-// Runner is responsible for executing backtest simulations
 type Runner struct {
-	config BacktestConfig
-	client *MockExchangeClient
+	config         BacktestConfig
+	client         *MockExchangeClient
 	marketAnalyzer *analysis.MarketAnalyzer
 }
 
-// NewRunner creates a new backtest runner with the given configuration
 func NewRunner(config BacktestConfig) *Runner {
 	return &Runner{
 		config: config,
@@ -90,19 +84,16 @@ func NewRunner(config BacktestConfig) *Runner {
 	}
 }
 
-// Run executes the backtest simulation
 func (r *Runner) Run() (*BacktestResult, error) {
-	// Initialize the mock client
+
 	r.client = NewMockExchangeClient(r.config.InitialBalances, r.config.FeeRate)
 
-	// Load historical data
 	for symbol, intervalData := range r.config.HistoricalData {
 		for interval, candles := range intervalData {
 			r.client.LoadHistoricalData(symbol, interval, candles)
 		}
 	}
 
-	// Add trading pairs
 	for _, pair := range r.config.TradingPairs {
 		err := r.client.AddTradingPair(pair)
 		if err != nil {
@@ -110,48 +101,40 @@ func (r *Runner) Run() (*BacktestResult, error) {
 		}
 	}
 
-	// Initialize result
 	result := &BacktestResult{
 		FinalBalances: make(map[string]float64),
 		Transactions:  []Transaction{},
 	}
 
-	// Calculate starting balance in quote asset (e.g., USDT)
 	var startingBalance float64
 	for _, balance := range r.config.InitialBalances {
-		// For simplicity, we're just summing up all balances
-		// In a real implementation, you might want to convert everything to a common denominator
+
 		startingBalance += balance
 	}
 	result.StartingBalance = startingBalance
 
-	// Main backtest loop
 	currentTime := r.config.StartTime
 	for currentTime.Before(r.config.EndTime) {
-		// Process each trading pair
+
 		for _, pair := range r.config.TradingPairs {
-			// Fetch candles for the current time
+
 			candles, err := r.client.FetchCandles(pair.Symbol, r.config.Strategy.GetCandleInterval(), 100, true)
 			if err != nil {
 				logger.Warnf("Backtest: Failed to fetch candles for %s: %v", pair.Symbol, err)
 				continue
 			}
 
-			// Analyze market to determine market state
 			marketState, atr, adx := r.marketAnalyzer.AnalyzeMarket(candles)
 			logger.Debugf("Backtest: Market state for %s: %s (ATR=%.2f, ADX=%.2f)", pair.Symbol, marketState.String(), atr, adx)
 
-			// Get strategy based on market state
 			strategy := r.SuggestStrategy(marketState)
 
-			// Calculate trading signal
 			signal, err := strategy.Calculate(candles, pair.Symbol, marketState, 24*time.Hour)
 			if err != nil {
 				logger.Warnf("Backtest: Failed to calculate signal for %s: %v", pair.Symbol, err)
 				continue
 			}
 
-			// Execute trade based on signal
 			if signal != 0 {
 				err = r.executeTrade(pair.Symbol, signal, atr, adx)
 				if err != nil {
@@ -160,10 +143,9 @@ func (r *Runner) Run() (*BacktestResult, error) {
 			}
 		}
 
-		// Advance time
 		currentTime = currentTime.Add(r.config.TimeStep)
 		for _, pair := range r.config.TradingPairs {
-			// Advance the mock client's time for each symbol
+
 			err := r.client.AdvanceTime(pair.Symbol, 1)
 			if err != nil {
 				logger.Warnf("Backtest: Failed to advance time for %s: %v", pair.Symbol, err)
@@ -171,7 +153,6 @@ func (r *Runner) Run() (*BacktestResult, error) {
 		}
 	}
 
-	// Calculate final results
 	result.Transactions = r.client.GetTransactions()
 	result.FinalBalances = r.client.balances
 	r.calculatePerformanceMetrics(result)
@@ -179,18 +160,15 @@ func (r *Runner) Run() (*BacktestResult, error) {
 	return result, nil
 }
 
-// executeTrade executes a trade based on the signal
 func (r *Runner) executeTrade(symbol string, signal int, atr, adx float64) error {
-	// Extract base and quote assets
+
 	baseAsset, quoteAsset := extractAssets(symbol)
 
-	// Get current price
 	currentPrice, err := r.client.GetCurrentPrice(symbol)
 	if err != nil {
 		return err
 	}
 
-	// Get balances
 	baseBalance, err := r.client.GetBalance(baseAsset)
 	if err != nil {
 		return err
@@ -363,7 +341,7 @@ func (r *Runner) calculatePerformanceMetrics(result *BacktestResult) {
 	result.LargestLoss = 0
 
 	// Track positions for P&L calculation
-	positions := make(map[string]float64) // symbol -> average entry price
+	positions := make(map[string]float64)  // symbol -> average entry price
 	quantities := make(map[string]float64) // symbol -> quantity held
 
 	// Calculate trade metrics

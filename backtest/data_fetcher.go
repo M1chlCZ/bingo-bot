@@ -12,12 +12,10 @@ import (
 	"time"
 )
 
-// DataFetcher is responsible for fetching historical data from Binance
 type DataFetcher struct {
 	client interfaces.ExchangeClient
 }
 
-// NewDataFetcher creates a new DataFetcher instance
 func NewDataFetcher(apiKey, apiSecret string) (*DataFetcher, error) {
 	binanceClient, err := client.NewBinanceClient(apiKey, apiSecret)
 	if err != nil {
@@ -29,12 +27,10 @@ func NewDataFetcher(apiKey, apiSecret string) (*DataFetcher, error) {
 	}, nil
 }
 
-// FetchHistoricalData fetches historical data for the given symbol, interval, and time range
 func (df *DataFetcher) FetchHistoricalData(symbol, interval string, startTime, endTime time.Time) ([]models.CandleStick, error) {
 	logger.Infof("Fetching historical data for %s with interval %s from %s to %s",
 		symbol, interval, startTime.Format("2006-01-02"), endTime.Format("2006-01-02"))
 
-	// Fetch historical candles
 	candles, err := df.client.FetchHistoricalCandles(symbol, interval, startTime, endTime, 1000)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch historical candles: %v", err)
@@ -44,24 +40,20 @@ func (df *DataFetcher) FetchHistoricalData(symbol, interval string, startTime, e
 	return candles, nil
 }
 
-// SaveHistoricalData saves the historical data to a file
 func (df *DataFetcher) SaveHistoricalData(candles []models.CandleStick, symbol, interval string) error {
-	// Create data directory if it doesn't exist
+
 	dataDir := "data"
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return fmt.Errorf("failed to create data directory: %v", err)
 	}
 
-	// Create filename based on symbol and interval
 	filename := filepath.Join(dataDir, fmt.Sprintf("%s_%s.json", symbol, interval))
 
-	// Marshal candles to JSON
 	data, err := json.Marshal(candles)
 	if err != nil {
 		return fmt.Errorf("failed to marshal candles to JSON: %v", err)
 	}
 
-	// Write to file
 	if err := os.WriteFile(filename, data, 0644); err != nil {
 		return fmt.Errorf("failed to write data to file: %v", err)
 	}
@@ -70,24 +62,20 @@ func (df *DataFetcher) SaveHistoricalData(candles []models.CandleStick, symbol, 
 	return nil
 }
 
-// LoadHistoricalData loads historical data from a file
 func LoadHistoricalData(symbol, interval string) ([]models.CandleStick, error) {
-	// Create filename based on symbol and interval
+
 	dataDir := "data"
 	filename := filepath.Join(dataDir, fmt.Sprintf("%s_%s.json", symbol, interval))
 
-	// Check if file exists
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
 		return nil, fmt.Errorf("historical data file does not exist: %s", filename)
 	}
 
-	// Read file
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read data from file: %v", err)
 	}
 
-	// Unmarshal JSON to candles
 	var candles []models.CandleStick
 	if err := json.Unmarshal(data, &candles); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON to candles: %v", err)
@@ -97,15 +85,13 @@ func LoadHistoricalData(symbol, interval string) ([]models.CandleStick, error) {
 	return candles, nil
 }
 
-// RunBacktest runs a backtest with the given configuration
 func RunBacktest(symbol, interval string, strategy interfaces.Strategy, startTime, endTime time.Time, initialBalance float64) (*BacktestResult, error) {
-	// Load historical data
+
 	candles, err := LoadHistoricalData(symbol, interval)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load historical data: %v", err)
 	}
 
-	// Filter candles by time range
 	var filteredCandles []models.CandleStick
 	for _, candle := range candles {
 		if (candle.Timestamp.After(startTime) || candle.Timestamp.Equal(startTime)) &&
@@ -123,20 +109,17 @@ func RunBacktest(symbol, interval string, strategy interfaces.Strategy, startTim
 		filteredCandles[0].Timestamp.Format("2006-01-02"),
 		filteredCandles[len(filteredCandles)-1].Timestamp.Format("2006-01-02"))
 
-	// Set up initial balances
 	baseAsset, quoteAsset := extractAssets(symbol)
 	initialBalances := map[string]float64{
 		quoteAsset: initialBalance,
 		baseAsset:  0.0,
 	}
 
-	// Set up historical data for the backtest
 	historicalData := make(map[string]map[string][]models.CandleStick)
 	intervalData := make(map[string][]models.CandleStick)
 	intervalData[interval] = filteredCandles
 	historicalData[symbol] = intervalData
 
-	// Set up trading pairs
 	tradingPairs := []models.TradingPair{
 		{
 			Symbol:     symbol,
@@ -145,7 +128,6 @@ func RunBacktest(symbol, interval string, strategy interfaces.Strategy, startTim
 		},
 	}
 
-	// Configure the backtest
 	config := BacktestConfig{
 		InitialBalances: initialBalances,
 		FeeRate:         0.001, // 0.1% trading fee
@@ -159,7 +141,6 @@ func RunBacktest(symbol, interval string, strategy interfaces.Strategy, startTim
 		MinNotional:     10.0, // Minimum notional value for trades (e.g., $10)
 	}
 
-	// Create and run the backtest
 	runner := NewRunner(config)
 	result, err := runner.Run()
 	if err != nil {
@@ -169,7 +150,6 @@ func RunBacktest(symbol, interval string, strategy interfaces.Strategy, startTim
 	return result, nil
 }
 
-// getTimeStepFromInterval converts an interval string to a time.Duration
 func getTimeStepFromInterval(interval string) time.Duration {
 	switch interval {
 	case "1m":

@@ -6,9 +6,6 @@ import (
 	"strings"
 )
 
-// Common validation functions for external data
-
-// ValidateSymbol checks if a trading symbol is valid
 func ValidateSymbol(symbol string) error {
 	if symbol == "" {
 		return fmt.Errorf("symbol cannot be empty")

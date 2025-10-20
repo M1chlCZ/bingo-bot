@@ -9,7 +9,6 @@ const (
 	MixedChannel
 )
 
-// String converts MarketState to a string representation
 func (d DonchianChannel) String() string {
 	switch d {
 	case NeutralChannel:

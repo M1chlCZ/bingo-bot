@@ -2,8 +2,9 @@ package algos
 
 import (
 	"fmt"
-	"github.com/M1chlCZ/bingo-bot/models"
 	"math"
+
+	"github.com/M1chlCZ/bingo-bot/models"
 )
 
 type RSIStrategy struct {
@@ -12,96 +13,97 @@ type RSIStrategy struct {
 	Period     int `json:"period"`
 }
 
-// Calculate returns the latest RSI and a signal based on overbought/oversold levels
+// Signals: -1 = sell if RSI > Overbought, +1 = buy if RSI < Oversold, else 0.
 func (r *RSIStrategy) Calculate(candles []models.CandleStick, _ string) (float64, int, error) {
 	rsiValues, err := calculateRSI(candles, r.Period)
 	if err != nil {
 		return 0, 0, err
 	}
+	latest := rsiValues[len(rsiValues)-1]
 
-	latestRSI := rsiValues[len(rsiValues)-1]
-
-	if latestRSI > float64(r.Overbought) {
-		return latestRSI, -1, nil // Sell signal
-	} else if latestRSI < float64(r.Oversold) {
-		return latestRSI, 1, nil // Buy signal
+	switch {
+	case latest > float64(r.Overbought):
+		return latest, -1, nil
+	case latest < float64(r.Oversold):
+		return latest, 1, nil
+	default:
+		return latest, 0, nil
 	}
-	return latestRSI, 0, nil // Hold
 }
 
-// calculateRSI computes the RSI for each candle starting from the first point
-// where we can calculate period averages. It returns an array of RSI values
-// aligned so that rsi[0] corresponds to the first candle where RSI is available.
+// calculateRSI computes RSI using Wilder's smoothing.
+// Output is aligned so rsi[0] corresponds to candles[period].
 func calculateRSI(candles []models.CandleStick, period int) ([]float64, error) {
-	if period <= 0 {
-		return nil, fmt.Errorf("RSI period must be greater than zero")
+	if period < 2 {
+		return nil, fmt.Errorf("RSI period must be >= 2 (got %d)", period)
 	}
 	if len(candles) < period+1 {
 		return nil, fmt.Errorf("not enough data to calculate RSI: need at least %d candles, got %d", period+1, len(candles))
 	}
 
-	// Calculate gains and losses for each period
-	gains := make([]float64, len(candles)-1)
-	losses := make([]float64, len(candles)-1)
-
-	for i := 1; i < len(candles); i++ {
-		change := candles[i].Close - candles[i-1].Close
-		if change > 0 {
-			gains[i-1] = change
-			losses[i-1] = 0
-		} else {
-			gains[i-1] = 0
-			losses[i-1] = -change
-		}
-	}
-
-	// Calculate initial average gain and loss over the first 'period'
+	// Precompute first period's average gain/loss
 	avgGain := 0.0
 	avgLoss := 0.0
-	if len(gains) < period {
-		return nil, fmt.Errorf("not enough data to form the initial averages")
-	}
-
-	for i := 0; i < period; i++ {
-		avgGain += gains[i]
-		avgLoss += losses[i]
+	for i := 1; i <= period; i++ {
+		change := candles[i].Close - candles[i-1].Close
+		if change > 0 {
+			avgGain += change
+		} else {
+			avgLoss -= change // change is <= 0
+		}
 	}
 	avgGain /= float64(period)
 	avgLoss /= float64(period)
 
-	// RSI array starts after 'period' candles of data have been processed
-	rsiCount := len(candles) - period
-	rsi := make([]float64, rsiCount)
+	nOut := len(candles) - period
+	rsi := make([]float64, nOut)
 
-	// Calculate RSI for the first available point
-	rs := 0.0
-	if avgLoss == 0 {
-		// If avgLoss is 0, no down moves in this period. RSI = 100.
-		// This can happen in strongly bullish conditions.
-		rs = math.Inf(1)
-	} else {
-		rs = avgGain / avgLoss
+	// Helper to convert avgGain/avgLoss -> RSI in [0,100]
+	toRSI := func(g, l float64) float64 {
+		const eps = 1e-12
+		switch {
+		case g < eps && l < eps:
+			return 50.0
+		case l < eps:
+			return 100.0
+		}
+		rs := g / l
+		val := 100.0 - (100.0 / (1.0 + rs))
+		if math.IsNaN(val) || math.IsInf(val, 0) {
+			return 50.0
+		}
+		if val < 0 {
+			return 0
+		}
+		if val > 100 {
+			return 100
+		}
+		return val
 	}
-	rsi[0] = 100 - (100 / (1 + rs))
 
-	// For each subsequent candle, update avgGain and avgLoss with Wilder’s smoothing and calculate RSI
-	for i := period; i < len(candles)-1; i++ {
-		// Update avgGain and avgLoss (Wilder's smoothing)
-		avgGain = ((avgGain * float64(period-1)) + gains[i]) / float64(period)
-		avgLoss = ((avgLoss * float64(period-1)) + losses[i]) / float64(period)
+	// First RSI value corresponds to candles[period]
+	rsi[0] = toRSI(avgGain, avgLoss)
 
-		if avgLoss == 0 {
-			rs = math.Inf(1) // All gains, no losses
+	// Wilder smoothing for subsequent values
+	for i := period + 1; i < len(candles); i++ {
+		change := candles[i].Close - candles[i-1].Close
+		gain := 0.0
+		loss := 0.0
+		if change > 0 {
+			gain = change
 		} else {
-			rs = avgGain / avgLoss
+			loss = -change
 		}
 
-		rsiIndex := i - (period - 1)
-		if rsiIndex < 0 || rsiIndex >= len(rsi) {
-			// Sanity check
-			return nil, fmt.Errorf("index out of range while calculating RSI")
+		avgGain = ((avgGain * float64(period-1)) + gain) / float64(period)
+		avgLoss = ((avgLoss * float64(period-1)) + loss) / float64(period)
+
+		outIdx := i - period
+		// sanity: outIdx must be within [1, nOut-1]
+		if outIdx < 1 || outIdx >= nOut {
+			return nil, fmt.Errorf("RSI: internal index out of range (%d of %d)", outIdx, nOut)
 		}
-		rsi[rsiIndex] = 100 - (100 / (1 + rs))
+		rsi[outIdx] = toRSI(avgGain, avgLoss)
 	}
 
 	return rsi, nil

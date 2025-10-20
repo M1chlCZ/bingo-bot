@@ -9,17 +9,10 @@ import (
 	"time"
 )
 
-// SpikeStrategy represents the type of strategy, all fields are required to be filled
-// Very early in development and not yet proof tested, only for development purposes
-// Could be scrapped in the future
 type SpikeStrategy struct {
 	AvgPeriod       int     // Number of candles to calculate average size
 	VolumeThreshold float64 // Minimum volume to confirm spike
 }
-
-//func (s *SpikeStrategy) GetStrategyType() StrategyType {
-//	return SpikeDetectionStrategyType
-//}
 
 func (s *SpikeStrategy) Calculate(candles []models.CandleStick, pair string, marketState models.MarketState, pendingCoolDown time.Duration) (int, error) {
 	if len(candles) < s.AvgPeriod+1 {

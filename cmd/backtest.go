@@ -8,7 +8,6 @@ import (
 	"os"
 )
 
-// HandleBacktestCommands processes backtest-related commands
 func HandleBacktestCommands(args []string) bool {
 	if len(args) < 2 {
 		return false

@@ -5,7 +5,6 @@ import (
 	"strings"
 )
 
-// ValidateLogLevel checks if a log level is valid
 func ValidateLogLevel(level string) error {
 	if level == "" {
 		return fmt.Errorf("log level cannot be empty")

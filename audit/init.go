@@ -1,26 +1,23 @@
 package audit
 
 import (
-	"github.com/M1chlCZ/bingo-bot/logger"
 	"os"
+
+	"github.com/M1chlCZ/bingo-bot/logger"
 )
 
-// DefaultConfig returns the default audit logger configuration
 func DefaultConfig() Config {
 	return Config{
-		Enabled:      true,
-		LogToConsole: true,
-		LogToFile:    true,
+		Enabled:      false,
+		LogToConsole: false,
+		LogToFile:    false,
 		FilePath:     "audit.log",
 	}
 }
 
-// InitAuditLogger initializes the audit logger with the default configuration
-// or with environment variable overrides if provided
 func InitAuditLogger() error {
 	config := DefaultConfig()
 
-	// Override with environment variables if provided
 	if enabled := os.Getenv("AUDIT_ENABLED"); enabled != "" {
 		config.Enabled = enabled == "true" || enabled == "1"
 	}
@@ -37,7 +34,6 @@ func InitAuditLogger() error {
 		config.FilePath = filePath
 	}
 
-	// Initialize the audit logger
 	err := Initialize(config)
 	if err != nil {
 		return err
