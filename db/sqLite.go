@@ -31,7 +31,6 @@ var SQLiteDB SQLite
 func InitDB() error {
 	dbPath := "/app/data/trades.db" // Adjusted to match the Docker mount
 
-	// folder exists
 	if _, err := os.Stat("/app/data"); os.IsNotExist(err) {
 		logger.Warnf("Running without docker, using local db file")
 		dbPath = "./trades.db"
@@ -90,8 +89,6 @@ func InitDB() error {
 		return err
 	}
 
-	// Update the database schema to the latest version
-
 	if err := UpdateSchema(db, dbVersion); err != nil {
 		return fmt.Errorf("failed to update database schema: %w", err)
 	}
@@ -101,7 +98,6 @@ func InitDB() error {
 	return nil
 }
 
-// GetVersionDB retrieves the current database schema version using PRAGMA user_version
 func GetVersionDB(db *sql.DB) (int, error) {
 	var version int
 	err := db.QueryRow("PRAGMA user_version;").Scan(&version)
@@ -111,19 +107,17 @@ func GetVersionDB(db *sql.DB) (int, error) {
 	return version, nil
 }
 
-//nolint:funlen, it's ok
 func UpdateSchema(db *sql.DB, targetVersion int) error {
 	currentVersion, err := GetVersionDB(db)
 	if err != nil {
 		return err
 	}
 
-	// Apply migrations step by step
 	for currentVersion < targetVersion {
 		currentVersion++
 		switch currentVersion {
 		case 1:
-			// Example migration for version 1
+
 			query := `
 			ALTER TABLE completed_trades ADD COLUMN rsi REAL;
 			ALTER TABLE completed_trades ADD COLUMN macd REAL;
@@ -133,7 +127,7 @@ func UpdateSchema(db *sql.DB, targetVersion int) error {
 				return fmt.Errorf("failed to apply migration for version 1: %w", err)
 			}
 		case 2:
-			// Example migration for version 2
+
 			query := `
 			CREATE TABLE IF NOT EXISTS trade_audit (
 			    id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -225,7 +219,7 @@ func UpdateSchema(db *sql.DB, targetVersion int) error {
 				return err
 			}
 		case 11:
-			// Example migration for version 1
+
 			query := `
 			ALTER TABLE completed_trades ADD COLUMN mfi REAL;
 			ALTER TABLE completed_trades ADD COLUMN cci REAL;
@@ -258,12 +252,11 @@ func UpdateSchema(db *sql.DB, targetVersion int) error {
 			if _, err := db.Exec(query); err != nil {
 				return fmt.Errorf("failed to apply migration for version 1: %v", err)
 			}
-		// Add more cases here for future versions
+
 		default:
 			return fmt.Errorf("unsupported target version: %d", currentVersion)
 		}
 
-		// Update user_version after each migration
 		if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d;", currentVersion)); err != nil {
 			return fmt.Errorf("failed to update user_version to %d: %v", currentVersion, err)
 		}
@@ -272,7 +265,6 @@ func UpdateSchema(db *sql.DB, targetVersion int) error {
 	return nil
 }
 
-// Deprecated: LogTrade logs a trade to the SQLite database
 func (s *SQLite) LogTrade(symbol, side string, amount, price float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -281,7 +273,6 @@ func (s *SQLite) LogTrade(symbol, side string, amount, price float64) error {
 	return err
 }
 
-// LogActiveTrade logs an active trade to the SQLite database
 func (s *SQLite) LogActiveTrade(symbol string, buyPrice, quantity float64, orderID int64, rsi, macd, stochastic, lowerBound, middleBound, upperBound, mfi, cci, ichimokuTenkan, ichimokuKijun float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -297,7 +288,6 @@ func (s *SQLite) LogActiveTrade(symbol string, buyPrice, quantity float64, order
 	return nil
 }
 
-// LogCompletedTrade logs a completed trade to the SQLite database
 func (s *SQLite) LogCompletedTrade(symbol string, buyPrice, sellPrice, quantity, profitLoss, rsi, macd, stochastic, lowerBound, middleBound, upperBound, mfi, cci, ichimokuTenkan, ichimokuKijun float64, buyTimestamp, orderID int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -312,7 +302,6 @@ func (s *SQLite) LogCompletedTrade(symbol string, buyPrice, sellPrice, quantity,
 	return nil
 }
 
-// GetActiveTrade fetches the active trade for a given symbol
 func (s *SQLite) GetActiveTrade(symbol string) (*models.ActiveTrade, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -331,7 +320,6 @@ func (s *SQLite) GetActiveTrade(symbol string) (*models.ActiveTrade, error) {
 	return &trade, nil
 }
 
-// GetActiveTradesCount fetches the number of active trades
 func (s *SQLite) GetActiveTradesCount() (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -344,7 +332,6 @@ func (s *SQLite) GetActiveTradesCount() (int, error) {
 	return count, nil
 }
 
-// GetTodaysTradeCount fetches the number of trades for the current day
 func (s *SQLite) GetTodaysTradeCount() (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -363,7 +350,6 @@ func (s *SQLite) GetTodaysTradeCount() (int, error) {
 	return count + count2, nil
 }
 
-// GetActiveTrades fetches all active trades for a given symbol
 func (s *SQLite) GetActiveTrades(symbol string) ([]*models.ActiveTrade, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -386,7 +372,6 @@ func (s *SQLite) GetActiveTrades(symbol string) ([]*models.ActiveTrade, error) {
 	return trades, nil
 }
 
-// GetAllActiveTrades fetches all active trades
 func (s *SQLite) GetAllActiveTrades() ([]*models.ActiveTrade, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -409,7 +394,6 @@ func (s *SQLite) GetAllActiveTrades() ([]*models.ActiveTrade, error) {
 	return trades, nil
 }
 
-// IsCurrentlyActiveTrade checks if an active trade exists for the given symbol
 func (s *SQLite) IsCurrentlyActiveTrade(symbol string) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -491,7 +475,6 @@ func (s *SQLite) RemoveAtl(symbol string) error {
 	return nil
 }
 
-// RemoveActiveTrade removes an active trade from the SQLite database
 func (s *SQLite) RemoveActiveTrade(id int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -499,14 +482,11 @@ func (s *SQLite) RemoveActiveTrade(id int) error {
 	return err
 }
 
-// RenameAllSymbolsUSDTtoUSDC finds all distinct symbols in the trades table
-// that end with "USDT" and updates them to end with "USDC".
 func (s *SQLite) RenameAllSymbolsUSDTtoUSDC() error {
-	// Acquire write lock since we are both reading and updating
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 1. Fetch all distinct symbols from trades
 	selectQuery := `SELECT DISTINCT symbol FROM active_trades`
 	rows, err := s.DB.Query(selectQuery)
 	if err != nil {
@@ -526,12 +506,10 @@ func (s *SQLite) RenameAllSymbolsUSDTtoUSDC() error {
 		return fmt.Errorf("error iterating rows: %v", err)
 	}
 
-	// 2. For each symbol that ends with "USDT", rename it to end with "USDC"
 	for _, oldSymbol := range symbols {
 		if strings.HasSuffix(oldSymbol, "USDT") {
 			newSymbol := strings.Replace(oldSymbol, "USDT", "USDC", 1)
 
-			// 3. Execute the UPDATE query
 			updateQuery := `UPDATE active_trades SET symbol = ? WHERE symbol = ?`
 			stmt, err := s.DB.Prepare(updateQuery)
 			if err != nil {
@@ -549,7 +527,6 @@ func (s *SQLite) RenameAllSymbolsUSDTtoUSDC() error {
 	return nil
 }
 
-// GetLastATHTimestamp fetches the last ATH timestamp for a given symbol
 func (s *SQLite) GetLastATHTimestamp(symbol string) (time.Time, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -568,7 +545,6 @@ func (s *SQLite) GetLastATHTimestamp(symbol string) (time.Time, error) {
 	return timestampParsed, nil
 }
 
-// GetLastBuySymbol fetches the last ATH timestamp for a given symbol
 func (s *SQLite) GetLastBuySymbol(symbol string) (time.Time, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -587,7 +563,6 @@ func (s *SQLite) GetLastBuySymbol(symbol string) (time.Time, error) {
 	return timestampParsed, nil
 }
 
-// GetLastSellSymbol fetches the last ATH timestamp for a given symbol
 func (s *SQLite) GetLastSellSymbol(symbol string) (time.Time, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -606,7 +581,6 @@ func (s *SQLite) GetLastSellSymbol(symbol string) (time.Time, error) {
 	return timestampParsed, nil
 }
 
-// WasLastTradeLoss fetches the last trade's timestamp and profit/loss for a given symbol
 func (s *SQLite) WasLastTradeLoss(symbol string) (bool, time.Time, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

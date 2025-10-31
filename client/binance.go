@@ -346,7 +346,7 @@ func (b *BinanceClient) GetBalance(asset string) (float64, error) {
 	audit.LogAccess("client.BinanceClient", "GetBalance", asset, true, "Attempting to get balance", nil)
 
 	if err := validation.ValidateAsset(asset); err != nil {
-		// Audit log the validation failure
+
 		audit.LogAccess("client.BinanceClient", "GetBalance", asset, false, "Asset validation failed", map[string]interface{}{
 			"error": err.Error(),
 		})
@@ -374,7 +374,7 @@ func (b *BinanceClient) GetBalance(asset string) (float64, error) {
 
 	data, err := b.enqueueRequest(doFunc, true)
 	if err != nil {
-		// Audit log the failure
+
 		audit.LogAccess("client.BinanceClient", "GetBalance", asset, false, "Failed to get balance", map[string]interface{}{
 			"error": err.Error(),
 		})
@@ -382,12 +382,11 @@ func (b *BinanceClient) GetBalance(asset string) (float64, error) {
 	}
 	pv, ok := data.(Price)
 	if !ok {
-		// Audit log the failure
+
 		audit.LogAccess("client.BinanceClient", "GetBalance", asset, false, "Unexpected data type returned from queue", nil)
 		return 0, fmt.Errorf("unexpected data type returned from queue")
 	}
 
-	// Audit log the success
 	audit.LogAccess("client.BinanceClient", "GetBalance", asset, true, "Successfully retrieved balance", map[string]interface{}{
 		"balance": pv.Value,
 	})
@@ -396,15 +395,14 @@ func (b *BinanceClient) GetBalance(asset string) (float64, error) {
 }
 
 func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64, float64, error) {
-	// Audit log the attempt
+
 	audit.LogTrade("client.BinanceClient", "CreateMarketOrder", symbol, true, "Attempting to create market order", map[string]interface{}{
 		"side":     side,
 		"quantity": quantity,
 	})
 
-	// Validate input parameters
 	if err := validation.ValidateSymbol(symbol); err != nil {
-		// Audit log the validation failure
+
 		audit.LogTrade("client.BinanceClient", "CreateMarketOrder", symbol, false, "Symbol validation failed", map[string]interface{}{
 			"side":     side,
 			"quantity": quantity,
@@ -413,7 +411,7 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 		return 0, 0, errors.WrapWithType(err, errors.ErrInvalidInput, fmt.Sprintf("invalid symbol: %s", symbol))
 	}
 	if err := validation.ValidateOrderSide(side); err != nil {
-		// Audit log the validation failure
+
 		audit.LogTrade("client.BinanceClient", "CreateMarketOrder", symbol, false, "Order side validation failed", map[string]interface{}{
 			"side":     side,
 			"quantity": quantity,
@@ -422,7 +420,7 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 		return 0, 0, errors.WrapWithType(err, errors.ErrInvalidInput, fmt.Sprintf("invalid order side: %s", side))
 	}
 	if err := validation.ValidateQuantity(quantity); err != nil {
-		// Audit log the validation failure
+
 		audit.LogTrade("client.BinanceClient", "CreateMarketOrder", symbol, false, "Quantity validation failed", map[string]interface{}{
 			"side":     side,
 			"quantity": quantity,
@@ -431,7 +429,6 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 		return 0, 0, errors.WrapWithType(err, errors.ErrInvalidInput, fmt.Sprintf("invalid quantity: %s", quantity))
 	}
 
-	// Check if the trading pair is configured
 	type Result struct {
 		OrderID      int64
 		AveragePrice float64
@@ -460,7 +457,6 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 			}
 		}
 
-		// Adjust quantity to comply with LOT_SIZE
 		quantityFloat, err := strconv.ParseFloat(quantity, 64)
 		if err != nil {
 			return Result{}, errors.WrapWithType(err, errors.ErrInvalidInput, fmt.Sprintf("invalid quantity format for %s", symbol))
@@ -474,13 +470,11 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 			quantityFloat = maxQty // Cap at maxQty
 		}
 
-		// Ensure stepSize is valid
 		if stepSize <= 0 {
 			logger.Infof("Invalid stepSize for %s: %.8f", symbol, stepSize)
 			return Result{}, errors.NewWithType(errors.ErrInvalidInput, fmt.Sprintf("invalid stepSize for %s: %.8f", symbol, stepSize))
 		}
 
-		// Align with StepSize
 		adjustedQty := math.Floor(quantityFloat/stepSize) * stepSize
 		if math.IsNaN(adjustedQty) || adjustedQty <= 0 {
 			logger.Infof("Adjusted Quantity for %s is invalid: Original=%s, Adjusted=NaN or <= 0", symbol, quantity)
@@ -502,7 +496,6 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 
 		logger.Debug("Formatted Qty: ", formattedQty)
 
-		// Place the market order
 		order, err := b.client.NewCreateOrderService().
 			Symbol(symbol).
 			Side(binance.SideType(side)).
@@ -514,7 +507,6 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 			return Result{}, errors.WrapWithType(err, errors.ErrNetworkError, fmt.Sprintf("failed to place MARKET %s order for %s", side, symbol))
 		}
 
-		// Calculate the executed price based on fills
 		var totalQuoteQty float64
 		var totalBaseQty float64
 
@@ -531,7 +523,6 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 			totalBaseQty += quantity
 		}
 
-		// Calculate the average executed price
 		if totalBaseQty == 0 {
 			return Result{}, errors.NewWithType(errors.ErrInvalidInput, "no fills returned for the market order")
 		}
@@ -542,7 +533,7 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 
 	data, err := b.enqueueRequest(do, true)
 	if err != nil {
-		// Audit log the failure
+
 		audit.LogTrade("client.BinanceClient", "CreateMarketOrder", symbol, false, "Failed to execute market order", map[string]interface{}{
 			"side":     side,
 			"quantity": quantity,
@@ -552,7 +543,7 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 	}
 	res, ok := data.(Result)
 	if !ok {
-		// Audit log the failure
+
 		audit.LogTrade("client.BinanceClient", "CreateMarketOrder", symbol, false, "Unexpected data type returned from queue", map[string]interface{}{
 			"side":     side,
 			"quantity": quantity,
@@ -560,7 +551,6 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 		return 0, 0, errors.NewWithType(errors.ErrInternal, "unexpected data type returned from queue")
 	}
 
-	// Audit log the success
 	audit.LogTrade("client.BinanceClient", "CreateMarketOrder", symbol, true, "Successfully created market order", map[string]interface{}{
 		"side":          side,
 		"quantity":      quantity,
@@ -571,22 +561,20 @@ func (b *BinanceClient) CreateMarketOrder(symbol, side, quantity string) (int64,
 	return res.OrderID, res.AveragePrice, nil
 }
 
-// FetchMarkets retrieves all trading pairs matching the provided ticker (e.g., "USDT").
 func (b *BinanceClient) FetchMarkets(tickers []string, excludedMarkets []string, excludedTradingPairs []models.TradingPair) ([]models.TradingPair, error) {
 	logger.Infof("Fetching all markets matching ticker: %v", tickers)
 
 	doFunc := func() (any, error) {
-		// Fetch exchange information
+
 		exchangeInfo, err := b.client.NewExchangeInfoService().Do(context.Background())
 		if err != nil {
 			return nil, errors.WrapWithType(err, errors.ErrNetworkError, "failed to fetch exchange info")
 		}
 
-		// Filter symbols that end with the specified ticker
 		tradingPairs := make([]models.TradingPair, 0)
 
 		for _, symbol := range exchangeInfo.Symbols {
-			// Check if the symbol is excluded
+
 			if isExcludedMarket(symbol.Symbol, excludedMarkets) {
 				logger.Infof("Excluded quote market: %s", symbol.Symbol)
 				continue
@@ -610,7 +598,7 @@ func (b *BinanceClient) FetchMarkets(tickers []string, excludedMarkets []string,
 				for _, filter := range symbol.Filters {
 					switch filter["filterType"] {
 					case "NOTIONAL":
-						// Extract `minNotional`
+
 						minNotionalStr, ok := filter["minNotional"].(string)
 						if !ok {
 							logger.Errorf("Invalid minNotional format for %s", symbol.Symbol)
@@ -651,9 +639,8 @@ func (b *BinanceClient) FetchMarkets(tickers []string, excludedMarkets []string,
 	return tps, nil
 }
 
-// FetchActiveTrades from the Binance client
 func (b *BinanceClient) FetchActiveTrades(symbol string) ([]*binance.TradeV3, error) {
-	// Audit log the attempt
+
 	audit.LogAccess("client.BinanceClient", "FetchActiveTrades", symbol, true, "Attempting to fetch active trades", nil)
 
 	doFunc := func() (any, error) {
@@ -667,7 +654,7 @@ func (b *BinanceClient) FetchActiveTrades(symbol string) ([]*binance.TradeV3, er
 
 	data, err := b.enqueueRequest(doFunc, false)
 	if err != nil {
-		// Audit log the failure
+
 		audit.LogAccess("client.BinanceClient", "FetchActiveTrades", symbol, false, "Failed to fetch active trades", map[string]interface{}{
 			"error": err.Error(),
 		})
@@ -676,12 +663,11 @@ func (b *BinanceClient) FetchActiveTrades(symbol string) ([]*binance.TradeV3, er
 
 	trades, ok := data.([]*binance.TradeV3)
 	if !ok {
-		// Audit log the failure
+
 		audit.LogAccess("client.BinanceClient", "FetchActiveTrades", symbol, false, "Unexpected data type returned from queue", nil)
 		return nil, fmt.Errorf("unexpected data type returned from queue")
 	}
 
-	// Audit log the success
 	audit.LogAccess("client.BinanceClient", "FetchActiveTrades", symbol, true, "Successfully fetched active trades", map[string]interface{}{
 		"count": len(trades),
 	})
@@ -716,7 +702,6 @@ func isExcludedTradingPair(tradingPair models.TradingPair, excludedTradingPairs 
 	return false
 }
 
-// toFloat safely converts string to float64
 func toFloat(value string) float64 {
 	if result, err := strconv.ParseFloat(value, 64); err == nil {
 		return result
@@ -724,7 +709,6 @@ func toFloat(value string) float64 {
 	return 0
 }
 
-// Retry helper for API calls
 func retry(fn func() error, retries int, delay time.Duration) error {
 	for i := 0; i < retries; i++ {
 		err := fn()
@@ -737,7 +721,6 @@ func retry(fn func() error, retries int, delay time.Duration) error {
 	return errors.NewWithType(errors.ErrTemporaryFailure, fmt.Sprintf("operation failed after %d retries", retries))
 }
 
-// rateLimitWait enforces request/s rate limiting
 func (b *BinanceClient) rateLimitWait() {
 	b.requestsMu.Lock()
 	defer b.requestsMu.Unlock()
@@ -781,18 +764,15 @@ func (b *BinanceClient) FetchHistoricalCandles(
 	limit int,
 ) ([]models.CandleStick, error) {
 
-	// We'll gather results in slices, possibly doing multiple API calls if needed.
 	var allCandles []models.CandleStick
 
-	// Convert start/end times to milliseconds
 	startMs := startTime.UnixNano() / int64(time.Millisecond)
 	endMs := endTime.UnixNano() / int64(time.Millisecond)
 
-	// We'll do a loop to fetch data in increments
 	var lastEnd time.Time
 	currentStart := startMs
 	for {
-		// Create the request
+
 		klines, err := b.client.NewKlinesService().
 			Symbol(symbol).
 			Interval(interval).
@@ -807,7 +787,6 @@ func (b *BinanceClient) FetchHistoricalCandles(
 			break
 		}
 
-		// Convert them to your CandleStick model
 		for _, k := range klines {
 			open, _ := strconv.ParseFloat(k.Open, 64)
 			high, _ := strconv.ParseFloat(k.High, 64)
@@ -826,17 +805,14 @@ func (b *BinanceClient) FetchHistoricalCandles(
 			allCandles = append(allCandles, c)
 		}
 
-		// Update currentStart to move to next batch
 		lastEnd = time.Unix(klines[len(klines)-1].CloseTime/1000, 0)
-		// e.g. add 1ms to avoid overlap
+
 		currentStart = (klines[len(klines)-1].CloseTime) + 1
 
-		// If we reached or passed endMs, break
 		if lastEnd.UnixNano()/int64(time.Millisecond) >= endMs {
 			break
 		}
 
-		// Possibly break if len(klines) < limit => means no more data
 		if len(klines) < limit {
 			break
 		}

@@ -2,6 +2,7 @@ package algos
 
 import (
 	"fmt"
+
 	"github.com/M1chlCZ/bingo-bot/models"
 )
 
@@ -24,6 +25,7 @@ type IchimokuResult struct {
 
 func (i *IchimokuStrategy) Calculate(candles []models.CandleStick) (IchimokuResult, error) {
 	if len(candles) < i.SpanBPeriod {
+		fmt.Printf("Ichimoku: not enough candles: have %d, need %d\n", len(candles), i.SpanBPeriod)
 		return IchimokuResult{}, fmt.Errorf("not enough candles for Ichimoku calculation")
 	}
 
@@ -39,7 +41,7 @@ func (i *IchimokuStrategy) Calculate(candles []models.CandleStick) (IchimokuResu
 	if chikouIndex >= 0 {
 		chikou = candles[chikouIndex].Close
 	} else {
-		chikou = currentPrice // fallback if not enough data
+		chikou = currentPrice
 	}
 
 	bullish := currentPrice > spanA && currentPrice > spanB && tenkan > kijun

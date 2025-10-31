@@ -363,7 +363,6 @@ func (ma *MarketAnalyzer) detectMarketRegime(candles []models.CandleStick) model
 	trendStrength := ma.calculateTrendStrength(candles, ma.MarketRegimePeriod)
 	priceEfficiency := ma.calculatePriceEfficiency(candles, ma.MarketRegimePeriod)
 
-	// Regime classification logic
 	if volatility > ma.HighVolatilityThreshold*1.5 {
 		return models.MarketHighVolatilityRegime
 	} else if trendStrength > 0.7 && priceEfficiency > 0.6 {
@@ -377,7 +376,6 @@ func (ma *MarketAnalyzer) detectMarketRegime(candles []models.CandleStick) model
 	return models.MarketMixedRegime
 }
 
-// detectVolatilityRegime identifies current volatility environment
 func (ma *MarketAnalyzer) detectVolatilityRegime(candles []models.CandleStick) models.VolatilityRegime {
 	if len(candles) < ma.VolatilityPeriod {
 		return models.NormalVolatilityRegime
@@ -397,19 +395,16 @@ func (ma *MarketAnalyzer) detectVolatilityRegime(candles []models.CandleStick) m
 	return models.NormalVolatilityRegime
 }
 
-// assessPriceActionQuality evaluates the quality of price movements
 func (ma *MarketAnalyzer) assessPriceActionQuality(candles []models.CandleStick) float64 {
 	if len(candles) < 20 {
 		return 0.5
 	}
 
-	// Calculate various quality metrics
 	trendConsistency := ma.calculateTrendConsistency(candles)
 	volumeConfirmation := ma.calculateVolumeConfirmation(candles)
 	priceStructure := ma.assessPriceStructure(candles)
 	breakoutQuality := ma.assessBreakoutQuality(candles)
 
-	// Weighted average of quality metrics
 	quality := trendConsistency*0.3 + volumeConfirmation*0.25 + priceStructure*0.25 + breakoutQuality*0.2
 
 	return math.Min(1.0, math.Max(0.0, quality))
@@ -419,11 +414,11 @@ func (ma *MarketAnalyzer) calculateATR(candles []models.CandleStick) float64 {
 	if ma.ATRPeriod <= 0 || len(candles) < ma.ATRPeriod+1 {
 		return 0
 	}
-	// Prefer library ATR (Wilder) for accuracy
+
 	if v, err := algos.ATR(candles, ma.ATRPeriod); err == nil {
 		return v
 	}
-	// Fallback to simple average TR if ATR fails
+
 	trueRanges := make([]float64, 0, len(candles)-1)
 	for i := 1; i < len(candles); i++ {
 		h := candles[i].High
@@ -439,7 +434,7 @@ func (ma *MarketAnalyzer) calculateATR(candles []models.CandleStick) float64 {
 }
 
 func (ma *MarketAnalyzer) calculateADX(candles []models.CandleStick) float64 {
-	// Wilder's ADX with smoothing
+
 	p := ma.ADXPeriod
 	if p <= 0 || len(candles) < p+1 {
 		return 0
@@ -469,7 +464,6 @@ func (ma *MarketAnalyzer) calculateADX(candles []models.CandleStick) float64 {
 		return 0
 	}
 
-	// Initial sums
 	tr14 := 0.0
 	pdm14 := 0.0
 	mdm14 := 0.0
@@ -484,7 +478,7 @@ func (ma *MarketAnalyzer) calculateADX(candles []models.CandleStick) float64 {
 	dxSeries := make([]float64, 0, len(tr)-p+1)
 
 	for i := p; i < len(tr); i++ {
-		// Wilder smoothing
+
 		tr14 = tr14 - tr14/float64(p) + tr[i]
 		pdm14 = pdm14 - pdm14/float64(p) + pdm[i]
 		mdm14 = mdm14 - mdm14/float64(p) + mdm[i]
@@ -507,7 +501,7 @@ func (ma *MarketAnalyzer) calculateADX(candles []models.CandleStick) float64 {
 	if len(dxSeries) < p {
 		return ma.average(dxSeries)
 	}
-	// ADX as Wilder-smoothed average of DX
+
 	adx := 0.0
 	for i := 0; i < p; i++ {
 		adx += dxSeries[i]
@@ -527,7 +521,6 @@ func (ma *MarketAnalyzer) calculateADX(candles []models.CandleStick) float64 {
 	return adx
 }
 
-// calculateNoiseLevel measures market noise
 func (ma *MarketAnalyzer) calculateNoiseLevel(candles []models.CandleStick) float64 {
 	if len(candles) < 20 {
 		return 0.0
@@ -549,15 +542,12 @@ func (ma *MarketAnalyzer) calculateNoiseLevel(candles []models.CandleStick) floa
 	return totalNoise / float64(len(candles)-1)
 }
 
-// calculateAdaptiveThresholds adjusts thresholds based on market conditions
 func (ma *MarketAnalyzer) calculateAdaptiveThresholds(candles []models.CandleStick, _ float64) AdaptiveThresholds {
 	volatility := ma.calculateRollingVolatility(candles, 20)
 
-	// Base thresholds
 	highVolThreshold := ma.HighVolatilityThreshold
 	strongTrendThreshold := ma.StrongTrendThreshold
 
-	// Adjust based on market volatility
 	volMultiplier := volatility / ma.HighVolatilityThreshold
 
 	return AdaptiveThresholds{
@@ -567,25 +557,20 @@ func (ma *MarketAnalyzer) calculateAdaptiveThresholds(candles []models.CandleSti
 	}
 }
 
-// calculateConfidenceMultiplier adjusts scoring based on signal quality
 func (ma *MarketAnalyzer) calculateConfidenceMultiplier(priceActionQuality, noiseLevel, momentumQuality float64) float64 {
-	// Base confidence
+
 	confidence := 1.0
 
-	// Adjust for price action quality
 	confidence *= 0.5 + priceActionQuality*0.5
 
-	// Adjust for noise level (lower noise = higher confidence)
 	noiseAdjustment := math.Max(0.5, 1.0-(noiseLevel/ma.NoiseFilterThreshold))
 	confidence *= noiseAdjustment
 
-	// Adjust for momentum quality
 	confidence *= 0.7 + momentumQuality*0.3
 
 	return math.Max(0.3, math.Min(1.5, confidence))
 }
 
-// analyzeVolumeWithContext analyzes volume considering market regime
 func (ma *MarketAnalyzer) analyzeVolumeWithContext(candles []models.CandleStick, regime models.MarketRegime) models.VolumeSignal {
 	if len(candles) < 25 {
 		return models.Neutral
@@ -605,7 +590,6 @@ func (ma *MarketAnalyzer) analyzeVolumeWithContext(candles []models.CandleStick,
 			return models.Declining
 		}
 	case models.RangeBoundRegime:
-		// need more pop to matter in ranges
 		if vr >= 1.4 {
 			return models.Rising
 		} else if vr <= 0.7 {
@@ -627,14 +611,11 @@ func (ma *MarketAnalyzer) analyzeVolumeWithContext(candles []models.CandleStick,
 	return models.Neutral
 }
 
-// ----------------- STRONGER, LESS-TRIGGER-HAPPY UPTREND -----------------
-
 func (ma *MarketAnalyzer) IsUptrendWithScore(candles []models.CandleStick) (bool, float64, string) {
 	if len(candles) < 30 { // need a bit more data for stable checks
 		return false, 0.0, "insufficient_data"
 	}
 
-	// EMAs
 	ema9 := ma.calculateEMA(candles, 9)
 	ema21 := ma.calculateEMA(candles, 21)
 	if len(ema9) < 3 || len(ema21) < 3 {
@@ -644,10 +625,8 @@ func (ma *MarketAnalyzer) IsUptrendWithScore(candles []models.CandleStick) (bool
 	ema21Now, ema21Prev := ema21[len(ema21)-1], ema21[len(ema21)-2]
 	priceNow := candles[len(candles)-1].Close
 
-	// Direction baseline
 	dirOK := ema9Now > ema21Now && ema9Now > ema9Prev && ema21Now > ema21Prev && priceNow > ema21Now
 
-	// RSI and slope
 	rsi := algos.RSIStrategy{Period: 14}
 	rsiVal, _, errRSI := rsi.Calculate(candles, "")
 	if errRSI != nil {
@@ -660,7 +639,6 @@ func (ma *MarketAnalyzer) IsUptrendWithScore(candles []models.CandleStick) (bool
 	rsiSlope := rsiVal - prevRSI
 	rsiOK := rsiVal >= 52 && rsiVal <= 66 && rsiSlope >= 0 // tightened ceiling + require rising
 
-	// MACD, histogram & slope
 	macd := algos.MACDStrategy{FastPeriod: 12, SlowPeriod: 26, SignalPeriod: 9}
 	hist, sigLine, macdLine, macdSig, errMACD := macd.Calculate(candles)
 	if errMACD != nil {
@@ -673,12 +651,10 @@ func (ma *MarketAnalyzer) IsUptrendWithScore(candles []models.CandleStick) (bool
 	histSlope := hist - prevHist
 	macdOK := macdSig == 1 && hist > 0 && macdLine > sigLine && histSlope > 0 // require momentum improving
 
-	// ADX + tendency (avoid fresh “down ADX”)
 	adxNow := ma.calculateADX(candles)
 	adxPrev := ma.calculateADX(candles[:len(candles)-1])
 	adxOK := adxNow >= 23 && (adxPrev == 0 || adxNow >= adxPrev-0.5)
 
-	// Volume confirmation (tighter)
 	vol5 := ma.averageVolume(candles[len(candles)-5:])
 	vol20 := ma.averageVolume(candles[len(candles)-20:])
 	volOK := true
@@ -686,19 +662,17 @@ func (ma *MarketAnalyzer) IsUptrendWithScore(candles []models.CandleStick) (bool
 		volOK = (vol5 / vol20) >= 1.10
 	}
 
-	// Bollinger bands for over-extension veto
 	bb := algos.BollingerBands{Period: 20, Width: 2.0}
 	lower, middle, upper, bbErr := bb.Calculate(candles)
 	overextended := false
 	if bbErr == nil && middle > 0 {
 		bandWidth := upper - lower
-		// veto if price beyond upper band by >10% of band width or >1% above upper
+
 		if priceNow > upper*1.01 || (priceNow-upper) > 0.10*bandWidth {
 			overextended = true
 		}
 	}
 
-	// EMA distance veto (far above mean)
 	emaDist := 0.0
 	if ema21Now > 0 {
 		emaDist = (priceNow - ema21Now) / ema21Now
@@ -707,12 +681,10 @@ func (ma *MarketAnalyzer) IsUptrendWithScore(candles []models.CandleStick) (bool
 		overextended = true
 	}
 
-	// ATR-based blowoff veto (huge 1-bar move)
 	atrAbs := ma.calculateATR(candles)
 	oneBarRange := math.Abs(candles[len(candles)-1].Close - candles[len(candles)-2].Close)
 	blowoff := atrAbs > 0 && oneBarRange > 1.6*atrAbs
 
-	// Exhaustion candle veto: massive volume + big upper wick
 	exhaustion := false
 	if len(candles) >= 2 && vol20 > 0 {
 		c := candles[len(candles)-1]
@@ -723,16 +695,14 @@ func (ma *MarketAnalyzer) IsUptrendWithScore(candles []models.CandleStick) (bool
 		if total > 0 {
 			upperWickRatio = upperWick / total
 		}
-		// 1) close up but rejected from highs, 2) very high volume relative to recent
+
 		if c.Close > prev.Close && upperWickRatio > 0.55 && c.Volume > 1.8*vol20 {
 			exhaustion = true
 		}
 	}
 
-	// Pump veto: short-term % change too large → likely mean-revert soon
 	shortPump := ma.shortTermPriceChange(candles, 3) > 3.5
 
-	// Optional MFI/CCI soft veto to avoid buying distribution tops
 	var distTop bool
 	if mfiAlgo != nil {
 		if mv, _, e := mfiAlgo.Calculate(candles, ""); e == nil && mv > 80 && rsiSlope <= 0 {
@@ -745,7 +715,6 @@ func (ma *MarketAnalyzer) IsUptrendWithScore(candles []models.CandleStick) (bool
 		}
 	}
 
-	// Scoring (conservative weights)
 	score := 0.0
 	if dirOK {
 		score += 0.38
@@ -762,12 +731,11 @@ func (ma *MarketAnalyzer) IsUptrendWithScore(candles []models.CandleStick) (bool
 	if adxOK {
 		score += 0.10
 	}
-	// small boost if price is <= middle+10% BW (i.e., not extended)
+
 	if bbErr == nil && middle > 0 && priceNow <= upper && priceNow <= middle+(upper-lower)*0.10 {
 		score += 0.04
 	}
 
-	// Hard vetoes
 	if overextended {
 		return false, math.Max(0, score-0.25), "overextended"
 	}
@@ -784,7 +752,6 @@ func (ma *MarketAnalyzer) IsUptrendWithScore(candles []models.CandleStick) (bool
 		return false, math.Max(0, score-0.20), "near_top"
 	}
 
-	// Near-top veto based on RSI divergence/price structure
 	if ma.isNearTop(candles) {
 		return false, math.Max(0, score-0.20), "near_top"
 	}
@@ -814,7 +781,7 @@ func (ma *MarketAnalyzer) IsUptrend(candles []models.CandleStick) bool {
 }
 
 func (ma *MarketAnalyzer) isNearTop(candles []models.CandleStick) bool {
-	// Detect potential tops using RSI divergence and price patterns
+
 	rsi := algos.RSIStrategy{Period: 14}
 	rsiVals := make([]float64, len(candles))
 	for i := range candles {
@@ -822,12 +789,10 @@ func (ma *MarketAnalyzer) isNearTop(candles []models.CandleStick) bool {
 		rsiVals[i] = val
 	}
 
-	// Check for bearish divergence
 	if ma.hasBearishDivergence(candles, rsiVals) {
 		return true
 	}
 
-	// Check for double/triple top patterns
 	if ma.detectPriceTopPatterns(candles) {
 		return true
 	}
@@ -835,7 +800,7 @@ func (ma *MarketAnalyzer) isNearTop(candles []models.CandleStick) bool {
 }
 
 func (ma *MarketAnalyzer) hasBearishDivergence(candles []models.CandleStick, rsiVals []float64) bool {
-	// Look for higher highs in price with lower highs in RSI
+
 	pricePeaks := ma.detectPeaks(candles, true)
 	rsiPeaks := ma.detectPeaksFloat(rsiVals, true)
 
@@ -855,7 +820,7 @@ func (ma *MarketAnalyzer) detectPriceTopPatterns(candles []models.CandleStick) b
 	if len(candles) < 3 {
 		return false
 	}
-	// last 3 highs
+
 	recentHighs := []float64{candles[len(candles)-1].High}
 	if len(candles) >= 2 {
 		recentHighs = append(recentHighs, candles[len(candles)-2].High)
@@ -867,44 +832,36 @@ func (ma *MarketAnalyzer) detectPriceTopPatterns(candles []models.CandleStick) b
 		return false
 	}
 
-	// similar highs within ~1% range
 	h0, h1, h2 := recentHighs[0], recentHighs[1], recentHighs[2]
 	return math.Abs(h0-h1)/math.Max(h0, h1) < 0.01 &&
 		math.Abs(h1-h2)/math.Max(h1, h2) < 0.01
 }
 
-// assessMomentumQuality evaluates the quality of price momentum
 func (ma *MarketAnalyzer) assessMomentumQuality(candles []models.CandleStick) float64 {
 	if len(candles) < 20 {
 		return 0.5
 	}
 
-	// Calculate momentum persistence
 	momentumPersistence := ma.calculateMomentumPersistence(candles, 10)
 
-	// Calculate momentum acceleration
 	momentumAcceleration := ma.calculateMomentumAcceleration(candles, 5)
 
-	// Calculate momentum confirmation through volume
 	momentumVolumeConfirmation := ma.calculateMomentumVolumeConfirmation(candles, 10)
 
-	// Weighted quality score
 	quality := momentumPersistence*0.4 + momentumAcceleration*0.3 + momentumVolumeConfirmation*0.3
 
 	return math.Min(1.0, math.Max(0.0, quality))
 }
 
-// simulateMultiTimeframeAnalysis simulates analysis across multiple timeframes
 func (ma *MarketAnalyzer) simulateMultiTimeframeAnalysis(candles []models.CandleStick) float64 {
 	if len(candles) < 100 {
 		return 0.5
 	}
 
-	// Simulate higher timeframe by using every 4th candle
 	var higherTFCandles []models.CandleStick
 	for i := 0; i < len(candles); i += 4 {
 		if i+3 < len(candles) {
-			// Create synthetic higher timeframe candle
+
 			high := candles[i].High
 			low := candles[i].Low
 			open := candles[i].Open
@@ -935,11 +892,9 @@ func (ma *MarketAnalyzer) simulateMultiTimeframeAnalysis(candles []models.Candle
 		return 0.5
 	}
 
-	// Analyze higher timeframe trend
 	higherTFTrend := ma.IsUptrend(higherTFCandles)
 	currentTFTrend := ma.IsUptrend(candles)
 
-	// Calculate trend alignment score
 	alignmentScore := 0.5
 	if higherTFTrend == currentTFTrend {
 		alignmentScore = 0.8
@@ -950,13 +905,11 @@ func (ma *MarketAnalyzer) simulateMultiTimeframeAnalysis(candles []models.Candle
 	return alignmentScore
 }
 
-// detectRegimeChange identifies potential changes in market regime
 func (ma *MarketAnalyzer) detectRegimeChange(candles []models.CandleStick) bool {
 	if len(candles) < ma.MarketRegimePeriod*2 {
 		return false
 	}
 
-	// Compare recent regime with historical regime
 	recentPeriod := ma.MarketRegimePeriod / 2
 	recentCandles := candles[len(candles)-recentPeriod:]
 	historicalCandles := candles[len(candles)-ma.MarketRegimePeriod : len(candles)-recentPeriod]
@@ -964,13 +917,11 @@ func (ma *MarketAnalyzer) detectRegimeChange(candles []models.CandleStick) bool 
 	recentRegime := ma.detectMarketRegime(recentCandles)
 	historicalRegime := ma.detectMarketRegime(historicalCandles)
 
-	// Check for significant regime change
 	if recentRegime != historicalRegime && recentRegime != models.UnknownRegime && historicalRegime != models.UnknownRegime {
 		logger.Debugf("Market regime change detected: %v -> %v", historicalRegime, recentRegime)
 		return true
 	}
 
-	// Check for volatility regime change
 	recentVol := ma.calculateRollingVolatility(recentCandles, len(recentCandles))
 	historicalVol := ma.calculateRollingVolatility(historicalCandles, len(historicalCandles))
 
@@ -1002,14 +953,11 @@ func (ma *MarketAnalyzer) shortTermPriceChange(candles []models.CandleStick, loo
 	return pctChange
 }
 
-// Helper calculation methods for enhanced accuracy
-
 func (ma *MarketAnalyzer) calculateRollingVolatility(candles []models.CandleStick, period int) float64 {
 	if len(candles) < period || period < 2 {
 		return 0.0
 	}
 
-	// Use last 'period' candles
 	startIdx := max(len(candles)-period, 0)
 
 	var returns []float64
@@ -1024,7 +972,6 @@ func (ma *MarketAnalyzer) calculateRollingVolatility(candles []models.CandleStic
 		return 0.0
 	}
 
-	// Calculate standard deviation of returns
 	mean := 0.0
 	for _, ret := range returns {
 		mean += ret
@@ -1057,7 +1004,6 @@ func (ma *MarketAnalyzer) calculateTrendStrength(candles []models.CandleStick, p
 
 	totalReturn := (endPrice - startPrice) / startPrice
 
-	// Calculate path efficiency (how direct was the movement)
 	totalDistance := 0.0
 	for i := startIdx + 1; i < len(candles); i++ {
 		totalDistance += math.Abs(candles[i].Close - candles[i-1].Close)
@@ -1080,12 +1026,10 @@ func (ma *MarketAnalyzer) calculatePriceEfficiency(candles []models.CandleStick,
 
 	startIdx := max(len(candles)-period, 0)
 
-	// Calculate how efficiently price moved from start to end
 	startPrice := candles[startIdx].Close
 	endPrice := candles[len(candles)-1].Close
 	directDistance := math.Abs(endPrice - startPrice)
 
-	// Calculate actual path distance
 	actualDistance := 0.0
 	for i := startIdx + 1; i < len(candles); i++ {
 		actualDistance += math.Abs(candles[i].Close - candles[i-1].Close)
@@ -1103,7 +1047,6 @@ func (ma *MarketAnalyzer) calculateTrendConsistency(candles []models.CandleStick
 		return 0.5
 	}
 
-	// Calculate how consistent the trend direction is
 	upMoves := 0
 	downMoves := 0
 	totalMoves := 0
@@ -1121,7 +1064,6 @@ func (ma *MarketAnalyzer) calculateTrendConsistency(candles []models.CandleStick
 		return 0.5
 	}
 
-	// Consistency is how dominant the majority direction is
 	majorityMoves := math.Max(float64(upMoves), float64(downMoves))
 	return majorityMoves / float64(totalMoves)
 }
@@ -1131,7 +1073,6 @@ func (ma *MarketAnalyzer) calculateVolumeConfirmation(candles []models.CandleSti
 		return 0.5
 	}
 
-	// Check if volume confirms price movements
 	confirmations := 0
 	total := 0
 
@@ -1141,7 +1082,6 @@ func (ma *MarketAnalyzer) calculateVolumeConfirmation(candles []models.CandleSti
 		priceUp := candles[i].Close > candles[i-1].Close
 		highVolume := candles[i].Volume > avgVolume
 
-		// Volume should confirm direction
 		if (priceUp && highVolume) || (!priceUp && !highVolume) {
 			confirmations++
 		}
@@ -1161,7 +1101,6 @@ func (ma *MarketAnalyzer) isEMABullishAlignment(candles []models.CandleStick) bo
 		return false
 	}
 
-	// Calculate all EMAs
 	var emas [][]float64
 	for _, period := range ma.EMAPeriods {
 		ema := ma.calculateEMA(candles, period)
@@ -1171,7 +1110,6 @@ func (ma *MarketAnalyzer) isEMABullishAlignment(candles []models.CandleStick) bo
 		emas = append(emas, ema)
 	}
 
-	// Check alignment (fastest EMA first)
 	for i := 0; i < len(emas)-1; i++ {
 		currentEMA := emas[i][len(emas[i])-1]
 		nextEMA := emas[i+1][len(emas[i+1])-1]
@@ -1201,11 +1139,9 @@ func (ma *MarketAnalyzer) isRangeBoundMarket(candles []models.CandleStick, atr f
 
 	oscScore := ma.priceOscillationScore(candles, 20)
 
-	// Include ADX check to reduce false ranges during trend
 	adxNow := ma.calculateADX(candles)
 	thr := ma.calculateAdaptiveThresholds(candles, atr)
 
-	// “Range” ⇒ low ATR ratio, narrow bands, frequent band touches, weak trend
 	return atrRatio < 1.5 && bandWidth < 0.10 && oscScore >= 0.6 && adxNow < thr.weakTrend
 }
 
@@ -1213,7 +1149,7 @@ func (ma *MarketAnalyzer) priceOscillationScore(candles []models.CandleStick, pe
 	if period <= 0 || len(candles) < period {
 		return 0
 	}
-	// compute BB once on the last `period` segment
+
 	window := candles[len(candles)-period:]
 	bb := algos.BollingerBands{Period: period, Width: 2.0}
 	lower, middle, upper, err := bb.Calculate(window)
@@ -1234,12 +1170,11 @@ func (ma *MarketAnalyzer) priceOscillationScore(candles []models.CandleStick, pe
 }
 
 func (ma *MarketAnalyzer) detectTrendTransitions(candles []models.CandleStick, adx float64) models.MarketState {
-	// Check for potential trend exhaustion
+
 	if ma.isDivergencePresent(candles) {
 		return models.Transitional
 	}
 
-	// Check for emerging trends
 	if ma.isTrendEmerging(candles, adx) {
 		return models.Transitional
 	}
@@ -1252,7 +1187,6 @@ func (ma *MarketAnalyzer) assessPriceStructure(candles []models.CandleStick) flo
 		return 0.5
 	}
 
-	// Assess the quality of higher highs/lower lows pattern
 	highs := ma.detectPeaks(candles, true)
 	lows := ma.detectPeaks(candles, false)
 
@@ -1260,20 +1194,17 @@ func (ma *MarketAnalyzer) assessPriceStructure(candles []models.CandleStick) flo
 		return 0.5
 	}
 
-	// Check for clean trend structure
 	higherHighs := 0
 	lowerLows := 0
 	totalHighs := len(highs) - 1
 	totalLows := len(lows) - 1
 
-	// Check highs progression
 	for i := 1; i < len(highs); i++ {
 		if candles[highs[i]].High > candles[highs[i-1]].High {
 			higherHighs++
 		}
 	}
 
-	// Check lows progression
 	for i := 1; i < len(lows); i++ {
 		if candles[lows[i]].Low > candles[lows[i-1]].Low {
 			lowerLows++
@@ -1295,7 +1226,6 @@ func (ma *MarketAnalyzer) assessBreakoutQuality(candles []models.CandleStick) fl
 		return 0.5
 	}
 
-	// Assess quality of recent breakouts
 	bb := algos.BollingerBands{Period: 20, Width: 2.0}
 	lower, middle, upper, err := bb.Calculate(candles)
 	if err != nil {
@@ -1305,15 +1235,14 @@ func (ma *MarketAnalyzer) assessBreakoutQuality(candles []models.CandleStick) fl
 	recentPrice := candles[len(candles)-1].Close
 	prevPrice := candles[len(candles)-2].Close
 
-	// Check for clean breakouts with follow-through
 	breakoutQuality := 0.5
 
 	if recentPrice > upper && prevPrice <= upper {
-		// Upward breakout
+
 		followThrough := (recentPrice - upper) / (upper - middle)
 		breakoutQuality = math.Min(1.0, 0.5+followThrough)
 	} else if recentPrice < lower && prevPrice >= lower {
-		// Downward breakout
+
 		followThrough := (lower - recentPrice) / (middle - lower)
 		breakoutQuality = math.Min(1.0, 0.5+followThrough)
 	}
@@ -1326,7 +1255,6 @@ func (ma *MarketAnalyzer) calculateMomentumPersistence(candles []models.CandleSt
 		return 0.5
 	}
 
-	// Calculate how persistent momentum is over the period
 	consistentMoves := 0
 	totalMoves := 0
 
@@ -1334,7 +1262,7 @@ func (ma *MarketAnalyzer) calculateMomentumPersistence(candles []models.CandleSt
 		currentMove := candles[i+1].Close - candles[i].Close
 		if i > 0 {
 			prevMove := candles[i].Close - candles[i-1].Close
-			// Check if moves are in same direction
+
 			if (currentMove > 0 && prevMove > 0) || (currentMove < 0 && prevMove < 0) {
 				consistentMoves++
 			}
@@ -1354,19 +1282,16 @@ func (ma *MarketAnalyzer) calculateMomentumAcceleration(candles []models.CandleS
 		return 0.5
 	}
 
-	// Calculate if momentum is accelerating or decelerating
 	recentMomentum := 0.0
 	earlierMomentum := 0.0
 
 	halfPeriod := period / 2
 
-	// Recent momentum
 	for i := len(candles) - halfPeriod; i < len(candles)-1; i++ {
 		recentMomentum += math.Abs(candles[i+1].Close - candles[i].Close)
 	}
 	recentMomentum /= float64(halfPeriod)
 
-	// Earlier momentum
 	for i := len(candles) - period; i < len(candles)-halfPeriod-1; i++ {
 		earlierMomentum += math.Abs(candles[i+1].Close - candles[i].Close)
 	}
@@ -1376,7 +1301,6 @@ func (ma *MarketAnalyzer) calculateMomentumAcceleration(candles []models.CandleS
 		return 0.5
 	}
 
-	// Return acceleration ratio normalized to 0-1 range
 	accelerationRatio := recentMomentum / earlierMomentum
 	return math.Min(1.0, math.Max(0.0, (accelerationRatio-0.5)*2))
 }
@@ -1394,7 +1318,6 @@ func (ma *MarketAnalyzer) calculateMomentumVolumeConfirmation(candles []models.C
 		priceMove := math.Abs(candles[i].Close - candles[i-1].Close)
 		volumeRatio := candles[i].Volume / avgVolume
 
-		// Strong moves should be accompanied by higher volume
 		if priceMove > 0 {
 			expectedVolumeRatio := 1.0 + priceMove*10 // Adjust multiplier as needed
 			if volumeRatio >= expectedVolumeRatio*0.8 {
@@ -1410,8 +1333,6 @@ func (ma *MarketAnalyzer) calculateMomentumVolumeConfirmation(candles []models.C
 
 	return float64(confirmations) / float64(total)
 }
-
-// Additional helper structures and methods
 
 type AdaptiveThresholds struct {
 	highVolatility float64
@@ -1442,14 +1363,11 @@ func (ma *MarketAnalyzer) detectPeaksFloat(values []float64, findHighs bool) []i
 	return peaks
 }
 
-// Enhanced helper methods that were missing from the original implementation
-
 func (ma *MarketAnalyzer) isDivergencePresent(candles []models.CandleStick) bool {
 	if len(candles) < 20 {
 		return false
 	}
 
-	// Simple RSI divergence detection
 	rsi := algos.RSIStrategy{Period: 14}
 	var rsiValues []float64
 
@@ -1462,14 +1380,12 @@ func (ma *MarketAnalyzer) isDivergencePresent(candles []models.CandleStick) bool
 		return false
 	}
 
-	// Look for divergence in last 10 periods
 	recentCandles := candles[len(candles)-10:]
 	recentRSI := rsiValues[len(rsiValues)-10:]
 
 	pricePeaks := ma.detectPeaks(recentCandles, true)
 	rsiPeaks := ma.detectPeaksFloat(recentRSI, true)
 
-	// Check for bearish divergence (higher price highs, lower RSI highs)
 	if len(pricePeaks) >= 2 && len(rsiPeaks) >= 2 {
 		lastPriceHigh := recentCandles[pricePeaks[len(pricePeaks)-1]].High
 		prevPriceHigh := recentCandles[pricePeaks[len(pricePeaks)-2]].High
@@ -1489,15 +1405,12 @@ func (ma *MarketAnalyzer) isTrendEmerging(candles []models.CandleStick, adx floa
 		return false
 	}
 
-	// Check for emerging trend conditions
 	recentADX := adx
 
-	// ADX should be rising and above a threshold but not too high yet
 	if recentADX > 20 && recentADX < 35 {
-		// Check if EMA alignment is forming
+
 		emaAlignment := ma.isEMABullishAlignment(candles)
 
-		// Check if volume is supporting
 		recentVolume := ma.averageVolume(candles[len(candles)-5:])
 		avgVolume := ma.averageVolume(candles)
 
@@ -1509,8 +1422,6 @@ func (ma *MarketAnalyzer) isTrendEmerging(candles []models.CandleStick, adx floa
 	return false
 }
 
-// Remaining helper methods that complete the implementation
-
 func (ma *MarketAnalyzer) calculateEMA(candles []models.CandleStick, period int) []float64 {
 	if period <= 0 || len(candles) < period {
 		return nil
@@ -1519,19 +1430,17 @@ func (ma *MarketAnalyzer) calculateEMA(candles []models.CandleStick, period int)
 	multiplier := 2.0 / float64(period+1)
 
 	ema := make([]float64, len(candles))
-	// seed with SMA of first `period` closes
+
 	sum := 0.0
 	for i := 0; i < period; i++ {
 		sum += candles[i].Close
 	}
 	ema[period-1] = sum / float64(period)
 
-	// compute EMA forward
 	for i := period; i < len(candles); i++ {
 		ema[i] = (candles[i].Close-ema[i-1])*multiplier + ema[i-1]
 	}
 
-	// return only valid values starting at index period-1
 	out := make([]float64, 0, len(candles)-(period-1))
 	for i := period - 1; i < len(candles); i++ {
 		out = append(out, ema[i])
@@ -1585,7 +1494,7 @@ func (ma *MarketAnalyzer) detectFractalCharacteristics(candles []models.CandleSt
 	if width <= 0 {
 		return models.FractalSignalNone
 	}
-	// report breakout proximity (both sides mapped to same enum in your model)
+
 	if cur >= hi-0.05*width || cur <= lo+0.05*width {
 		return models.FractalSignalBreakout
 	}
@@ -1597,7 +1506,6 @@ func (ma *MarketAnalyzer) analyzeVolumeProfile(candles []models.CandleStick) mod
 		return models.BalancedProfile
 	}
 
-	// Simple volume profile analysis
 	upVolumeCandles := candles[len(candles)-10:]
 	totalUpVolume := 0.0
 	totalDownVolume := 0.0
@@ -1664,7 +1572,6 @@ func (ma *MarketAnalyzer) averageVolume(candles []models.CandleStick) float64 {
 	return sum / float64(len(candles))
 }
 
-// Continue with the detectPeaks method completion
 func (ma *MarketAnalyzer) detectPeaks(candles []models.CandleStick, lookForHighs bool) []int {
 	var peaks []int
 	minDistance := 2 // minimum distance between peaks
@@ -1672,14 +1579,14 @@ func (ma *MarketAnalyzer) detectPeaks(candles []models.CandleStick, lookForHighs
 	for i := 1; i < len(candles)-1; i++ {
 		if lookForHighs {
 			if candles[i].High > candles[i-1].High && candles[i].High > candles[i+1].High {
-				// Check distance from last peak
+
 				if len(peaks) == 0 || i-peaks[len(peaks)-1] >= minDistance {
 					peaks = append(peaks, i)
 				}
 			}
 		} else {
 			if candles[i].Low < candles[i-1].Low && candles[i].Low < candles[i+1].Low {
-				// Check distance from last peak
+
 				if len(peaks) == 0 || i-peaks[len(peaks)-1] >= minDistance {
 					peaks = append(peaks, i)
 				}
@@ -1695,7 +1602,6 @@ func (ma *MarketAnalyzer) Validate() error {
 	return v.Struct(ma)
 }
 
-// small utility
 func max(a, b int) int {
 	if a > b {
 		return a

@@ -13,7 +13,6 @@ type RSIStrategy struct {
 	Period     int `json:"period"`
 }
 
-// Signals: -1 = sell if RSI > Overbought, +1 = buy if RSI < Oversold, else 0.
 func (r *RSIStrategy) Calculate(candles []models.CandleStick, _ string) (float64, int, error) {
 	rsiValues, err := calculateRSI(candles, r.Period)
 	if err != nil {
@@ -31,8 +30,6 @@ func (r *RSIStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 	}
 }
 
-// calculateRSI computes RSI using Wilder's smoothing.
-// Output is aligned so rsi[0] corresponds to candles[period].
 func calculateRSI(candles []models.CandleStick, period int) ([]float64, error) {
 	if period < 2 {
 		return nil, fmt.Errorf("RSI period must be >= 2 (got %d)", period)
@@ -41,7 +38,6 @@ func calculateRSI(candles []models.CandleStick, period int) ([]float64, error) {
 		return nil, fmt.Errorf("not enough data to calculate RSI: need at least %d candles, got %d", period+1, len(candles))
 	}
 
-	// Precompute first period's average gain/loss
 	avgGain := 0.0
 	avgLoss := 0.0
 	for i := 1; i <= period; i++ {
@@ -58,7 +54,6 @@ func calculateRSI(candles []models.CandleStick, period int) ([]float64, error) {
 	nOut := len(candles) - period
 	rsi := make([]float64, nOut)
 
-	// Helper to convert avgGain/avgLoss -> RSI in [0,100]
 	toRSI := func(g, l float64) float64 {
 		const eps = 1e-12
 		switch {
@@ -81,10 +76,8 @@ func calculateRSI(candles []models.CandleStick, period int) ([]float64, error) {
 		return val
 	}
 
-	// First RSI value corresponds to candles[period]
 	rsi[0] = toRSI(avgGain, avgLoss)
 
-	// Wilder smoothing for subsequent values
 	for i := period + 1; i < len(candles); i++ {
 		change := candles[i].Close - candles[i-1].Close
 		gain := 0.0
@@ -99,7 +92,7 @@ func calculateRSI(candles []models.CandleStick, period int) ([]float64, error) {
 		avgLoss = ((avgLoss * float64(period-1)) + loss) / float64(period)
 
 		outIdx := i - period
-		// sanity: outIdx must be within [1, nOut-1]
+
 		if outIdx < 1 || outIdx >= nOut {
 			return nil, fmt.Errorf("RSI: internal index out of range (%d of %d)", outIdx, nOut)
 		}

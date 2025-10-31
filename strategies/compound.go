@@ -42,29 +42,31 @@ type CompoundStrategy struct {
 }
 
 type CurrentIndicators struct {
-	RSIVal        float64
-	Histogram     float64
-	PrevHistogram float64
-	HistSlope     float64
-	PrevRSI       float64
-	RsiSlope      float64
-	SignalLine    float64
-	MacdLine      float64
-	MacdIndicator int
-	StochasticK   float64
-	StochasticD   float64
-	LowerBand     float64
-	MiddleBand    float64
-	UpperBand     float64
-	BandwidthPct  float64
-	IchimokuRes   algos.IchimokuResult
-	CCIVal        float64
-	CCISignal     int
-	MFIVal        float64
-	MFiSignal     int
-	ADRVal        float64
-	ADRSignal     int
-	CandleSticks  []models.CandleStick
+	RSIVal          float64
+	Histogram       float64
+	PrevHistogram   float64
+	HistSlope       float64
+	PrevRSI         float64
+	RsiSlope        float64
+	SignalLine      float64
+	MacdLine        float64
+	MacdIndicator   int
+	StochasticK     float64
+	StochasticD     float64
+	LowerBand       float64
+	MiddleBand      float64
+	UpperBand       float64
+	BandwidthPct    float64
+	IchimokuRes     algos.IchimokuResult
+	CCIVal          float64
+	CCISignal       int
+	MFIVal          float64
+	MFiSignal       int
+	ADRVal          float64
+	ADRSignal       int
+	CandleSticks    []models.CandleStick
+	PrevMiddleBand  float64
+	MiddleBandSlope float64
 }
 
 var (
@@ -163,7 +165,6 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			return 0, nil
 		}
 
-		// Derive extra fields for scoring
 		pricePos := 0.5
 		den := currentIndicators.UpperBand - currentIndicators.LowerBand
 		if den != 0 {
@@ -175,7 +176,6 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			}
 		}
 
-		// ATR: primary from algos.ATR, fallback to ADRVal
 		atr := 0.0
 		if v, err := algos.ATR(currentIndicators.CandleSticks, 14); err == nil {
 			atr = v
@@ -183,7 +183,6 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			atr = currentIndicators.ADRVal
 		}
 
-		// Lightweight confidence estimator (0..1)
 		conf := cs.entryScore(currentIndicators, currentPrice)
 
 		priority := 3
@@ -254,7 +253,6 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 	return 0, nil
 }
 
-// calculateDynamicRiskReward calculates adjusted RR based on volatility (ATR%)
 func (cs *CompoundStrategy) calculateDynamicRiskReward(ci CurrentIndicators) float64 {
 	cp := 0.0
 	if n := len(ci.CandleSticks); n > 0 {
@@ -282,7 +280,6 @@ func (cs *CompoundStrategy) calculateDynamicRiskReward(ci CurrentIndicators) flo
 
 var pairCooldownMu sync.Map
 
-// isInCooldownPeriod checks if we're in a cooldown period after a losing trade
 func (cs *CompoundStrategy) isInCooldownPeriod(pair string) bool {
 	muIface, _ := pairCooldownMu.LoadOrStore(pair, &sync.Mutex{})
 	mu := muIface.(*sync.Mutex)
@@ -311,11 +308,9 @@ func atLeast(n int, flags ...bool) bool {
 	return cnt >= n
 }
 
-// ---------- Entry scoring & helpers ----------
-
 func (cs *CompoundStrategy) entryScore(ci CurrentIndicators, currentPrice float64) float64 {
 	score := 0.0
-	// Trend/confluence
+
 	if ci.ADRSignal > 0 {
 		score += 0.5
 	}
@@ -331,20 +326,25 @@ func (cs *CompoundStrategy) entryScore(ci CurrentIndicators, currentPrice float6
 	if ci.IchimokuRes.Bullish {
 		score += 0.10
 	}
-	// Not extended/overbought on entry
+
+	if ci.MiddleBandSlope > 0 {
+		score += 0.12
+	}
+
 	if currentPrice <= ci.MiddleBand*1.01 {
 		score += 0.10
 	}
-	// Healthy momentum/volume proxies
-	if ci.RSIVal > 35 && ci.RSIVal < 65 {
-		score += 0.10
+
+	if ci.RSIVal > 40 && ci.RSIVal < 65 {
+		score += 0.12
 	}
 	if ci.MFIVal > 30 && ci.MFIVal < 70 {
-		score += 0.03
+		score += 0.04
 	}
 	if ci.CCIVal > -100 && ci.CCIVal < 100 {
 		score += 0.02
 	}
+
 	if score > 1.0 {
 		return 1.0
 	}
@@ -359,7 +359,6 @@ func (cs *CompoundStrategy) nearLowerBand(ci CurrentIndicators, currentPrice flo
 	return currentPrice <= (ci.LowerBand + 0.15*width)
 }
 
-// scalePendingCooldown: make confirmation wait shorter in strong trends and longer in chaos/range
 func (cs *CompoundStrategy) scalePendingCooldown(base time.Duration, state models.MarketState) time.Duration {
 	if base <= 0 {
 		return 0
@@ -380,14 +379,13 @@ func (cs *CompoundStrategy) scalePendingCooldown(base time.Duration, state model
 	}
 }
 
-// ---------- Bullish checks ----------
 func (cs *CompoundStrategy) checkBullishConditions(
 	state models.MarketState,
 	ci CurrentIndicators,
 	currentPrice float64,
 	pair string,
 ) bool {
-	// Dynamic RR
+
 	dynRR := cs.calculateDynamicRiskReward(ci)
 
 	mfiOK := ci.MFIVal > float64(cs.MFI.Oversold) &&
@@ -398,7 +396,6 @@ func (cs *CompoundStrategy) checkBullishConditions(
 
 	emaAlignment := ci.MacdLine > ci.SignalLine
 
-	// cooldown after loss?
 	if cs.isInCooldownPeriod(pair) {
 		return false
 	}
@@ -419,60 +416,333 @@ func (cs *CompoundStrategy) checkBullishConditions(
 	}
 }
 
-func (cs *CompoundStrategy) checkBullishStronglyTrending(
-	ci CurrentIndicators,
-	currentPrice, dynamicRR float64,
-	volCCIok bool, emaUp bool,
-	state models.MarketState,
-) bool {
-	score := cs.entryScore(ci, currentPrice)
-	if !(emaUp && score >= 0.60 && ci.HistSlope > 0) {
-		return false
-	}
-
-	atr, err := algos.ATR(ci.CandleSticks, 14)
-	if err != nil || atr <= 0 {
-		atr = math.Max(1e-9, ci.MiddleBand*0.01)
-	}
-
-	pullbackEntry := currentPrice <= ci.MiddleBand*1.02 && currentPrice >= ci.MiddleBand*0.98
-	momentumEntry := ci.MacdLine > ci.SignalLine*1.05 && ci.RSIVal > 45
-
-	if currentPrice > ci.UpperBand+0.5*atr {
-		return false
-	}
-
-	if !pullbackEntry && !momentumEntry {
-		return false
-	}
-
-	stop := currentPrice - 1.8*atr
-	target := math.Max(ci.UpperBand*1.02, currentPrice+2.2*atr)
-	rr := cs.calcRR(state, currentPrice, stop, target)
-
-	return volCCIok && rr > (dynamicRR*0.85)
-}
-
 func (cs *CompoundStrategy) checkBullishTrending(
 	ci CurrentIndicators,
 	currentPrice, dynamicRR float64,
 	volCCIok bool,
 	state models.MarketState,
 ) bool {
-	score := cs.entryScore(ci, currentPrice)
-	if !(score >= 0.62 && ci.HistSlope > 0) {
+
+	var score float64 = 0.0
+	requiredScore := 5.5
+
+	mbSlopeOK := ci.MiddleBandSlope > 0.0001   // zpřísněno z -0.0001
+	macdOK := ci.MacdLine > ci.SignalLine*0.99 // zpřísněno z 0.97
+	trendOK := mbSlopeOK && macdOK
+
+	if trendOK {
+		score += 2.0
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓1 Trend [+2.0] => %.1f", score)
+	} else if macdOK && mbSlopeOK {
+		score += 0.8 // sníženo z 1.2
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓1 Trend [+0.8] => %.1f | partial", score)
+	} else {
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✗1 Trend [+0] => %.1f", score)
 		return false
+	}
+
+	priceOK := currentPrice >= ci.IchimokuRes.Kijun*0.998 // zpřísněno z 0.995
+	if priceOK {
+		score += 1.0
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓2 Price [+1.0] => %.1f", score)
+	} else if currentPrice >= ci.IchimokuRes.Kijun*0.993 {
+		score += 0.4 // sníženo z 0.6
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓2 Price [+0.4] => %.1f | close enough", score)
+	} else {
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓2 Price [+0] => %.1f", score)
+	}
+
+	atr, err := algos.ATR(ci.CandleSticks, 14)
+	if err != nil || atr <= 0 {
+		base := ci.MiddleBand
+		if base <= 0 {
+			if n := len(ci.CandleSticks); n > 0 {
+				base = ci.CandleSticks[n-1].Close
+			}
+		}
+		if base <= 0 {
+			base = 1.0
+		}
+		atr = math.Max(1e-9, base*0.01)
+	}
+	logger.DebugColorf(logger.Cyan, "[TRENDING] ✓3 ATR | ATR:%.6f", atr)
+
+	adrOK := ci.ADRSignal >= 0
+	if adrOK {
+		score += 0.8
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓4 ADR [+0.8] => %.1f", score)
+	} else {
+		score += 0.0 // odstraněno 0.2 za weak
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓4 ADR [+0.0] => %.1f | weak", score)
+	}
+
+	macdMomOK := ci.MacdIndicator == 1 && ci.HistSlope > 0.0              // zpřísněno
+	rsiMomOK := ci.HistSlope > 0.0 && ci.RsiSlope > 0.0 && ci.RSIVal < 68 // zpřísněno z 72
+	momentumOK := macdMomOK || rsiMomOK
+
+	if macdMomOK && rsiMomOK {
+		score += 1.5
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓5 Momentum [+1.5] => %.1f | both strong", score)
+	} else if momentumOK {
+		score += 0.8 // sníženo z 1.0
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓5 Momentum [+0.8] => %.1f | one ok", score)
+	} else {
+		score += 0.0 // odstraněno 0.3
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓5 Momentum [+0.0] => %.1f | weak", score)
+	}
+
+	notOverextended := currentPrice < ci.UpperBand+0.10*atr // zpřísněno z 0.15
+	if notOverextended {
+		score += 0.5
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓6 Extension [+0.5] => %.1f", score)
+	}
+
+	pullbackEntry := currentPrice <= ci.MiddleBand*1.010 && currentPrice >= ci.MiddleBand*0.975 // zpřísněno
+
+	boAccepted := false
+	var boCloseOK, boLowOK, boBullish, boVolume bool
+	if n := len(ci.CandleSticks); n >= 3 {
+		prevHigh := math.Max(ci.CandleSticks[n-2].High, ci.CandleSticks[n-3].High)
+		boLevel := prevHigh + 0.08*atr // zpřísněno z 0.10
+		last := ci.CandleSticks[n-1]
+
+		avgVol := 0.0
+		for i := n - 10; i < n-1; i++ {
+			if i >= 0 {
+				avgVol += ci.CandleSticks[i].Volume
+			}
+		}
+		avgVol /= math.Min(10, float64(n-1))
+
+		boCloseOK = last.Close >= boLevel
+		boLowOK = last.Low >= prevHigh-0.08*atr                    // zpřísněno z 0.12
+		boBullish = last.Close > last.Open*0.998                   // zpřísněno z 0.995
+		boVolume = last.Volume > avgVol*1.0                        // zpřísněno z 0.90
+		boAccepted = boCloseOK && boLowOK && boBullish && boVolume // zpřísněno: všechny podmínky
+
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓7 Breakout | Close>=BO:%t, Low ok:%t, Bull:%t, Vol:%t => %t",
+			boCloseOK, boLowOK, boBullish, boVolume, boAccepted)
+	}
+
+	ridingTrend := ci.MacdLine > ci.SignalLine*1.0 && ci.HistSlope > 0.0001 && ci.MiddleBandSlope > 0.0002 // zpřísněno
+
+	entryOK := pullbackEntry || boAccepted || ridingTrend
+
+	if pullbackEntry {
+		score += 1.5
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓8 Entry [+1.5] => %.1f | pullback", score)
+	} else if boAccepted {
+		score += 1.5
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓8 Entry [+1.5] => %.1f | breakout", score)
+	} else if ridingTrend {
+		score += 1.2
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓8 Entry [+1.2] => %.1f | riding trend", score)
+	} else {
+		score += 0.0 // odstraněno fallback scoring
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓8 Entry [+0.0] => %.1f | weak", score)
+	}
+
+	if !entryOK {
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓8b Entry penalty | No good entry => REJECT")
+		return false
+	}
+
+	if volCCIok {
+		score += 0.8
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓9 Vol [+0.8] => %.1f", score)
+	} else {
+		score += 0.0 // odstraněno 0.2
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓9 Vol [+0.0] => %.1f | weak", score)
+	}
+
+	target := ci.UpperBand
+	stop := currentPrice - 1.5*atr // zpřísněno z 1.8
+	rr := cs.calcRR(state, currentPrice, stop, target)
+	rrRequired := dynamicRR * 0.90 // zpřísněno z 0.85
+
+	rsiMid := ci.RSIVal > 40 && ci.RSIVal < 68 // zpřísněno z 75
+	if rr > rrRequired && rsiMid {
+		score += 1.2
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓10 RR [+1.2] => %.1f | RR:%.3f, RSI:%.2f",
+			score, rr, ci.RSIVal)
+	} else if rr > rrRequired*0.90 && rsiMid {
+		score += 0.6 // sníženo z 0.8
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓10 RR [+0.6] => %.1f | acceptable", score)
+	} else {
+		score += 0.0 // odstraněno 0.3
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓10 RR [+0.0] => %.1f | weak", score)
+	}
+
+	result := score >= requiredScore
+	logger.DebugColorf(logger.Cyan, "[TRENDING] ✓11 FINAL | Score:%.1f vs Required:%.1f => %t",
+		score, requiredScore, result)
+
+	if result {
+		entryType := "momentum"
+		if pullbackEntry {
+			entryType = "pullback"
+		} else if boAccepted {
+			entryType = "breakout"
+		} else if ridingTrend {
+			entryType = "riding"
+		}
+
+		logger.InfoColorf(logger.Green, "[TRENDING BUY SIGNAL ✓] Price:%.4f, Score:%.1f/%.1f, RR:%.2f, RSI:%.1f, Entry:%s",
+			currentPrice, score, requiredScore, rr, ci.RSIVal, entryType)
+	}
+	return result
+}
+
+func (cs *CompoundStrategy) checkBullishStronglyTrending(
+	ci CurrentIndicators,
+	currentPrice, dynamicRR float64,
+	volCCIok bool, emaUp bool,
+	state models.MarketState,
+) bool {
+
+	var score float64 = 0.0
+	requiredScore := 6.5
+
+	mbOK := ci.MiddleBandSlope > 0.0002                                                                     // zpřísněno z -0.0002
+	ichiOK := ci.IchimokuRes.Bullish && currentPrice > math.Max(ci.IchimokuRes.SpanA, ci.IchimokuRes.SpanB) // zpřísněno
+	macdOK := ci.MacdLine > ci.SignalLine*0.99                                                              // zpřísněno z 0.97
+	trendOK := (mbOK && ichiOK && macdOK)
+
+	if trendOK {
+		score += 2.5
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓1 Trend [+2.5] => %.1f | full", score)
+	} else if mbOK && macdOK && ichiOK {
+		score += 1.5 // sníženo z 1.8
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓1 Trend [+1.5] => %.1f | 2/3", score)
+	} else if macdOK && ichiOK {
+		score += 0.8 // sníženo z 1.0
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓1 Trend [+0.8] => %.1f | minimal", score)
+	} else {
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✗1 Trend [+0] => %.1f", score)
+		return false
+	}
+
+	priceAboveKijun := currentPrice > ci.IchimokuRes.Kijun*0.998   // zpřísněno z 0.995
+	priceAboveTenkan := currentPrice > ci.IchimokuRes.Tenkan*0.998 // zpřísněno z 0.995
+	if priceAboveKijun && priceAboveTenkan {
+		score += 1.5
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓2 Price [+1.5] => %.1f", score)
+	} else if priceAboveKijun || priceAboveTenkan {
+		score += 0.6 // sníženo z 1.0
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓2 Price [+0.6] => %.1f", score)
+	} else {
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓2 Price [+0.0] => %.1f", score)
+	}
+
+	entryScore := cs.entryScore(ci, currentPrice)
+	if emaUp && entryScore >= 0.68 && ci.HistSlope > 0.0 { // zpřísněno z 0.60
+		score += 1.8
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓3 Score [+1.8] => %.1f", score)
+	} else if emaUp && entryScore >= 0.60 { // zpřísněno z 0.52
+		score += 1.0 // sníženo z 1.2
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓3 Score [+1.0] => %.1f", score)
+	} else if entryScore >= 0.60 {
+		score += 0.5 // sníženo z 0.8
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓3 Score [+0.5] => %.1f", score)
 	}
 
 	atr, err := algos.ATR(ci.CandleSticks, 14)
 	if err != nil || atr <= 0 {
 		atr = math.Max(1e-9, ci.MiddleBand*0.01)
 	}
-	target := ci.UpperBand
-	stop := currentPrice - 2.1*atr
-	rr := cs.calcRR(state, currentPrice, stop, target)
+	logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓4 ATR | ATR:%.6f", atr)
 
-	return volCCIok && rr > dynamicRR
+	pullbackTenkan := currentPrice <= ci.IchimokuRes.Tenkan*1.005 && currentPrice >= ci.IchimokuRes.Tenkan*0.980 // zpřísněno
+	pullbackKijun := currentPrice <= ci.IchimokuRes.Kijun*1.005 && currentPrice >= ci.IchimokuRes.Kijun*0.980    // zpřísněno
+	pullbackMB := currentPrice <= ci.MiddleBand*1.012 && currentPrice >= ci.MiddleBand*0.980                     // zpřísněno
+	pullbackEntry := pullbackTenkan || pullbackKijun || pullbackMB
+
+	boAccepted := false
+	if n := len(ci.CandleSticks); n >= 3 {
+		prevHigh := math.Max(ci.CandleSticks[n-2].High, ci.CandleSticks[n-3].High)
+		boLevel := prevHigh + 0.10*atr // zpřísněno z 0.08
+		last := ci.CandleSticks[n-1]
+		avgVol := 0.0
+		for i := n - 10; i < n-1; i++ {
+			if i >= 0 {
+				avgVol += ci.CandleSticks[i].Volume
+			}
+		}
+		avgVol /= math.Min(10, float64(n-1))
+
+		boCloseOK := last.Close >= boLevel
+		boLowOK := last.Low >= prevHigh-0.08*atr                   // zpřísněno z 0.10
+		boBullish := last.Close > last.Open*0.998                  // zpřísněno z 0.995
+		boVolume := last.Volume > avgVol*1.05                      // zpřísněno z 0.95
+		boAccepted = boCloseOK && boLowOK && boBullish && boVolume // všechny podmínky
+	}
+
+	strongMomentum := ci.MacdIndicator == 1 && // zpřísněno
+		ci.HistSlope > 0.0001 && ci.RsiSlope > 0.0 // zpřísněno
+
+	if (pullbackEntry || boAccepted) && strongMomentum {
+		score += 1.5
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓5 Entry [+1.5] => %.1f", score)
+	} else if pullbackEntry || boAccepted {
+		score += 0.8 // sníženo
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓5 Entry [+0.8] => %.1f", score)
+	} else {
+		score += 0.0 // odstraněno 0.5
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓5 Entry [+0.0] => %.1f", score)
+	}
+
+	maxPrice := ci.UpperBand + 0.20*atr // zpřísněno z 0.30
+	notOverextended := currentPrice <= maxPrice
+	if notOverextended {
+		score += 0.8
+	} else {
+		score += 0.0 // odstraněno fallback
+	}
+	logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓6 Extension [+%.1f] => %.1f",
+		map[bool]float64{true: 0.8, false: 0.0}[notOverextended], score)
+
+	stop := currentPrice - 1.5*atr                               // zpřísněno z 1.8
+	target := math.Max(ci.UpperBand*1.020, currentPrice+2.5*atr) // zpřísněno z 2.2
+	rr := cs.calcRR(state, currentPrice, stop, target)
+	rrRequired := dynamicRR * 0.90 // zpřísněno z 0.80
+	rrOK := rr > rrRequired
+	if rrOK {
+		score += 1.5
+	} else if rr > rrRequired*0.90 {
+		score += 0.7 // sníženo z 1.0
+	} else {
+		score += 0.0 // odstraněno 0.3
+	}
+	logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓7 RR [+%.1f] => %.1f | RR:%.3f",
+		map[bool]float64{true: 1.5, false: map[bool]float64{true: 0.7, false: 0.0}[rr > rrRequired*0.90]}[rrOK],
+		score, rr)
+
+	rsiOK := ci.RSIVal <= 68 && ci.RSIVal >= 40 // zpřísněno z 72
+	if rsiOK {
+		score += 0.5
+	} else {
+		score += 0.0 // odstraněno fallback
+	}
+	logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓8 RSI [+%.1f] => %.1f",
+		map[bool]float64{true: 0.5, false: 0.0}[rsiOK], score)
+
+	if volCCIok {
+		score += 0.5
+	} else {
+		score += 0.0 // odstraněno 0.2
+	}
+	logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓9 Vol [+%.1f] => %.1f",
+		map[bool]float64{true: 0.5, false: 0.0}[volCCIok], score)
+
+	result := score >= requiredScore
+	logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓10 FINAL | Score:%.1f vs Required:%.1f => %t",
+		score, requiredScore, result)
+
+	if result {
+		logger.InfoColorf(logger.Green, "[ST-TREND BUY SIGNAL ✓] Price:%.4f, Score:%.1f/%.1f, EntryScore:%.3f, RR:%.2f",
+			currentPrice, score, requiredScore, entryScore, rr)
+	}
+	return result
 }
 
 func (cs *CompoundStrategy) checkBullishRangeBound(
@@ -480,35 +750,151 @@ func (cs *CompoundStrategy) checkBullishRangeBound(
 	currentPrice, dynamicRR float64,
 	state models.MarketState,
 ) bool {
-	// Enter near lower band with oversold conditions; require low-ish volatility confirmation (ADR green)
-	lowBounce := cs.nearLowerBand(ci, currentPrice) &&
-		(ci.RSIVal < 38 || ci.CCIVal <= cs.CCI.Oversold || ci.StochasticK < 25)
+
+	nearLower := cs.nearLowerBand(ci, currentPrice)
+	rsiOversold := ci.RSIVal < 35
+	cciOversold := ci.CCIVal <= cs.CCI.Oversold+10
+	stochOversold := ci.StochasticK < 22
+	mfiOversold := ci.MFIVal < 35
+
+	oversoldCount := 0
+	if rsiOversold {
+		oversoldCount++
+	}
+	if cciOversold {
+		oversoldCount++
+	}
+	if stochOversold {
+		oversoldCount++
+	}
+	if mfiOversold {
+		oversoldCount++
+	}
+
+	lowBounce := nearLower && oversoldCount >= 2
+	logger.DebugColorf(logger.Yellow, "[RANGE] ✓1 LowBounce | NearLower:%t, RSI<35:%.2f:%t, CCI<=%.0f:%.2f:%t, Stoch<22:%.2f:%t, MFI<35:%.2f:%t, Count:%d/4>=2 => %t",
+		nearLower, ci.RSIVal, rsiOversold, cs.CCI.Oversold+10, ci.CCIVal, cciOversold,
+		ci.StochasticK, stochOversold, ci.MFIVal, mfiOversold, oversoldCount, lowBounce)
+
 	adrConfirmation := ci.ADRSignal == 1
-	if !(lowBounce && adrConfirmation) {
+	logger.DebugColorf(logger.Yellow, "[RANGE] ✓2 ADR | ADRSignal:%d==1:%t", ci.ADRSignal, adrConfirmation)
+
+	reversalPattern := false
+	var hammer, engulfing bool
+	if n := len(ci.CandleSticks); n >= 2 {
+		last := ci.CandleSticks[n-1]
+		prev := ci.CandleSticks[n-2]
+
+		rng := last.High - last.Low
+		if rng > 0 {
+			body := math.Abs(last.Close - last.Open)
+			lower := math.Min(last.Open, last.Close) - last.Low
+			lowerFrac := lower / rng
+
+			hammer = lowerFrac > 0.5 && body/rng < 0.3 && last.Close > last.Open
+			engulfing = last.Close > last.Open && prev.Close < prev.Open &&
+				last.Close > prev.Open && last.Open < prev.Close
+			reversalPattern = hammer || engulfing
+
+			logger.DebugColorf(logger.Yellow, "[RANGE] ✓3 Pattern | Hammer(lowerFrac:%.3f>0.5, bodyFrac:%.3f<0.3, bull:%t):%t, Engulf:%t => %t",
+				lowerFrac, body/rng, last.Close > last.Open, hammer, engulfing, reversalPattern)
+		}
+	} else {
+		logger.DebugColorf(logger.Yellow, "[RANGE] ✓3 Pattern | Insufficient candles => false")
+	}
+
+	conditionsOK := lowBounce && adrConfirmation && reversalPattern
+	logger.DebugColorf(logger.Yellow, "[RANGE] ✓4 Conditions | LowBounce:%t & ADR:%t & Pattern:%t => %t",
+		lowBounce, adrConfirmation, reversalPattern, conditionsOK)
+	if !conditionsOK {
 		return false
 	}
+
 	target := ci.UpperBand
 	stop := ci.LowerBand
 	rr := cs.calcRR(state, currentPrice, stop, target)
-	return rr > dynamicRR
+	rrOK := rr > dynamicRR*1.1
+	logger.DebugColorf(logger.Yellow, "[RANGE] ✓5 RR | Stop:%.4f, Target:%.4f, RR:%.3f > %.3f*1.1:%.3f:%t",
+		stop, target, rr, dynamicRR, dynamicRR*1.1, rrOK)
+
+	if rrOK {
+		logger.InfoColorf(logger.Green, "[RANGE BUY SIGNAL ✓] Price:%.4f, RR:%.2f, Pattern:%s",
+			currentPrice, rr, map[bool]string{true: "Hammer", false: "Engulfing"}[hammer])
+	}
+	return rrOK
 }
 
-func (cs *CompoundStrategy) checkBullishTransitional(ci CurrentIndicators, currentPrice, dynamicRR float64, emaAlignment bool, state models.MarketState) bool {
+func (cs *CompoundStrategy) checkBullishTransitional(
+	ci CurrentIndicators,
+	currentPrice, dynamicRR float64,
+	emaAlignment bool,
+	state models.MarketState,
+) bool {
 	score := cs.entryScore(ci, currentPrice)
-	// Require reclaim of middle band and positive momentum
-	if !(emaAlignment && score >= 0.65 && ci.HistSlope > 0 && currentPrice >= ci.MiddleBand*0.995) {
+
+	scoreOK := score >= 0.72
+	histOK := ci.HistSlope > 0
+	rsiSlopeOK := ci.RsiSlope > 0
+	adrOK := ci.ADRSignal > 0
+	priceOK := currentPrice >= ci.MiddleBand*0.998
+
+	mainOK := emaAlignment && scoreOK && histOK && rsiSlopeOK && adrOK && priceOK
+	logger.DebugColorf(logger.BrightCyan, "[TRANS] ✓1 Main | EMA:%t, Score:%.3f>=0.72:%t, HistSlope:%.6f>0:%t, RsiSlope:%.3f>0:%t, ADR:%d>0:%t, Price:%.4f>=MB*0.998:%.4f:%t => %t",
+		emaAlignment, score, scoreOK, ci.HistSlope, histOK, ci.RsiSlope, rsiSlopeOK,
+		ci.ADRSignal, adrOK, currentPrice, ci.MiddleBand*0.998, priceOK, mainOK)
+	if !mainOK {
 		return false
 	}
+
+	volumeOK := true
+	if n := len(ci.CandleSticks); n >= 2 {
+		last := ci.CandleSticks[n-1]
+		avgVol := 0.0
+		for i := n - 10; i < n-1; i++ {
+			if i >= 0 {
+				avgVol += ci.CandleSticks[i].Volume
+			}
+		}
+		avgVol /= math.Min(10, float64(n-1))
+		volumeOK = last.Volume >= avgVol*0.9
+		logger.DebugColorf(logger.BrightCyan, "[TRANS] ✓2 Volume | LastVol:%.0f >= AvgVol*0.9:%.0f:%t",
+			last.Volume, avgVol*0.9, volumeOK)
+		if !volumeOK {
+			return false
+		}
+	}
+
 	target := ci.UpperBand
 	stop := ci.LowerBand
 	rr := cs.calcRR(state, currentPrice, stop, target)
-	return rr > dynamicRR
+	rrOK := rr > dynamicRR*1.08
+	logger.DebugColorf(logger.BrightCyan, "[TRANS] ✓3 RR | Stop:%.4f, Target:%.4f, RR:%.3f > %.3f*1.08:%.3f:%t",
+		stop, target, rr, dynamicRR, dynamicRR*1.08, rrOK)
+
+	if rrOK {
+		logger.InfoColorf(logger.Green, "[TRANS BUY SIGNAL ✓] Price:%.4f, Score:%.3f, RR:%.2f",
+			currentPrice, score, rr)
+	}
+	return rrOK
 }
 
-func (cs *CompoundStrategy) checkBullishChaotic(ci CurrentIndicators, currentPrice, dynamicRR float64, state models.MarketState) bool {
-	// In chaos, be very picky and take quicker RR
+func (cs *CompoundStrategy) checkBullishChaotic(
+	ci CurrentIndicators,
+	currentPrice, dynamicRR float64,
+	state models.MarketState,
+) bool {
 	score := cs.entryScore(ci, currentPrice)
-	if !(score >= 0.72 && ci.HistSlope > 0 && ci.RSIVal < 62) {
+
+	scoreOK := score >= 0.78
+	histOK := ci.HistSlope > 0
+	rsiSlopeOK := ci.RsiSlope > 0
+	rsiInRange := ci.RSIVal < 58 && ci.RSIVal > 35
+
+	scoreCondOK := scoreOK && histOK && rsiSlopeOK && rsiInRange
+	logger.DebugColorf(logger.BrightYellow, "[CHAOTIC] ✓1 Score | Score:%.3f>=0.78:%t, HistSlope:%.6f>0:%t, RsiSlope:%.3f>0:%t, RSI:%.2f in[35,58]:%t => %t",
+		score, scoreOK, ci.HistSlope, histOK, ci.RsiSlope, rsiSlopeOK,
+		ci.RSIVal, rsiInRange, scoreCondOK)
+	if !scoreCondOK {
 		return false
 	}
 
@@ -516,42 +902,82 @@ func (cs *CompoundStrategy) checkBullishChaotic(ci CurrentIndicators, currentPri
 	if err != nil || atr <= 0 {
 		atr = math.Max(1e-9, ci.MiddleBand*0.015)
 	}
-	target := ci.UpperBand
-	stop := currentPrice - 2.3*atr
-	rr := cs.calcRR(state, currentPrice, stop, target)
-	return rr > (dynamicRR * 1.10) // stricter
-}
+	logger.DebugColorf(logger.BrightYellow, "[CHAOTIC] ✓2 ATR | ATR:%.6f", atr)
 
-func (cs *CompoundStrategy) checkBullishConditionsDefault(state models.MarketState, ci CurrentIndicators, currentPrice, dynamicRR float64, volumeOk bool) bool {
-	score := cs.entryScore(ci, currentPrice)
-	if !(score >= 0.60 && ci.HistSlope > 0) {
+	nearMB := currentPrice <= ci.MiddleBand*1.005
+	lowerQuarter := currentPrice <= ci.LowerBand+0.25*(ci.UpperBand-ci.LowerBand)
+	nearSupport := nearMB || lowerQuarter
+	logger.DebugColorf(logger.BrightYellow, "[CHAOTIC] ✓3 Support | Price:%.4f <= MB*1.005:%.4f:%t OR <= LB+0.25*width:%.4f:%t => %t",
+		currentPrice, ci.MiddleBand*1.005, nearMB, ci.LowerBand+0.25*(ci.UpperBand-ci.LowerBand), lowerQuarter, nearSupport)
+	if !nearSupport {
 		return false
 	}
+
+	target := ci.UpperBand
+	stop := currentPrice - 2.5*atr
+	rr := cs.calcRR(state, currentPrice, stop, target)
+	rrOK := rr > (dynamicRR * 1.25)
+	logger.DebugColorf(logger.BrightYellow, "[CHAOTIC] ✓4 RR | Stop:%.4f, Target:%.4f, RR:%.3f > %.3f*1.25:%.3f:%t",
+		stop, target, rr, dynamicRR, dynamicRR*1.25, rrOK)
+
+	if rrOK {
+		logger.InfoColorf(logger.Green, "[CHAOTIC BUY SIGNAL ✓] Price:%.4f, Score:%.3f, RR:%.2f, RSI:%.1f",
+			currentPrice, score, rr, ci.RSIVal)
+	}
+	return rrOK
+}
+
+func (cs *CompoundStrategy) checkBullishConditionsDefault(
+	state models.MarketState,
+	ci CurrentIndicators,
+	currentPrice, dynamicRR float64,
+	volumeOk bool,
+) bool {
+	score := cs.entryScore(ci, currentPrice)
+
+	scoreOK := score >= 0.60
+	histOK := ci.HistSlope > 0
+	condOK := scoreOK && histOK
+	logger.DebugColorf(logger.BrightBlack, "[DEFAULT] ✓1 Conditions | Score:%.3f>=0.60:%t, HistSlope:%.6f>0:%t => %t",
+		score, scoreOK, ci.HistSlope, histOK, condOK)
+	if !condOK {
+		return false
+	}
+
 	target := ci.UpperBand
 	stop := ci.LowerBand
 	rr := cs.calcRR(state, currentPrice, stop, target)
-	return volumeOk && rr > (dynamicRR*0.95)
+	rrOK := rr > (dynamicRR * 0.95)
+
+	logger.DebugColorf(logger.BrightBlack, "[DEFAULT] ✓2 RR | Stop:%.4f, Target:%.4f, RR:%.3f > %.3f*0.95:%.3f:%t",
+		stop, target, rr, dynamicRR, dynamicRR*0.95, rrOK)
+	logger.DebugColorf(logger.BrightBlack, "[DEFAULT] ✓3 Volume | VolCCI:%t", volumeOk)
+
+	result := volumeOk && rrOK
+	if result {
+		logger.InfoColorf(logger.Green, "[DEFAULT BUY SIGNAL ✓] Price:%.4f, Score:%.3f, RR:%.2f",
+			currentPrice, score, rr)
+	}
+	return result
 }
 
-// ---------- Bearish checks (exits/shorts) ----------
-
 func (cs *CompoundStrategy) checkBearishStronglyTrending(ci CurrentIndicators, currentPrice float64) bool {
-	// Exit/short only on strong reversal hints
+
 	return ci.MacdIndicator == -1 && ci.HistSlope < 0 && ci.RSIVal > 80 && currentPrice > ci.MiddleBand
 }
 
 func (cs *CompoundStrategy) checkBearishTrending(ci CurrentIndicators) bool {
-	// Require down cross + decreasing momentum
+
 	return ci.MacdIndicator == -1 && ci.HistSlope < 0 && ci.RSIVal > float64(cs.RSI.Overbought)
 }
 
 func (cs *CompoundStrategy) checkBearishRangeBound(ci CurrentIndicators, currentPrice float64) bool {
-	// Fade tops in a range
+
 	return currentPrice >= ci.UpperBand || ci.RSIVal > 70 || ci.CCIVal > cs.CCI.Overbought
 }
 
 func (cs *CompoundStrategy) checkBearishChaotic(ci CurrentIndicators, currentPrice float64) bool {
-	// Only short sharp spikes
+
 	return currentPrice >= ci.UpperBand && ci.RSIVal > 72 && ci.HistSlope < 0
 }
 
@@ -563,7 +989,6 @@ func (cs *CompoundStrategy) checkBearishDefault(ci CurrentIndicators) bool {
 	return ci.MacdIndicator == -1 && ci.HistSlope < 0 && ci.RSIVal > float64(cs.RSI.Overbought)
 }
 
-// checkBearishConditions decides if we have a 'bearish' (short/exit) signal
 func (cs *CompoundStrategy) checkBearishConditions(
 	state models.MarketState,
 	ci CurrentIndicators,
@@ -647,49 +1072,78 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 ) int {
 	repo := cs.ensureRepo()
 
-	// --- NOVÉ: pomocná mikro-breakout logika ---
+	repo.UpdateSnapshot(pair, indicators, currentPrice)
+
 	microBreakoutOK := func() bool {
 		c := indicators.CandleSticks
 		n := len(c)
 		if n < 3 {
 			return false
 		}
-		// vyšší low + proražení krátkého high o malý buffer dle ATR
 		atr := 0.0
 		if v, err := algos.ATR(c, 14); err == nil {
 			atr = v
 		} else {
 			atr = indicators.ADRVal
 		}
-		h1 := c[n-1].High
-		h2 := c[n-2].High
-		l1 := c[n-1].Low
-		l2 := c[n-2].Low
-		hh := math.Max(h1, h2)
-		hl := l1 > l2
-		minBO := hh + 0.15*atr
-		return hl && currentPrice >= minBO && indicators.MacdLine > indicators.SignalLine && indicators.HistSlope > 0
+		prevHigh := math.Max(c[n-2].High, c[n-3].High)
+		last := c[n-1]
+		boLevel := prevHigh + 0.10*atr
+
+		avgVol := 0.0
+		for i := n - 8; i < n-1; i++ {
+			if i >= 0 {
+				avgVol += c[i].Volume
+			}
+		}
+		avgVol /= math.Min(8, float64(n-1))
+
+		return last.Close >= boLevel &&
+			last.Low >= prevHigh-0.06*atr &&
+			indicators.MacdLine > indicators.SignalLine*0.99 &&
+			indicators.HistSlope > -0.00001 &&
+			last.Volume > avgVol*0.95
 	}
 
 	ok := func(pb *PendingBuy) bool {
-		// Dynamic cooldown
 		if pendingCoolDown > 0 && time.Since(pb.TriggerTime) < pendingCoolDown {
 			return false
 		}
 
-		// Adaptive chase prevention based on market state
-		chaseThreshold := 1.03
-		if pb.MarketState == models.StronglyTrending {
-			chaseThreshold = 1.04 // Allow more chase in strong trends
-		} else if pb.MarketState == models.Chaotic {
-			chaseThreshold = 1.02 // Stricter in chaos
+		if pb.UpdateCount >= 3 {
+			if !pb.ShouldBuyNow(currentPrice, indicators) {
+				logger.DebugColorf(logger.Yellow,
+					"[TREND CHECK] %s => Not ready yet (Quality:%.2f, Dir:%s, Updates:%d)",
+					pair, pb.GetTrendQuality(), pb.TrendHistory.TrendDirection, pb.UpdateCount)
+				return false
+			}
+
+			logger.InfoColorf(logger.Green,
+				"[TREND CHECK ✓] %s => Trend quality passed! Proceeding with entry checks...",
+				pair)
 		}
 
+		chaseThreshold := 1.020
+		switch pb.MarketState {
+		case models.StronglyTrending:
+			chaseThreshold = 1.035
+		case models.Trending:
+			chaseThreshold = 1.025
+		case models.RangeBound:
+			chaseThreshold = 1.012
+		case models.Chaotic:
+			chaseThreshold = 1.015
+		case models.Transitional:
+			chaseThreshold = 1.015
+		default:
+			chaseThreshold = 1.020
+		}
 		if pb.TriggerPrice > 0 && currentPrice > pb.TriggerPrice*chaseThreshold {
+			logger.Debugf("[PENDING] %s => price moved too far: %.4f > %.4f",
+				pair, currentPrice, pb.TriggerPrice*chaseThreshold)
 			return false
 		}
 
-		// Improved breakout detection
 		atr := pb.ATR
 		if atr <= 0 {
 			if v, err := algos.ATR(indicators.CandleSticks, 14); err == nil {
@@ -699,34 +1153,58 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 			}
 		}
 
-		// More lenient breakout requirement
-		minBreakout := math.Max(pb.TriggerPrice*1.0003, pb.TriggerPrice+0.05*atr)
+		minBreakout := math.Max(pb.TriggerPrice*1.0008, pb.TriggerPrice+0.08*atr)
 		breakoutOK := currentPrice >= minBreakout
 
-		// Enhanced momentum check
-		macdStrength := indicators.MacdLine > indicators.SignalLine*1.02
-		rsiHealthy := indicators.RSIVal > 35 && indicators.RSIVal < 68
-		momentumOK := (macdStrength && indicators.HistSlope > 0) ||
-			(indicators.RsiSlope > 0 && rsiHealthy)
+		accept := false
+		if c := indicators.CandleSticks; len(c) >= 3 {
+			prevHigh := math.Max(c[len(c)-2].High, c[len(c)-3].High)
+			last := c[len(c)-1]
+			acceptLevel := prevHigh + 0.08*atr
+			accept = (last.Close >= acceptLevel) &&
+				(last.Low >= prevHigh-0.06*atr)
+		}
+
+		macdStrong := indicators.MacdLine > indicators.SignalLine*1.01
+		rsiHealthy := indicators.RSIVal > 38 && indicators.RSIVal < 70
+		histAccel := indicators.HistSlope > -0.00001
+		momentumOK := (macdStrong && histAccel) || (indicators.RsiSlope > 0 && rsiHealthy)
 
 		if pb.MarketState == models.StronglyTrending || pb.MarketState == models.Trending {
-			if microBreakoutOK() {
+			if microBreakoutOK() || momentumOK {
 				breakoutOK = true
+				accept = true
 			}
 		}
 
-		// More lenient confirmation - either condition can pass
-		if !breakoutOK && !momentumOK {
+		if !((breakoutOK && accept) || momentumOK) {
 			return false
 		}
 
-		// Relaxed overextension check for trending states
-		maxExtension := 1.01
+		maxExtension := 1.012
 		if pb.MarketState == models.StronglyTrending || pb.MarketState == models.Trending {
-			maxExtension = 1.015
+			maxExtension = 1.018
 		}
-		if currentPrice >= indicators.UpperBand*maxExtension {
+		if indicators.UpperBand > 0 && currentPrice >= indicators.UpperBand*maxExtension {
+			logger.Debugf("[PENDING] %s => overextended: %.4f >= %.4f",
+				pair, currentPrice, indicators.UpperBand*maxExtension)
 			return false
+		}
+
+		if n := len(indicators.CandleSticks); n >= 2 {
+			last := indicators.CandleSticks[n-1]
+			avgVol := 0.0
+			for i := n - 10; i < n-1; i++ {
+				if i >= 0 {
+					avgVol += indicators.CandleSticks[i].Volume
+				}
+			}
+			avgVol /= math.Min(10, float64(n-1))
+			if last.Volume < avgVol*0.70 {
+				logger.Debugf("[PENDING] %s => low volume: %.2f < %.2f",
+					pair, last.Volume, avgVol*0.70)
+				return false
+			}
 		}
 
 		return cs.checkBullishConditions(pb.MarketState, indicators, currentPrice, pair)
@@ -737,54 +1215,79 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 			logger.Warnf("[PENDING BUY ABORTED] %s => final sanity check failed", pair)
 			return 0
 		}
+
+		if !cs.finalBuyValidation(indicators, currentPrice, confirmed) {
+			logger.Warnf("[PENDING BUY ABORTED] %s => final buy validation failed", pair)
+			return 0
+		}
+
 		logger.InfoColorf(
 			logger.Blue,
-			"[PENDING BUY CONFIRMED] %s => Buying at %.4f (trigger %.4f, state %s, age %.1fm)",
+			"[PENDING BUY CONFIRMED] %s => Buying at %.4f (trigger %.4f, state %s, age %.1fm, score %.2f, quality %.2f)",
 			confirmed.Pair, currentPrice, confirmed.TriggerPrice, confirmed.MarketState.String(),
-			time.Since(confirmed.TriggerTime).Minutes(),
+			time.Since(confirmed.TriggerTime).Minutes(), confirmed.ConfidenceScore, confirmed.GetTrendQuality(),
 		)
 		return 1
 	}
 
-	// Improved cancellation logic
 	all := repo.GetAll(pair)
 	removed := 0
 	for _, pb := range all {
 		shouldCancel := false
 		reason := ""
 
-		// State-specific cancellation
-		switch pb.MarketState {
-		case models.StronglyTrending:
-			if currentPrice > pb.TriggerPrice*1.045 {
+		if pb.UpdateCount >= 5 {
+			trendQuality := pb.GetTrendQuality()
+			if trendQuality < 0.40 {
 				shouldCancel = true
-				reason = "price moved too far in strong trend"
+				reason = fmt.Sprintf("trend quality too low (%.2f)", trendQuality)
+			} else if pb.TrendHistory != nil && pb.TrendHistory.TrendDirection == "DOWN" {
+				shouldCancel = true
+				reason = "trend reversed to DOWN"
 			}
-		case models.Chaotic:
-			if currentPrice > pb.TriggerPrice*1.025 || time.Since(pb.TriggerTime) > 5*time.Minute {
-				shouldCancel = true
-				reason = "chaos opportunity expired"
+		}
+
+		if !shouldCancel {
+			switch pb.MarketState {
+			case models.StronglyTrending:
+				if currentPrice > pb.TriggerPrice*1.04 || time.Since(pb.TriggerTime) > 18*time.Minute {
+					shouldCancel = true
+					reason = "expired in strong trend"
+				}
+			case models.Trending:
+				if currentPrice > pb.TriggerPrice*1.03 || time.Since(pb.TriggerTime) > 15*time.Minute {
+					shouldCancel = true
+					reason = "expired in trend"
+				}
+			case models.Chaotic:
+				if currentPrice > pb.TriggerPrice*1.025 || time.Since(pb.TriggerTime) > 6*time.Minute {
+					shouldCancel = true
+					reason = "chaos opportunity expired"
+				}
+			case models.Transitional:
+				if currentPrice > pb.TriggerPrice*1.025 || time.Since(pb.TriggerTime) > 12*time.Minute {
+					shouldCancel = true
+					reason = "transitional opportunity expired"
+				}
+			default:
+				if currentPrice > pb.TriggerPrice*1.03 || time.Since(pb.TriggerTime) > 15*time.Minute {
+					shouldCancel = true
+					reason = "standard opportunity expired"
+				}
 			}
-		default:
-			if currentPrice > pb.TriggerPrice*1.03 {
+		}
+
+		if !shouldCancel && !cs.checkBullishConditions(pb.MarketState, indicators, currentPrice, pair) {
+			if time.Since(pb.TriggerTime) > 5*time.Minute {
 				shouldCancel = true
-				reason = "standard chase limit exceeded"
+				reason = "conditions no longer met (aged)"
 			}
 		}
 
 		if shouldCancel && repo.Remove(pair, pb.ID) {
-			logger.Warnf("[PENDING BUY CANCELLED] %s => %s (%.4f -> %.4f)",
-				pair, reason, pb.TriggerPrice, currentPrice)
+			logger.Warnf("[PENDING BUY CANCELLED] %s => %s (%.4f -> %.4f, age %.1fm)",
+				pair, reason, pb.TriggerPrice, currentPrice, time.Since(pb.TriggerTime).Minutes())
 			removed++
-			continue
-		}
-
-		// Regime change cancellation
-		if !cs.checkBullishConditions(pb.MarketState, indicators, currentPrice, pair) {
-			if repo.Remove(pair, pb.ID) {
-				logger.Infof("[PENDING BUY CANCELLED] %s => conditions changed", pair)
-				removed++
-			}
 		}
 	}
 
@@ -795,7 +1298,114 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 	return 0
 }
 
-// Enhanced finalEntrySanity with more nuanced pattern detection
+func (cs *CompoundStrategy) finalBuyValidation(
+	indicators CurrentIndicators,
+	currentPrice float64,
+	pb *PendingBuy,
+) bool {
+
+	if n := len(indicators.CandleSticks); n >= 3 {
+		last := indicators.CandleSticks[n-1]
+		prev2High := math.Max(indicators.CandleSticks[n-2].High, indicators.CandleSticks[n-3].High)
+		if currentPrice > prev2High*1.015 {
+			return false
+		}
+		rng := last.High - last.Low
+		if rng > 0 {
+			upper := last.High - math.Max(last.Open, last.Close)
+			upperFrac := upper / rng
+			if upperFrac > 0.55 && currentPrice >= indicators.UpperBand*0.98 {
+				return false
+			}
+		}
+	}
+
+	if indicators.MacdLine < indicators.SignalLine || indicators.HistSlope <= 0 {
+		return false
+	}
+
+	overbought := 65.0
+	switch pb.MarketState {
+	case models.StronglyTrending, models.Trending:
+		overbought = 68.0
+	case models.Chaotic:
+		overbought = 60.0
+	}
+	if indicators.RSIVal > overbought {
+		return false
+	}
+
+	atr := pb.ATR
+	if atr <= 0 {
+		if v, err := algos.ATR(indicators.CandleSticks, 14); err == nil {
+			atr = v
+		} else {
+			atr = math.Max(1e-9, indicators.ADRVal)
+		}
+	}
+
+	stopMult := 2.0
+	targetMult := 2.5
+	switch pb.MarketState {
+	case models.StronglyTrending:
+		stopMult = 2.2
+		targetMult = 2.8
+	case models.Trending:
+		stopMult = 2.3
+		targetMult = 2.6
+	case models.Transitional:
+		stopMult = 2.1
+		targetMult = 2.4
+	case models.RangeBound:
+		stopMult = 1.9
+		targetMult = 2.1
+	case models.Chaotic:
+		stopMult = 2.5
+		targetMult = 2.7
+	}
+	stop := currentPrice - stopMult*atr
+	target := math.Max(indicators.UpperBand*1.01, currentPrice+targetMult*atr)
+	rr := cs.calcRR(pb.MarketState, currentPrice, stop, target)
+	minRR := cs.calculateDynamicRiskReward(indicators)
+
+	switch pb.MarketState {
+	case models.Chaotic:
+		minRR *= 1.20
+	case models.Transitional, models.RangeBound:
+		minRR *= 1.08
+	case models.Trending:
+		minRR *= 0.98
+	case models.StronglyTrending:
+		minRR *= 0.95
+	default:
+
+	}
+	if rr < minRR {
+		logger.Debugf("[FINAL BUY] %s => RR too low: %.2f < %.2f", pb.Pair, rr, minRR)
+		return false
+	}
+
+	minScore := 0.60
+	switch pb.MarketState {
+	case models.StronglyTrending:
+		minScore = 0.66
+	case models.Trending:
+		minScore = 0.63
+	case models.Chaotic:
+		minScore = 0.75
+	case models.Transitional:
+		minScore = 0.70
+	case models.RangeBound:
+		minScore = 0.62
+	}
+	if pb.ConfidenceScore < minScore {
+		logger.Debugf("[FINAL BUY] %s => score too low: %.2f < %.2f", pb.Pair, pb.ConfidenceScore, minScore)
+		return false
+	}
+
+	return true
+}
+
 func (cs *CompoundStrategy) finalEntrySanity(indicators CurrentIndicators) bool {
 	candles := indicators.CandleSticks
 	if n := len(candles); n >= 2 {
@@ -814,12 +1424,10 @@ func (cs *CompoundStrategy) finalEntrySanity(indicators CurrentIndicators) bool 
 		lowerFrac := lower / rng
 		bodyFrac := body / rng
 
-		// Reject obvious shooting stars
 		if upperFrac >= 0.58 && bodyFrac <= 0.25 && current.Close < current.Open {
 			return false
 		}
 
-		// Reject strong bearish engulfing without support
 		isPrevBullish := previous.Close > previous.Open
 		isCurrentBearish := current.Close < current.Open
 		if isPrevBullish && isCurrentBearish && bodyFrac > 0.55 && lowerFrac < 0.15 {
@@ -829,7 +1437,6 @@ func (cs *CompoundStrategy) finalEntrySanity(indicators CurrentIndicators) bool 
 			}
 		}
 
-		// Accept bullish patterns
 		if current.Close > current.Open && lowerFrac >= 0.25 {
 			return true // Hammer/bullish with support
 		}
@@ -841,7 +1448,7 @@ func (cs *CompoundStrategy) checkBuyConfirmation(
 	indicators CurrentIndicators,
 	currentPrice float64,
 ) bool {
-	// kept for potential further use; main confirmation moved into evaluatePendingBuys.ok + finalEntrySanity
+
 	candles := indicators.CandleSticks
 
 	if n := len(candles); n >= 1 {
@@ -861,19 +1468,19 @@ func (cs *CompoundStrategy) checkBuyConfirmation(
 	}
 
 	confirmations := 0
-	// Volume confirmation
+
 	if indicators.MFIVal > 20 && indicators.MFIVal < 80 {
 		confirmations++
 	}
-	// MACD confirmation
+
 	if indicators.MacdLine > indicators.SignalLine && indicators.HistSlope > 0 {
 		confirmations++
 	}
-	// Price action confirmation (not overextended)
+
 	if currentPrice > indicators.LowerBand && currentPrice <= indicators.MiddleBand*1.02 {
 		confirmations++
 	}
-	// Micro-structure: higher low and small breakout over recent highs
+
 	if n := len(indicators.CandleSticks); n >= 3 {
 		l1 := indicators.CandleSticks[n-1].Low
 		l2 := indicators.CandleSticks[n-2].Low
@@ -891,9 +1498,8 @@ func (cs *CompoundStrategy) alreadyInPendingBuys(pair string) bool {
 	return cs.ensureRepo().Exists(pair)
 }
 
-// trackPriceExtremes updates and returns the all-time high and low prices for a trade
 func (cs *CompoundStrategy) trackPriceExtremes(symbol string, currentPrice float64) (athPrice, atlPrice float64, lastAthTime time.Time, err error) {
-	// HIGH PRICE since trade
+
 	athPrice, err = db2.SQLiteDB.GetAth(symbol)
 	if err != nil || currentPrice > athPrice {
 		logger.InfoColorf(logger.Green, "New HIGH price for %s: %.8f", symbol, currentPrice)
@@ -903,7 +1509,6 @@ func (cs *CompoundStrategy) trackPriceExtremes(symbol string, currentPrice float
 		athPrice = currentPrice
 	}
 
-	// LOW PRICE since trade
 	atlPrice, err = db2.SQLiteDB.GetAtl(symbol)
 	if err != nil || currentPrice < atlPrice {
 		logger.InfoColorf(logger.BrightRed, "New LOW price for %s: %.8f", symbol, currentPrice)
@@ -913,7 +1518,6 @@ func (cs *CompoundStrategy) trackPriceExtremes(symbol string, currentPrice float
 		atlPrice = currentPrice
 	}
 
-	// Check last time it reached ATH
 	lastAthTime, err = db2.SQLiteDB.GetLastATHTimestamp(symbol)
 	if err != nil {
 		logger.Errorf("Error getting last ATH time for %s: %v", symbol, err)
@@ -927,7 +1531,6 @@ func (cs *CompoundStrategy) checkEarlyExitCondition(trade *models.ActiveTrade, c
 	breakevenPrice := trade.BuyPrice * (1 + cs.FeeRate)
 	profitMargin := (currentPrice - breakevenPrice) / breakevenPrice * 100
 
-	// tighten time stop & allow tiny red/flat exits
 	const maxHoldingTime = 45 * time.Minute
 	const minimalAcceptableLoss = -0.35 // -0.35% under breakeven
 
@@ -939,7 +1542,6 @@ func (cs *CompoundStrategy) checkEarlyExitCondition(trade *models.ActiveTrade, c
 	return false
 }
 
-// checkPanicSellCondition: if price dumps from entry too far, bail
 func (cs *CompoundStrategy) checkPanicSellCondition(profitMargin float64) bool {
 	if !cs.PanicSell {
 		return false
@@ -947,12 +1549,10 @@ func (cs *CompoundStrategy) checkPanicSellCondition(profitMargin float64) bool {
 	return profitMargin < -cs.HighestPriceFallOffMargin
 }
 
-// checkAthFallOffSellCondition checks if we should sell based on drop from ATH
 func (cs *CompoundStrategy) checkAthFallOffSellCondition(profitMargin, profitMarginATH float64) bool {
 	return profitMarginATH < -cs.HighestPriceFallOffMargin && profitMargin > 0
 }
 
-// checkTimeSinceSellCondition checks if we should sell based on time since last ATH
 func (cs *CompoundStrategy) checkTimeSinceSellCondition(state models.MarketState, symbol string, profitMargin float64, lastAthTime time.Time) bool {
 	if profitMargin < 0 {
 		return false
@@ -960,11 +1560,9 @@ func (cs *CompoundStrategy) checkTimeSinceSellCondition(state models.MarketState
 	return cs.getTimeSinceATHSell(symbol, lastAthTime, state) && profitMargin >= 0
 }
 
-// Enhanced sell logic
 func (cs *CompoundStrategy) checkDesiredProfitSellCondition(profitMargin float64, state models.MarketState) (bool, float64) {
 	adjustedProfit := cs.DesiredProfit
 
-	// More aggressive profit scaling
 	switch state {
 	case models.StronglyTrending:
 		adjustedProfit *= 1.8 // Let winners run more
@@ -1002,20 +1600,54 @@ func (cs *CompoundStrategy) checkBearishSignalSellCondition(profitMargin float64
 	return profitMargin > minProfitForExit
 }
 
-// checkActiveTrade evaluates an active trade to determine if it should be sold
 func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentPrice float64, bearishSignal bool, state models.MarketState) (int, error) {
-	if trade == nil || trade.Symbol == "" {
-		return 0, nil
+
+	momoState := func(ci CurrentIndicators) string {
+		upMACD := ci.MacdLine > ci.SignalLine
+		upHist := ci.HistSlope > 0
+		upRSI := ci.RsiSlope > 0
+		upIchi := ci.IchimokuRes.Bullish
+
+		downMACD := ci.MacdLine < ci.SignalLine
+		downHist := ci.HistSlope < 0
+		downRSI := ci.RsiSlope < 0
+
+		upCnt := 0
+		if upMACD {
+			upCnt++
+		}
+		if upHist {
+			upCnt++
+		}
+		if upRSI {
+			upCnt++
+		}
+		if upIchi {
+			upCnt++
+		}
+
+		downCnt := 0
+		if downMACD {
+			downCnt++
+		}
+		if downHist {
+			downCnt++
+		}
+		if downRSI {
+			downCnt++
+		}
+
+		switch {
+		case upCnt >= 3 && downCnt == 0:
+			return "UP"
+		case downCnt >= 2:
+			return "DOWN"
+		default:
+			return "NEUTRAL"
+		}
 	}
-	if currentPrice <= 0 || trade.BuyPrice <= 0 {
-		logger.InfoColorf(logger.BrightYellow, "[HOLD SAFE] %s: Waiting for valid prices (buy=%.4f, curr=%.4f)", trade.Symbol, trade.BuyPrice, currentPrice)
-		return 0, nil
-	}
-	if time.Since(trade.Timestamp) < 2*time.Minute {
-		logger.InfoColorf(logger.BrightBlack, "[GRACE] %s: %.0fs since entry, skipping exits", trade.Symbol, time.Since(trade.Timestamp).Seconds())
-		_, _, _, _ = cs.trackPriceExtremes(trade.Symbol, currentPrice)
-		return 0, nil
-	}
+
+	mstate := momoState(cs.localIndicators)
 
 	breakevenPrice := trade.BuyPrice * (1 + cs.FeeRate)
 	profitMargin := (currentPrice - trade.BuyPrice) / trade.BuyPrice * 100
@@ -1032,8 +1664,13 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 	profitMarginATH := (currentPrice - athPrice) / athPrice * 100
 	upliftFromAtl := (currentPrice - atlPrice) / atlPrice * 100
 
-	logger.Infof("[Trade Monitor] %s | State=%s | Buy=%.4f | Curr=%.4f | PM=%.2f%% | ATH=%.4f | PM_ATH=%.2f%%",
-		trade.Symbol, state.String(), trade.BuyPrice, currentPrice, profitMargin, athPrice, profitMarginATH)
+	logger.Infof("[Trade Monitor] %s | State=%s | Buy=%.4f | Curr=%.4f | PM=%.2f%% | ATH=%.4f | PM_ATH=%.2f%% | MOMO=%s",
+		trade.Symbol, state.String(), trade.BuyPrice, currentPrice, profitMargin, athPrice, profitMarginATH, mstate)
+
+	if profitMargin < 0 {
+		logger.InfoColorf(logger.BrightYellow, "[DRAWDOWN] %s: PM=%.2f%%, UpliftFromATL=%.2f%% (ATL=%.4f)",
+			trade.Symbol, profitMargin, upliftFromAtl, atlPrice)
+	}
 
 	atr := 0.0
 	if v, err := algos.ATR(cs.localIndicators.CandleSticks, 14); err == nil {
@@ -1061,10 +1698,35 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 	trailingActive := profitMargin > 0 && athPrice > trade.BuyPrice && atr > 0
 	trailingStop := 0.0
 	if trailingActive {
+
 		trailingStop = athPrice - trailMult*atr
-		minStop := breakevenPrice * 1.001
-		if trailingStop < minStop {
-			trailingStop = minStop
+
+		minTrailTrigger := 0.35 // % profit
+		switch state {
+		case models.StronglyTrending:
+			minTrailTrigger = 0.50
+		case models.Trending:
+			minTrailTrigger = 0.35
+		case models.Transitional:
+			minTrailTrigger = 0.30
+		case models.RangeBound:
+			minTrailTrigger = 0.25
+		case models.Chaotic:
+			minTrailTrigger = 0.20
+		}
+
+		if profitMargin >= minTrailTrigger {
+
+			minStop := breakevenPrice * 1.0005 // ~+0.05% above breakeven
+			if trailingStop < minStop {
+				trailingStop = minStop
+			}
+		} else {
+
+			tslCap := currentPrice - 1.3*atr
+			if trailingStop > tslCap {
+				trailingStop = tslCap
+			}
 		}
 
 		ageMin := time.Since(lastAthTime).Minutes()
@@ -1077,7 +1739,8 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 			trailingStop = math.Max(trailingStop, currentPrice-1.6*atr)
 		}
 
-		if (state == models.StronglyTrending || state == models.Trending) && profitMargin >= 1.2 {
+		isTrendRegime := state == models.StronglyTrending || state == models.Trending
+		if isTrendRegime && profitMargin >= 1.2 {
 			lock := trade.BuyPrice * 1.0035
 			if trailingStop < lock {
 				trailingStop = lock
@@ -1085,27 +1748,17 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 		}
 	}
 
-	if profitMargin > 0 {
-		ageMin := time.Since(lastAthTime).Minutes()
-		switch {
-		case ageMin > 60:
-			trailingStop = math.Max(trailingStop, currentPrice-1.1*atr)
-		case ageMin > 30:
-			trailingStop = math.Max(trailingStop, currentPrice-1.4*atr)
-		case ageMin > 15:
-			trailingStop = math.Max(trailingStop, currentPrice-1.6*atr)
-		}
-	}
+	allowSellNow := true
+	isTrendRegime := state == models.StronglyTrending || state == models.Trending
+	if isTrendRegime {
 
-	if (state == models.StronglyTrending || state == models.Trending) && profitMargin >= 1.2 {
-		lock := trade.BuyPrice * 1.0035
-		if trailingStop < lock {
-			trailingStop = lock
+		if mstate == "UP" {
+			allowSellNow = false
 		}
-	}
 
-	if profitMargin < 0 && currentPrice > atlPrice {
-		logger.InfoColorf(logger.BrightYellow, "[Above ATL] %s: Uplift %.2f%%", trade.Symbol, upliftFromAtl)
+		if profitMargin < 0.35 && mstate != "DOWN" {
+			allowSellNow = false
+		}
 	}
 
 	if cs.checkPanicSellCondition(profitMargin) {
@@ -1117,86 +1770,88 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 	}
 
 	if trailingActive && trailingStop > 0 && currentPrice <= trailingStop {
-		logger.InfoColorf(logger.BrightRed, "[TRAIL STOP] %s: cp=%.4f <= tsl=%.4f (state=%s, PM=%.2f%%)",
-			trade.Symbol, currentPrice, trailingStop, state.String(), profitMargin)
-		if state == models.StronglyTrending || state == models.Trending {
-			if cs.sinceTrailExit(trade.Symbol) > 3*time.Minute {
+		if allowSellNow {
+			logger.InfoColorf(logger.BrightRed, "[TRAIL STOP] %s: cp=%.4f <= tsl=%.4f (state=%s, PM=%.2f%%, momo=%s)",
+				trade.Symbol, currentPrice, trailingStop, state.String(), profitMargin, mstate)
+			if isTrendRegime && cs.sinceTrailExit(trade.Symbol) > 3*time.Minute {
 				cs.enqueueTrendReentry(trade.Symbol, currentPrice, state)
 				cs.touchTrailExit(trade.Symbol)
 			}
+			return -1, nil
 		}
-		return -1, nil
+		logger.InfoColorf(logger.Green, "[HOLD-TREND] %s: Momentum/Policy hold, ignoring trail stop (cp=%.4f, tsl=%.4f)",
+			trade.Symbol, currentPrice, trailingStop)
 	}
 
 	if profitMargin > 0 && athPrice > trade.BuyPrice {
 		if cs.checkAthFallOffSellCondition(profitMargin, profitMarginATH) {
-			logger.InfoColorf(logger.BrightRed, "[ATH FALLOFF] %s: Drop %.2f%% from ATH", trade.Symbol, profitMarginATH)
-			return -1, nil
+			if !isTrendRegime || mstate != "UP" {
+				logger.InfoColorf(logger.BrightRed, "[ATH FALLOFF] %s: Drop %.2f%% from ATH (momo=%s)", trade.Symbol, profitMarginATH, mstate)
+				return -1, nil
+			}
 		}
 	}
 
 	if cs.checkTimeSinceSellCondition(state, trade.Symbol, profitMargin, lastAthTime) {
-		return -1, nil
+		if !isTrendRegime || (mstate != "UP" && (cs.localIndicators.HistSlope <= 0 || cs.localIndicators.RsiSlope <= 0)) {
+			return -1, nil
+		}
 	}
 
 	if cs.checkBearishSignalSellCondition(profitMargin, bearishSignal, state) {
-		logger.InfoColorf(logger.BrightRed, "[BEARISH EXIT] %s: State=%s, PM=%.2f%%",
-			trade.Symbol, state.String(), profitMargin)
-		return -1, nil
+		if !isTrendRegime {
+			logger.InfoColorf(logger.BrightRed, "[BEARISH EXIT] %s: State=%s, PM=%.2f%%, momo=%s",
+				trade.Symbol, state.String(), profitMargin, mstate)
+			return -1, nil
+		}
+
+		switch mstate {
+		case "DOWN":
+			logger.InfoColorf(logger.BrightRed, "[BEARISH EXIT] %s: Trend %s, momo=DOWN, PM=%.2f%%",
+				trade.Symbol, state.String(), profitMargin)
+			return -1, nil
+		case "NEUTRAL":
+			if cs.localIndicators.MacdLine < cs.localIndicators.SignalLine && cs.localIndicators.HistSlope < 0 {
+				logger.InfoColorf(logger.BrightRed, "[BEARISH EXIT] %s: Trend %s, momo=NEUTRAL (confirm), PM=%.2f%%",
+					trade.Symbol, state.String(), profitMargin)
+				return -1, nil
+			}
+		default:
+		}
 	}
 
-	ptp1 := cs.PartialTP1Pct
-	if ptp1 <= 0 {
-		ptp1 = 0.9 // %
-	}
-	ptpSize := cs.PartialTP1Size
-	if ptpSize <= 0 || ptpSize > 1 {
-		ptpSize = 0.33
-	}
-
-	adjPTP1 := ptp1
-	switch state {
-	case models.Chaotic:
-		adjPTP1 *= 0.85
-	case models.RangeBound:
-		adjPTP1 *= 0.9
-	case models.StronglyTrending:
-		adjPTP1 *= 1.05
-	default:
-		adjPTP1 *= 1.0
-	}
-
-	if profitMargin >= adjPTP1 {
-		logger.InfoColorf(logger.BrightBlack, "[PARTIAL TP1] %s: PM=%.2f%% >= %.2f%% (size=%.0f%%)",
-			trade.Symbol, profitMargin, adjPTP1, ptpSize*100)
-
-		return -2, nil
-	}
-	// --- Konec Partial TP1 ---
-
-	// Hold below breakeven
 	if currentPrice < breakevenPrice {
 		logger.InfoColorf(logger.BrightYellow, "[HOLD] %s: Below breakeven, PM=%.2f%%", trade.Symbol, profitMargin)
 		return 0, nil
 	}
 
-	// Profit taking (plný)
 	if met, adjustedProfit := cs.checkDesiredProfitSellCondition(profitMargin, state); met {
-		logger.InfoColorf(logger.BrightBlack, "[PROFIT SELL] %s: PM=%.2f%% vs target %.2f%%",
-			trade.Symbol, profitMargin, adjustedProfit)
-		return -2, nil
+		if allowSellNow || profitMargin >= adjustedProfit*1.2 {
+			logger.InfoColorf(logger.BrightBlack, "[PROFIT SELL] %s: PM=%.2f%% vs target %.2f%% (momo=%s)",
+				trade.Symbol, profitMargin, adjustedProfit, mstate)
+			return -2, nil
+		}
 	}
 
 	timeSinceATH := time.Since(lastAthTime).Minutes()
-	logger.InfoColorf(logger.BrightBlack, "[HOLD] %s: PM=%.2f%% < Target | ATH age %.1fm",
-		trade.Symbol, profitMargin, timeSinceATH)
+	if isTrendRegime && !allowSellNow {
+		logger.InfoColorf(logger.Green, "[HOLD-TREND] %s: Momentum/Policy hold, PM=%.2f%%, tsl=%.4f",
+			trade.Symbol, profitMargin, trailingStop)
+		return 0, nil
+	}
+	if currentPrice < breakevenPrice {
+		logger.InfoColorf(logger.BrightYellow, "[HOLD] %s: Below breakeven, PM=%.2f%%", trade.Symbol, profitMargin)
+		return 0, nil
+	}
+	logger.InfoColorf(logger.BrightBlack, "[HOLD] %s: PM=%.2f%% | ATH age %.1fm | momo=%s",
+		trade.Symbol, profitMargin, timeSinceATH, mstate)
 	return 0, nil
 }
+
 func (cs *CompoundStrategy) enqueueTrendReentry(pair string, currentPrice float64, state models.MarketState) {
 	repo := cs.ensureRepo()
 	ci := cs.localIndicators
 
-	// Nepřidávej duplicity v krátkém čase a blízko ceny
 	if repo.ExistsWithCondition(pair, func(pb *PendingBuy) bool {
 		if time.Since(pb.TriggerTime) < 10*time.Minute {
 			return true
@@ -1210,7 +1865,6 @@ func (cs *CompoundStrategy) enqueueTrendReentry(pair string, currentPrice float6
 		return
 	}
 
-	// Potvrzení re-entry jen pokud není přestřeleno nad horní pásmo a momentum není negativní
 	atr := 0.0
 	if v, err := algos.ATR(ci.CandleSticks, 14); err == nil {
 		atr = v
@@ -1218,7 +1872,6 @@ func (cs *CompoundStrategy) enqueueTrendReentry(pair string, currentPrice float6
 		atr = math.Max(1e-9, ci.ADRVal)
 	}
 
-	// Cílíme návrat k průměru: cena poblíž middle band, histogram se zlepšuje
 	priceNearMB := currentPrice <= ci.MiddleBand*1.015
 	momentumOK := ci.MacdLine >= ci.SignalLine || ci.HistSlope > 0
 	notOverextended := currentPrice <= ci.UpperBand+0.3*atr
@@ -1257,7 +1910,7 @@ func (cs *CompoundStrategy) enqueueTrendReentry(pair string, currentPrice float6
 		}(),
 		VolumeRatio:     0,
 		ConfidenceScore: cs.entryScore(ci, currentPrice),
-		Priority:        5, // priorita re-entry v trendu
+		Priority:        5,
 		CreatedBy:       "TrendReentry",
 	}
 	if replaced, _ := repo.AddOrReplace(pb); replaced != nil {
@@ -1302,7 +1955,6 @@ func (cs *CompoundStrategy) getTimeSinceATHSell(symbol string, timeSinceAth time
 	return false
 }
 
-//nolint:funlen, a lot of indicators to calculate
 func (cs *CompoundStrategy) getIndicators(candles []models.CandleStick, pair string) (CurrentIndicators, error) {
 	rsiVal, _, err := cs.RSI.Calculate(candles, pair)
 	if err != nil {
@@ -1314,7 +1966,6 @@ func (cs *CompoundStrategy) getIndicators(candles []models.CandleStick, pair str
 		return CurrentIndicators{}, fmt.Errorf("MACD: %w", err1)
 	}
 
-	// previous values for slope checks (best effort)
 	var prevHist, prevRSI float64
 	if n := len(candles); n >= 2 {
 		if pv, _, _, _, e := cs.MACD.Calculate(candles[:n-1]); e == nil {
@@ -1361,6 +2012,14 @@ func (cs *CompoundStrategy) getIndicators(candles []models.CandleStick, pair str
 		bwPct = (upB - lowB) / den
 	}
 
+	prevMid := 0.0
+	if n := len(candles); n >= 2 {
+		if _, pm, _, e := cs.BollingerBands.Calculate(candles[:n-1]); e == nil {
+			prevMid = pm
+		}
+	}
+	mbSlope := midB - prevMid
+
 	return CurrentIndicators{
 		RSIVal:        rsiVal,
 		PrevRSI:       prevRSI,
@@ -1385,6 +2044,9 @@ func (cs *CompoundStrategy) getIndicators(candles []models.CandleStick, pair str
 		ADRSignal:     adrSig,
 		CandleSticks:  candles,
 		IchimokuRes:   func() algos.IchimokuResult { r, _ := cs.Ichimoku.Calculate(candles); return r }(),
+
+		PrevMiddleBand:  prevMid,
+		MiddleBandSlope: mbSlope,
 	}, nil
 }
 

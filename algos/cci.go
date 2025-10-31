@@ -13,8 +13,6 @@ type CCIStrategy struct {
 	Oversold   float64 `json:"oversold"`
 }
 
-// Returns (cci, signal, error) where:
-//   - signal = -1 if cci > Overbought (sell), +1 if cci < Oversold (buy), else 0 (hold).
 func (c *CCIStrategy) Calculate(candles []models.CandleStick, _ string) (float64, int, error) {
 	if c.Period < 2 {
 		return 0, 0, fmt.Errorf("CCI: period must be >= 2 (got %d)", c.Period)
@@ -25,7 +23,6 @@ func (c *CCIStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 
 	start := len(candles) - c.Period
 
-	// 1) SMA of Typical Price over the window
 	sumTP := 0.0
 	for i := start; i < len(candles); i++ {
 		cd := candles[i]
@@ -33,7 +30,6 @@ func (c *CCIStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 	}
 	smaTP := sumTP / float64(c.Period)
 
-	// 2) Mean absolute deviation from SMA over the same window
 	meanDev := 0.0
 	for i := start; i < len(candles); i++ {
 		cd := candles[i]
@@ -42,12 +38,10 @@ func (c *CCIStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 	}
 	meanDev /= float64(c.Period)
 
-	// If there is effectively no volatility, CCI is undefined; treat as neutral.
 	if meanDev == 0 || math.IsNaN(meanDev) || math.IsInf(meanDev, 0) {
 		return 0, 0, nil
 	}
 
-	// 3) Current TP and CCI
 	last := candles[len(candles)-1]
 	curTP := (last.High + last.Low + last.Close) / 3.0
 
@@ -56,7 +50,6 @@ func (c *CCIStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 		return 0, 0, nil
 	}
 
-	// 4) Signals
 	if cci > c.Overbought {
 		return cci, -1, nil // sell / overbought
 	}

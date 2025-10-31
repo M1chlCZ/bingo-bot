@@ -37,7 +37,6 @@ type MultiPairTradingBot struct {
 	stopAllBuys     atomic.Bool
 }
 
-// NewMultiPairTradingBot creates a new instance of MultiPairTradingBot
 func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, config *config.MultiTrading) *MultiPairTradingBot {
 	if exchange == nil {
 		log.Fatal("Exchange must be provided")
@@ -70,7 +69,7 @@ func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, config *config.M
 	if config.AutoTrading && config.AnalyzerConfig == nil {
 		log.Fatal("AutoTrading is enabled, AnalyzerConfig must be provided")
 	}
-	// TODO: Validate the strategy type, values, and other fields
+
 	return &MultiPairTradingBot{
 		exchange:       exchange,
 		config:         *config,
@@ -83,7 +82,6 @@ func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, config *config.M
 func (bot *MultiPairTradingBot) AddPair(pair *models.TradingPair, analysisData *models.AnalysisData) {
 	bot.pairs.Store(pair.Symbol, pair)
 
-	// Fetch candles and analyze the market
 	strategy := bot.SuggestStrategy(analysisData.MarketState)
 	bot.analysisData.Store(pair.Symbol, &analysis.PairAnalysis{
 		Pair:        pair,
@@ -93,7 +91,6 @@ func (bot *MultiPairTradingBot) AddPair(pair *models.TradingPair, analysisData *
 		ADX:         analysisData.ADX,
 	})
 
-	// Suggest a strategy based on the market state
 	bot.pairStrategies.Store(pair.Symbol, strategy)
 	logger.Infof("xStrategy assigned for %s:| Market State: %s", pair.Symbol, analysisData.MarketState.String())
 }
@@ -105,7 +102,6 @@ func (bot *MultiPairTradingBot) StartTrading() {
 
 	bot.resyncTrades()
 
-	// Only do these if AutoTrading is on and analyzer is present
 	if bot.config.AutoTrading && bot.marketAnalyzer != nil {
 		bot.performPairAdjustment()
 		if bot.config.ThresholdStartTrading != 0 && bot.config.ThresholdStopTrading != 0 {
@@ -120,7 +116,6 @@ func (bot *MultiPairTradingBot) StartTrading() {
 	utils.PrintMemStats()
 	logger.Infof("Trading pairs initialized. Starting trading loops...")
 
-	// launch loops
 	bot.pairs.Range(func(_, v interface{}) bool {
 		pair := v.(*models.TradingPair)
 		bot.wg.Add(1)
@@ -134,7 +129,6 @@ func (bot *MultiPairTradingBot) StartTrading() {
 	<-stop
 	logger.Infof("Shutdown signal received. Stopping all trading...")
 
-	// close stopCh so loops exit
 	bot.stopOnce.Do(func() { close(bot.stopCh) })
 	bot.wg.Wait()
 	logger.Infof("All trading loops stopped.")
@@ -146,9 +140,8 @@ func (bot *MultiPairTradingBot) Stop() {
 	logger.Warn("Trading bot stopped.")
 }
 
-//nolint:funlen, has to be long like that
 func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional, quoteBalance, baseBalance float64, pair string, atr, adx float64) float64 {
-	// Define baseline risk parameters
+
 	const (
 		baseRiskPercentage = 0.10 // Risk 10%
 		minTradePercentage = 0.18 // 18%
@@ -156,14 +149,11 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional
 		adxReference       = 25.0 // ADX reference for "moderate" trend
 		maxTradePercentage = 0.5  // Maximum 50% of quote balance
 
-		// want at least 10% above that notional
 		extraPercent = 0.1
 	)
 
-	//  Start with base position in quote currency = quoteBalance * baseRiskPercentage
 	basePosition := quoteBalance * baseRiskPercentage
 
-	// Adjust position size based on ADX
 	adxMultiplier := 1.0 + (adx-adxReference)*0.02
 	if adxMultiplier < 0.5 {
 		adxMultiplier = 0.5
@@ -172,7 +162,6 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional
 	}
 	adjustedForADX := basePosition * adxMultiplier
 
-	// Adjust position size based on ATR (Volatility)
 	atrMultiplier := 1.0
 	if atr > 0 {
 		atrMultiplier = atrReference / atr
@@ -184,35 +173,28 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional
 	}
 	adjustedForVolatility := adjustedForADX * atrMultiplier
 
-	//  Convert the absolute currency amount to fraction of the quote balance
 	tradePercentage := adjustedForVolatility / quoteBalance
 
-	// Ensure the tradePercentage is within our min/max
 	if tradePercentage < minTradePercentage {
 		tradePercentage = minTradePercentage
 	} else if tradePercentage > maxTradePercentage {
 		tradePercentage = maxTradePercentage
 	}
 
-	// Final amount to trade
 	finalAmount := tradePercentage * quoteBalance
 
-	// Enforce an absolute minimum buy: (exchangeMinNotional * (1 + extraPercent))
-	// so we don't get a NOTIONAL error. E.g., if min notional is $10, we want $10.50 as minimum.
 	minBuyAbsolute := notional
 	if minBuyAbsolute <= 0 {
 		minBuyAbsolute = 10 // or from config
 	}
 	minBuyAbsolute *= 1 + extraPercent
 
-	// Proceed with BUY or SELL logic
 	if signal > 0 { // BUY Signal
-		// If finalAmount is below that absolute minBuy, clamp it
+
 		if finalAmount < minBuyAbsolute {
 			finalAmount = minBuyAbsolute
 		}
 
-		// Still can't exceed the actual quoteBalance
 		if finalAmount > quoteBalance {
 			finalAmount = quoteBalance
 		}
@@ -228,8 +210,7 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional
 		)
 		return finalAmount
 	}
-	// SELL Signal
-	// If we are selling, typically we sell all base balance or handle partial logic
+
 	logger.Debugf(
 		"SELL %s: BaseBalance=%.2f, ATR=%.2f, ADX=%.2f, TradePercentage=%.2f%%",
 		pair, baseBalance, atr, adx, tradePercentage*100,
@@ -237,10 +218,8 @@ func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional
 	return baseBalance
 }
 
-//nolint:gocognit, core function
 func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 
-	// Tickers for trading and resetting daily counters
 	tradeTicker := time.NewTicker(bot.config.TradingLoopInterval)
 	defer tradeTicker.Stop()
 
@@ -252,7 +231,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			return
 
 		case <-tradeTicker.C:
-			// Fetch strategy and market analysis for the pair
+
 			active, err := db2.SQLiteDB.IsCurrentlyActiveTrade(pair.Symbol)
 			if err != nil {
 				logger.Errorf("Error checking active trade for %s: %v", pair.Symbol, err)
@@ -260,8 +239,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 			}
 			logger.Debugf("Active trade status for %s: %t", pair.Symbol, active)
 			if bot.analysisRunning.Load() && !active {
-				// slows down the trading loop
-				// so there is place for analysis to finish
+
 				logger.Debugf("Analysis is running, skipping trade cycle for %s", pair.Symbol)
 				continue
 			}
@@ -285,41 +263,35 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				continue
 			}
 
-			// Fetch candles
 			candles, err := bot.exchange.FetchCandles(pair.Symbol, strategy.GetCandleInterval(), 1000, false)
 			if err != nil {
 				logger.Errorf("Error fetching candles for %s ", pair.Symbol)
 				continue
 			}
 
-			// Update shared candle storage
 			bot.candles.Store(pair.Symbol, candles)
 
-			// Detect trend
 			isUptrend := false
 			if bot.config.AutoTrading && bot.marketAnalyzer != nil {
 				isUptrend = bot.marketAnalyzer.IsUptrend(candles)
 			}
 
-			// Calculate signal
 			tradeSignal, err := strategy.Calculate(candles, pair.Symbol, analys.MarketState, bot.config.PendingBuyCoolDown)
 			if err != nil {
 				logger.Errorf("Error calculating signal for %s: %v", pair.Symbol, err)
 				continue
 			}
 
-			// If stopAllBuys is set, force a SELL all to QUOTE BALANCE
 			if bot.stopAllBuys.Load() {
 				tradeSignal = -2
 			}
 
 			if tradeSignal == 0 {
-				// No action required for HOLD signal
+
 				continue
 			}
 			logger.Infof("Signal calculated for %s (%d)", pair.Symbol, tradeSignal)
 
-			// Fetch balances
 			quoteBalance, err := bot.exchange.GetBalance(pair.QuoteAsset)
 			if err != nil {
 				if pair.QuoteAsset != "" {
@@ -338,23 +310,19 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				continue
 			}
 
-			// Get current price
 			currentPrice := candles[len(candles)-1].Close
 
-			// Determine trade size
 			tradeAmount := bot.calculateTradeAmountAdvance(tradeSignal, pair.MinNotional, quoteBalance, baseBalance, pair.Symbol, analys.ATR, analys.ADX)
 			if tradeAmount == 0 {
 				continue
 			}
 
-			// Execute trade based on signal
 			if tradeSignal > 0 { // BUY
 				if !bot.isMarketStateEnabled(analys.MarketState) {
 					logger.Infof("Skipping BUY for %s: %s market detected.", pair.Symbol, analys.MarketState.String())
 					continue
 				}
 
-				//Prevent overtrading
 				activeTradesTotal, err := db2.SQLiteDB.GetActiveTradesCount()
 				if err != nil {
 					logger.Errorf("Error fetching active trades count: %v", err)
@@ -384,7 +352,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				}
 			}
 			if tradeSignal < 0 { // SELL
-				// Check if the market is in an uptrend before selling
+
 				if isUptrend && tradeSignal != -2 { // tradeSignal == -2 > panic sell
 					logger.InfoColorf(logger.BrightBlack, "UPTREND signal for %s, cancelling sell", pair.Symbol)
 					continue
@@ -410,7 +378,6 @@ func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, strategy int
 		}
 	}
 
-	// Place Limit BUY Order
 	limitPrice := currentPrice * 1.000
 
 	executedVolume := strconv.FormatFloat(tradeAmount, 'f', pair.QtyPrecision, 64)
@@ -441,7 +408,6 @@ func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, strategy int
 
 	logger.Debugf("Trade Indicators: RSI=%.2f, MACD=%.2f, Stochastic=%.2f (Signal=%.2f) OrderID %d", rsiVal, macdVal, stochasticStr, stochasticSignal, orderID)
 
-	// Log trade in database
 	err = db2.SQLiteDB.LogActiveTrade(pair.Symbol, price, tradeAmount, orderID, rsiVal, macdVal, stochasticSignal, lowerBound, middleBound, upperBound, mfi, cci, ichimokuTenkan, ichimokuKijun)
 	if err != nil {
 		logger.Infof("Error logging BUY trade for %s: %v", pair.Symbol, err)
@@ -450,9 +416,6 @@ func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, strategy int
 	return true
 }
 
-// handleSell processes a SELL order
-//
-//nolint:funlen, its okay
 func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount, currentPrice, baseBalance float64) bool {
 	if tradeAmount*currentPrice < pair.MinNotional {
 		tradeAmount = pair.MinNotional / currentPrice
@@ -463,7 +426,6 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 		}
 	}
 
-	// Place Limit SELL Order
 	limitPrice := currentPrice
 	executedVolume := strconv.FormatFloat(tradeAmount, 'f', pair.QtyPrecision, 64)
 
@@ -474,7 +436,6 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 		return false
 	}
 
-	// Fetch active trade and log completed trade
 	activeTrade, err := db2.SQLiteDB.GetActiveTrade(pair.Symbol)
 	if err != nil {
 		logger.Infof("Error fetching active trade for %s: %v", pair.Symbol, err)
@@ -495,10 +456,8 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 	ichimoku.Tenkan = activeTrade.IchimokuTenkan
 	ichimoku.Kijun = activeTrade.IchimokuKijun
 
-	// Fetch indicator values
 	logger.Debugf("Trade Indicators: RSI=%.2f, MACD=%.2f, Stochastic=%.2f (Signal=%.2f) OrderID %d", rsiVal, macdVal, stochasticSignal, stochasticSignal, orderID)
 
-	// Log the trade
 	err = db2.SQLiteDB.LogCompletedTrade(pair.Symbol, activeTrade.BuyPrice, price, activeTrade.Quantity, profitLoss, rsiVal, macdVal, stochasticSignal, lowerBound, middleBound, upperBound, mfi, cci, ichimoku.Tenkan, ichimoku.Kijun, activeTrade.Timestamp.Unix(), activeTrade.GetOrderID())
 	if err != nil {
 		logger.Errorf("Error logging completed trade (SELL) for %s: %v", pair.Symbol, err)
@@ -506,7 +465,6 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 		logger.Infof("Successfully logged completed trade (SELL) for %s.", pair.Symbol)
 	}
 
-	// Remove active trade
 	err = db2.SQLiteDB.RemoveActiveTrade(activeTrade.ID)
 	if err != nil {
 		logger.Errorf("Error removing active trade for %s: %v", pair.Symbol, err)
@@ -514,7 +472,6 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 		logger.Infof("Successfully removed active trade for %s.", pair.Symbol)
 	}
 
-	// Remove ath trade
 	err = db2.SQLiteDB.RemoveAth(pair.Symbol)
 	if err != nil {
 		logger.Errorf("Error removing ath for %s: %v", pair.Symbol, err)
@@ -522,7 +479,6 @@ func (bot *MultiPairTradingBot) handleSell(pair *models.TradingPair, tradeAmount
 		logger.Infof("Successfully removed atg for %s.", pair.Symbol)
 	}
 
-	// Remove atl trade
 	err = db2.SQLiteDB.RemoveAtl(pair.Symbol)
 	if err != nil {
 		logger.Errorf("Error removing ath for %s: %v", pair.Symbol, err)
@@ -602,18 +558,15 @@ func (bot *MultiPairTradingBot) updateMarketAnalysis() {
 	}
 }
 
-//nolint:funlen, gocognit, gocyclo shh, all okay
 func (bot *MultiPairTradingBot) performPairAdjustment() {
 	logger.Infof("Adjusting trading pairs based on market analysis...")
 
-	// Fetch all USDT markets from the exchange
 	allMarkets, err := bot.exchange.FetchMarkets(bot.config.IncludedBaseMarkets, bot.config.ExcludedQuoteMarkets, bot.config.ExcludedMarkets)
 	if err != nil {
 		logger.Errorf("Failed to fetch USDT markets: %v", err)
 		return
 	}
 
-	// Analyze markets and categorize them
 	enabledMarkets := make([]models.TradingPair, 0)
 	analysisData := make(map[string]models.AnalysisData)
 	var wgm sync.WaitGroup
@@ -635,7 +588,7 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 				logger.Infof("Skipping trading pair: %s Too new for trading", market.Symbol)
 				return
 			}
-			// Analyze the market using ATR and ADX
+
 			marketState, atr, adx := bot.marketAnalyzer.AnalyzeMarket(candles)
 			analysisData[market.Symbol] = models.AnalysisData{
 				MarketState: marketState,
@@ -651,7 +604,6 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 
 	wgm.Wait()
 
-	// Keep active trades to prevent removal
 	activeTrades, err := db2.SQLiteDB.GetAllActiveTrades()
 	if err != nil {
 		logger.Errorf("Failed to fetch active trades: %v", err)
@@ -663,11 +615,9 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 		activeTradePairs[trade.Symbol] = true
 	}
 
-	// Prepare lists for safe updates outside of the locked section
 	pairsToRemove := make([]string, 0)
 	pairsToAdd := make([]models.TradingPair, 0)
 
-	// Add active trading pairs on program start, regardless of their market state
 	if utils.LenSyncMap(&bot.pairs) == 0 {
 		for _, market := range enabledMarkets {
 			pairsToAdd = append(pairsToAdd, market)
@@ -680,7 +630,6 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 		}
 	}
 
-	// On subsequent runs, remove pairs that are no longer trending and have no active trades
 	if utils.LenSyncMap(&bot.pairs) != 0 {
 		bot.pairs.Range(func(k, _ any) bool {
 			symbol := k.(string)
@@ -689,14 +638,13 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 			}
 			return true
 		})
-		// On subsequent runs, add new enabled markets
+
 		for _, market := range enabledMarkets {
 			if _, exists := bot.pairs.Load(market.Symbol); !exists {
 				pairsToAdd = append(pairsToAdd, market)
 			}
 		}
 
-		// Remove pairs no longer trending unless they have active trades
 		for _, symbol := range pairsToRemove {
 			logger.Warnf("Removing pair %s as it is no longer in enabled market state and has no active trades.", symbol)
 			bot.pairs.Delete(symbol)
@@ -706,7 +654,7 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 	logger.Infof("------")
 	logger.InfoColorf(logger.BrightBlack, "Removed %d active trades", len(pairsToRemove))
 	numPairs := 0
-	// Add markets to the bot for trading
+
 	var wg sync.WaitGroup
 	for _, pair := range pairsToAdd {
 		data, ok := analysisData[pair.Symbol]
@@ -770,7 +718,6 @@ func (bot *MultiPairTradingBot) resyncTrades() {
 
 		lastTrade := trades[len(trades)-1]
 
-		// Check if the trade is a sell and needs resyncing
 		if lastTrade.OrderListId == -1 && !lastTrade.IsBuyer {
 			log.Printf("Resyncing trade for symbol: %s", trade.Symbol)
 
@@ -800,7 +747,6 @@ func (bot *MultiPairTradingBot) resyncTrades() {
 	}
 }
 
-// Helper function to check if a slice of TradingPair contains a symbol
 func containsPairs(pairs []models.TradingPair, symbol string) bool {
 	for _, pair := range pairs {
 		if pair.Symbol == symbol {
@@ -811,9 +757,6 @@ func containsPairs(pairs []models.TradingPair, symbol string) bool {
 }
 
 func (bot *MultiPairTradingBot) SuggestStrategy(marketState models.MarketState) interfaces.Strategy {
-	// Return the strategy based on the market state
-	// Clone() is called because we need new instances of the strategy for each pair
-	// This prevents wrong data being shared between pairs
 
 	switch marketState {
 	case models.Trending:
@@ -836,7 +779,6 @@ func (bot *MultiPairTradingBot) SuggestStrategy(marketState models.MarketState) 
 	}
 }
 
-// checkEarlyWarning checks for early warning signs of a market meltdown
 func (bot *MultiPairTradingBot) checkEarlyWarning(candlesMap map[string][]models.CandleStick) {
 	if (bot.config.ThresholdStartTrading == 0) || (bot.config.ThresholdStopTrading == 0) {
 		return
@@ -846,10 +788,10 @@ func (bot *MultiPairTradingBot) checkEarlyWarning(candlesMap map[string][]models
 
 	for symbol, cset := range candlesMap {
 		if len(cset) < 10 {
-			// skip
+
 			continue
 		}
-		// measure performance over last 5 candles vs. prev 5
+
 		perf := bot.measureShortTermPerformance(cset, 5)
 		if perf < -5.0 { // if dropped >2% in last N bars
 			logger.InfoColorf(logger.BrightRed, "[%s] Meltdown detected: %.2f%% drop in last 5 bars", symbol, perf)
@@ -874,7 +816,6 @@ func (bot *MultiPairTradingBot) checkEarlyWarning(candlesMap map[string][]models
 	logger.Infof("Market meltdown check completed. %.2f%% of pairs are in meltdown state", meltdownRatio*100)
 }
 
-// checkMarketMeltdown checks for a market meltdown, before trading starts
 func (bot *MultiPairTradingBot) checkMarketMeltdown() {
 	if (bot.config.ThresholdStartTrading == 0) || (bot.config.ThresholdStopTrading == 0) {
 		return
@@ -897,25 +838,22 @@ func (bot *MultiPairTradingBot) checkMarketMeltdown() {
 func (bot *MultiPairTradingBot) measureShortTermPerformance(candles []models.CandleStick, shortPeriod int) float64 {
 	n := len(candles)
 	if n < shortPeriod*2 {
-		// Not enough candles to compare last X vs. previous X
+
 		return 0
 	}
 
-	// Sum of the last 'shortPeriod' closes
 	var lastSum float64
 	for i := n - shortPeriod; i < n; i++ {
 		lastSum += candles[i].Close
 	}
 	lastAvg := lastSum / float64(shortPeriod)
 
-	// Sum of the previous 'shortPeriod' closes
 	var prevSum float64
 	for i := n - (2 * shortPeriod); i < n-shortPeriod; i++ {
 		prevSum += candles[i].Close
 	}
 	prevAvg := prevSum / float64(shortPeriod)
 
-	// Percentage difference: ((lastAvg - prevAvg) / prevAvg) * 100
 	perfPct := 0.0
 	if prevAvg != 0 {
 		perfPct = (lastAvg - prevAvg) / prevAvg * 100.0

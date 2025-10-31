@@ -181,24 +181,21 @@ func (m *MockExchangeClient) CreateMarketOrder(symbol, side, quantity string) (i
 	return time.Now().UnixNano(), price, nil
 }
 
-// IsTickerTooNew implements interfaces.ExchangeClient
 func (m *MockExchangeClient) IsTickerTooNew(symbol string) (bool, error) {
-	// In backtesting, we assume all tickers are established
+
 	return false, nil
 }
 
-// GetTradingPairs implements interfaces.ExchangeClient
 func (m *MockExchangeClient) GetTradingPairs() map[string]*models.TradingPair {
 	return m.tradingPairs
 }
 
-// FetchMarkets implements interfaces.ExchangeClient
 func (m *MockExchangeClient) FetchMarkets(tickers []string, excludedMarkets []string, excludedTradingPairs []models.TradingPair) ([]models.TradingPair, error) {
-	// In backtesting, we only return the trading pairs that have historical data
+
 	var result []models.TradingPair
 
 	for symbol := range m.historicalData {
-		// Check if this symbol should be included based on the filters
+
 		if shouldIncludeSymbol(symbol, tickers, excludedMarkets, excludedTradingPairs) {
 			baseAsset, quoteAsset := extractAssets(symbol)
 			pair := models.TradingPair{
@@ -213,13 +210,11 @@ func (m *MockExchangeClient) FetchMarkets(tickers []string, excludedMarkets []st
 	return result, nil
 }
 
-// FetchActiveTrades implements interfaces.ExchangeClient
 func (m *MockExchangeClient) FetchActiveTrades(symbol string) ([]*binance.TradeV3, error) {
-	// In backtesting, we don't simulate active trades
+
 	return []*binance.TradeV3{}, nil
 }
 
-// FetchHistoricalCandles implements interfaces.ExchangeClient
 func (m *MockExchangeClient) FetchHistoricalCandles(symbol string, interval string, startTime, endTime time.Time, limit int) ([]models.CandleStick, error) {
 	if _, ok := m.historicalData[symbol]; !ok {
 		return nil, fmt.Errorf("no historical data for symbol %s", symbol)
@@ -231,18 +226,15 @@ func (m *MockExchangeClient) FetchHistoricalCandles(symbol string, interval stri
 
 	candles := m.historicalData[symbol][interval]
 
-	// Filter candles by time range
 	var filteredCandles []models.CandleStick
 	for _, candle := range candles {
-		// Use Timestamp for start time comparison
-		// For end time, we can estimate it based on the interval
+
 		if (candle.Timestamp.After(startTime) || candle.Timestamp.Equal(startTime)) &&
 			(candle.Timestamp.Before(endTime) || candle.Timestamp.Equal(endTime)) {
 			filteredCandles = append(filteredCandles, candle)
 		}
 	}
 
-	// Apply limit if needed
 	if limit > 0 && len(filteredCandles) > limit {
 		return filteredCandles[len(filteredCandles)-limit:], nil
 	}
@@ -250,7 +242,6 @@ func (m *MockExchangeClient) FetchHistoricalCandles(symbol string, interval stri
 	return filteredCandles, nil
 }
 
-// AdvanceTime moves the current index forward to simulate the passage of time
 func (m *MockExchangeClient) AdvanceTime(symbol string, steps int) error {
 	if _, ok := m.currentIndex[symbol]; !ok {
 		return fmt.Errorf("symbol %s not initialized", symbol)
@@ -258,7 +249,6 @@ func (m *MockExchangeClient) AdvanceTime(symbol string, steps int) error {
 
 	m.currentIndex[symbol] += steps
 
-	// Check if we've reached the end of the data
 	for interval, candles := range m.historicalData[symbol] {
 		if m.currentIndex[symbol] >= len(candles) {
 			return fmt.Errorf("reached end of historical data for %s with interval %s", symbol, interval)
@@ -268,9 +258,6 @@ func (m *MockExchangeClient) AdvanceTime(symbol string, steps int) error {
 	return nil
 }
 
-// Helper functions
-
-// parseAmount converts a string amount to a float64
 func parseAmount(amount string) (float64, error) {
 	var quantity float64
 	_, err := fmt.Sscanf(amount, "%f", &quantity)
@@ -280,12 +267,8 @@ func parseAmount(amount string) (float64, error) {
 	return quantity, nil
 }
 
-// extractAssets extracts base and quote assets from a symbol (e.g., "BTCUSDT" -> "BTC", "USDT")
 func extractAssets(symbol string) (string, string) {
-	// This is a simplified implementation
-	// In a real scenario, you might need more sophisticated logic or a lookup table
 
-	// Common quote assets
 	quoteAssets := []string{"USDT", "BTC", "ETH", "BNB", "BUSD"}
 
 	for _, quote := range quoteAssets {
@@ -295,7 +278,6 @@ func extractAssets(symbol string) (string, string) {
 		}
 	}
 
-	// Default fallback - assume the last 4 characters are the quote asset
 	if len(symbol) > 4 {
 		return symbol[:len(symbol)-4], symbol[len(symbol)-4:]
 	}
@@ -303,11 +285,9 @@ func extractAssets(symbol string) (string, string) {
 	return symbol, ""
 }
 
-// shouldIncludeSymbol checks if a symbol should be included based on the filters
 func shouldIncludeSymbol(symbol string, tickers []string, excludedMarkets []string, excludedTradingPairs []models.TradingPair) bool {
 	baseAsset, quoteAsset := extractAssets(symbol)
 
-	// Check if the base asset is in the tickers list
 	if len(tickers) > 0 {
 		found := false
 		for _, ticker := range tickers {
@@ -321,14 +301,12 @@ func shouldIncludeSymbol(symbol string, tickers []string, excludedMarkets []stri
 		}
 	}
 
-	// Check if the quote asset is in the excluded markets list
 	for _, excluded := range excludedMarkets {
 		if quoteAsset == excluded {
 			return false
 		}
 	}
 
-	// Check if the symbol is in the excluded trading pairs list
 	for _, excludedPair := range excludedTradingPairs {
 		if symbol == excludedPair.Symbol {
 			return false
@@ -338,5 +316,4 @@ func shouldIncludeSymbol(symbol string, tickers []string, excludedMarkets []stri
 	return true
 }
 
-// Ensure MockExchangeClient implements interfaces.ExchangeClient
 var _ interfaces.ExchangeClient = (*MockExchangeClient)(nil)

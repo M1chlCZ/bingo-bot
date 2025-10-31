@@ -16,12 +16,12 @@ func HandleBacktestCommands(args []string) bool {
 	command := args[1]
 	switch command {
 	case "fetch-data":
-		// Reset flags to parse command-specific flags
+
 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 		backtest.FetchDataCmd()
 		return true
 	case "run-backtest":
-		// Reset flags to parse command-specific flags
+
 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 		backtest.RunBacktestCmd()
 		return true
@@ -33,7 +33,6 @@ func HandleBacktestCommands(args []string) bool {
 	return false
 }
 
-// printBacktestHelp prints help information for backtest commands
 func printBacktestHelp() {
 	fmt.Println("Backtest Commands:")
 	fmt.Println("  fetch-data     Fetch historical data from Binance")
@@ -62,9 +61,8 @@ func printBacktestHelp() {
 	fmt.Println("    go run main.go run-backtest -symbol=BTCUSDT -interval=1h -strategy=compound -start=2022-01-01 -end=2022-12-31 -balance=10000.0")
 }
 
-// InitBacktestLogger initializes the logger for backtest commands
 func InitBacktestLogger() {
-	// Set up logging
+
 	logLevel := "info"
 	colorEnabled := true
 	logger.InitLogger(&logLevel, &colorEnabled)

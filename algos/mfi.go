@@ -13,17 +13,15 @@ type MFIStrategy struct {
 	Period     int `json:"period"`
 }
 
-// signal: -1 if MFI > Overbought, +1 if MFI < Oversold, else 0.
 func (m *MFIStrategy) Calculate(candles []models.CandleStick, _ string) (float64, int, error) {
 	if m.Period < 2 {
 		return 0, 0, fmt.Errorf("MFI: period must be >= 2 (got %d)", m.Period)
 	}
-	// Need at least Period+1 candles to form Period money-flow windows (TR-like)
+
 	if len(candles) < m.Period+1 {
 		return 0, 0, fmt.Errorf("not enough data for MFI: need %d, got %d", m.Period+1, len(candles))
 	}
 
-	// Build positive/negative raw money flow over each bar (except the very first)
 	nFlow := len(candles) - 1
 	posFlow := make([]float64, nFlow)
 	negFlow := make([]float64, nFlow)
@@ -47,14 +45,12 @@ func (m *MFIStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 			posFlow[i-1] = 0
 			negFlow[i-1] = rawMF
 		default:
-			// equal typical price → neither positive nor negative
+
 			posFlow[i-1] = 0
 			negFlow[i-1] = 0
 		}
 	}
 
-	// Rolling sums over 'Period' of pos/neg flow on the posFlow/negFlow arrays.
-	// Window ends at index i, starting at i = Period-1.
 	win := m.Period
 	if nFlow < win {
 		return 0, 0, fmt.Errorf("internal: flow length %d < window %d", nFlow, win)
@@ -66,7 +62,6 @@ func (m *MFIStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 		sumNeg += negFlow[i]
 	}
 
-	// We only need the latest MFI, but keeping the rolling logic simple & clear.
 	latestMFI := mfiFromSums(sumPos, sumNeg)
 
 	for i := win; i < nFlow; i++ {
@@ -89,9 +84,8 @@ func (m *MFIStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 	return latestMFI, signal, nil
 }
 
-// mfiFromSums computes the MFI given windowed sums of positive/negative money flow.
 func mfiFromSums(sumPos, sumNeg float64) float64 {
-	// Handle degenerate cases first
+
 	if sumPos == 0 && sumNeg == 0 {
 		return 50
 	}

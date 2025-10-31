@@ -14,11 +14,9 @@ type SMAStrategy struct {
 	UseCrossover bool `json:"useCrossover"` // use SMA crossover if true
 }
 
-// Calculate computes the SMA value and returns a signal based on the configuration.
-// Returns current SMA value (or fast SMA in crossover mode), signal (-1 sell, 0 hold, 1 buy), error.
 func (s *SMAStrategy) Calculate(candles []models.CandleStick, _ string) (float64, int, error) {
 	if s.UseCrossover {
-		// ---- Crossover mode: need at least SlowPeriod+1 candles to get 2 SMA points ----
+
 		if s.FastPeriod <= 0 || s.SlowPeriod <= 0 || s.FastPeriod >= s.SlowPeriod {
 			return 0, 0, fmt.Errorf("invalid SMA periods: fast=%d, slow=%d", s.FastPeriod, s.SlowPeriod)
 		}
@@ -38,11 +36,9 @@ func (s *SMAStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 			return 0, 0, fmt.Errorf("not enough SMA values for crossover check")
 		}
 
-		// Use last two points for each
 		fc, fp := fastSMA[len(fastSMA)-1], fastSMA[len(fastSMA)-2]
 		sc, sp := slowSMA[len(slowSMA)-1], slowSMA[len(slowSMA)-2]
 
-		// Hysteresis to avoid flip-flops on tiny touches (relative 0.05%)
 		const rel = 0.0005
 		up := crossedUp(fp, fc, sp, sc, rel)
 		down := crossedDown(fp, fc, sp, sc, rel)
@@ -57,7 +53,6 @@ func (s *SMAStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 		}
 	}
 
-	// ---- Single-SMA (price vs SMA) mode: need at least Period+1 candles for 2 SMA points ----
 	if s.Period <= 0 {
 		return 0, 0, fmt.Errorf("SMA period must be greater than zero")
 	}
@@ -76,7 +71,6 @@ func (s *SMAStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 	currSMA, prevSMA := smaValues[len(smaValues)-1], smaValues[len(smaValues)-2]
 	currPx, prevPx := candles[len(candles)-1].Close, candles[len(candles)-2].Close
 
-	// Relative deadband based on SMA level (avoid jitter around the line)
 	const rel = 0.0005
 	up := crossedUp(prevPx, currPx, prevSMA, currSMA, rel)
 	down := crossedDown(prevPx, currPx, prevSMA, currSMA, rel)
@@ -91,8 +85,6 @@ func (s *SMAStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 	}
 }
 
-// calculateSMA computes the Simple Moving Average for the given candles and period.
-// Returns a slice of length len(candles)-period+1 (right-aligned to the input).
 func calculateSMA(candles []models.CandleStick, period int) ([]float64, error) {
 	if period <= 0 {
 		return nil, fmt.Errorf("SMA period must be greater than zero")
@@ -113,7 +105,7 @@ func calculateSMA(candles []models.CandleStick, period int) ([]float64, error) {
 	for i := 1; i < n; i++ {
 		sum += candles[i+period-1].Close - candles[i-1].Close
 		v := sum / float64(period)
-		// defensive clamp for NaN/Inf
+
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			v = out[i-1]
 		}
@@ -123,15 +115,12 @@ func calculateSMA(candles []models.CandleStick, period int) ([]float64, error) {
 	return out, nil
 }
 
-// crossedUp returns true if series A crossed above series B between previous and current,
-// using a small relative hysteresis to avoid micro-crosses.
 func crossedUp(aPrev, aCurr, bPrev, bCurr float64, rel float64) bool {
-	// consider magnitudes around current level to set epsilon
+
 	eps := rel * math.Max(1.0, math.Abs(bCurr))
 	return aPrev <= bPrev+eps && aCurr > bCurr+eps
 }
 
-// crossedDown is the inverse.
 func crossedDown(aPrev, aCurr, bPrev, bCurr float64, rel float64) bool {
 	eps := rel * math.Max(1.0, math.Abs(bCurr))
 	return aPrev >= bPrev-eps && aCurr < bCurr-eps

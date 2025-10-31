@@ -179,17 +179,15 @@ func (r *Runner) executeTrade(symbol string, signal int, atr, adx float64) error
 		return err
 	}
 
-	// Calculate trade amount using the advanced method
 	tradeAmount := r.calculateTradeAmount(signal, r.config.MinNotional, quoteBalance, baseBalance, symbol, atr, adx)
 	if tradeAmount == 0 {
 		return nil // Skip trade if amount is 0
 	}
 
 	if signal > 0 { // Buy
-		// Format the amount as a string (as required by the client interface)
+
 		amountStr := fmt.Sprintf("%.8f", tradeAmount)
 
-		// Execute the buy
 		_, err = r.client.CreateOrder(symbol, "MARKET", "BUY", amountStr)
 		if err != nil {
 			return err
@@ -197,12 +195,11 @@ func (r *Runner) executeTrade(symbol string, signal int, atr, adx float64) error
 
 		logger.Infof("Backtest: BUY %s: %.8f at price %.8f", symbol, tradeAmount, currentPrice)
 	} else if signal < 0 { // Sell
-		// If we have a position, sell it
+
 		if baseBalance > 0 {
-			// Format the amount as a string (as required by the client interface)
+
 			amountStr := fmt.Sprintf("%.8f", tradeAmount)
 
-			// Execute the sell
 			_, err = r.client.CreateOrder(symbol, "MARKET", "SELL", amountStr)
 			if err != nil {
 				return err
@@ -215,9 +212,8 @@ func (r *Runner) executeTrade(symbol string, signal int, atr, adx float64) error
 	return nil
 }
 
-// SuggestStrategy selects a strategy based on the market state
 func (r *Runner) SuggestStrategy(marketState models.MarketState) interfaces.Strategy {
-	// Return the strategy based on the market state
+
 	switch marketState {
 	case models.Trending:
 		if r.config.Strategy != nil {
@@ -249,9 +245,8 @@ func (r *Runner) SuggestStrategy(marketState models.MarketState) interfaces.Stra
 	}
 }
 
-// calculateTradeAmount calculates the trade amount based on market conditions
 func (r *Runner) calculateTradeAmount(signal int, notional, quoteBalance, baseBalance float64, pair string, atr, adx float64) float64 {
-	// Define baseline risk parameters
+
 	const (
 		baseRiskPercentage = 0.1  // Risk 10% of quote balance as baseline risk per trade
 		atrReference       = 1.0  // ATR reference level
@@ -261,10 +256,8 @@ func (r *Runner) calculateTradeAmount(signal int, notional, quoteBalance, baseBa
 		extraPercent       = 0.1  // Extra 10% above notional
 	)
 
-	// Start with base position in quote currency = quoteBalance * baseRiskPercentage
 	basePosition := quoteBalance * baseRiskPercentage
 
-	// Adjust position size based on ADX
 	adxMultiplier := 1.0 + (adx-adxReference)*0.02
 	if adxMultiplier < 0.5 {
 		adxMultiplier = 0.5
@@ -273,7 +266,6 @@ func (r *Runner) calculateTradeAmount(signal int, notional, quoteBalance, baseBa
 	}
 	adjustedForADX := basePosition * adxMultiplier
 
-	// Adjust position size based on ATR (Volatility)
 	atrMultiplier := atrReference / atr
 	if atrMultiplier < 0.5 {
 		atrMultiplier = 0.5
@@ -282,30 +274,24 @@ func (r *Runner) calculateTradeAmount(signal int, notional, quoteBalance, baseBa
 	}
 	adjustedForVolatility := adjustedForADX * atrMultiplier
 
-	// Convert the absolute currency amount to fraction of the quote balance
 	tradePercentage := adjustedForVolatility / quoteBalance
 
-	// Ensure the tradePercentage is within our min/max
 	if tradePercentage < minTradePercentage {
 		tradePercentage = minTradePercentage
 	} else if tradePercentage > maxTradePercentage {
 		tradePercentage = maxTradePercentage
 	}
 
-	// Final amount to trade
 	finalAmount := tradePercentage * quoteBalance
 
-	// Enforce an absolute minimum buy: (exchangeMinNotional * (1 + extraPercent))
 	minBuyAbsolute := notional * (1 + extraPercent)
 
-	// Proceed with BUY or SELL logic
 	if signal > 0 { // BUY Signal
-		// If finalAmount is below that absolute minBuy, clamp it
+
 		if finalAmount < minBuyAbsolute {
 			finalAmount = minBuyAbsolute
 		}
 
-		// Still can't exceed the actual quoteBalance
 		if finalAmount > quoteBalance {
 			finalAmount = quoteBalance
 		}
@@ -321,8 +307,7 @@ func (r *Runner) calculateTradeAmount(signal int, notional, quoteBalance, baseBa
 		)
 		return finalAmount
 	}
-	// SELL Signal
-	// If we are selling, typically we sell all base balance
+
 	logger.Debugf(
 		"SELL %s: BaseBalance=%.2f, ATR=%.2f, ADX=%.2f, TradePercentage=%.2f%%",
 		pair, baseBalance, atr, adx, tradePercentage*100,
@@ -330,35 +315,30 @@ func (r *Runner) calculateTradeAmount(signal int, notional, quoteBalance, baseBa
 	return baseBalance
 }
 
-// calculatePerformanceMetrics calculates performance metrics for the backtest result
 func (r *Runner) calculatePerformanceMetrics(result *BacktestResult) {
-	// Calculate total trades
+
 	result.TotalTrades = len(result.Transactions)
 
-	// Initialize metrics
 	var totalProfit, totalLoss float64
 	result.LargestProfit = 0
 	result.LargestLoss = 0
 
-	// Track positions for P&L calculation
 	positions := make(map[string]float64)  // symbol -> average entry price
 	quantities := make(map[string]float64) // symbol -> quantity held
 
-	// Calculate trade metrics
 	for _, tx := range result.Transactions {
 		if tx.Side == "BUY" {
-			// Update position
+
 			currentQty := quantities[tx.Symbol]
 			currentAvgPrice := positions[tx.Symbol]
 
-			// Calculate new average price
 			newQty := currentQty + tx.Quantity
 			newAvgPrice := (currentQty*currentAvgPrice + tx.Quantity*tx.Price) / newQty
 
 			positions[tx.Symbol] = newAvgPrice
 			quantities[tx.Symbol] = newQty
 		} else if tx.Side == "SELL" {
-			// Calculate profit/loss
+
 			entryPrice := positions[tx.Symbol]
 			exitPrice := tx.Price
 			quantity := tx.Quantity
@@ -381,26 +361,22 @@ func (r *Runner) calculatePerformanceMetrics(result *BacktestResult) {
 				result.BreakEvenTrades++
 			}
 
-			// Update position
 			quantities[tx.Symbol] -= quantity
 			if quantities[tx.Symbol] <= 0 {
-				// Position closed
+
 				quantities[tx.Symbol] = 0
 				positions[tx.Symbol] = 0
 			}
 		}
 	}
 
-	// Calculate ending balance
 	var endingBalance float64
 	for _, balance := range result.FinalBalances {
-		// For simplicity, we're just summing up all balances
-		// In a real implementation, you might want to convert everything to a common denominator
+
 		endingBalance += balance
 	}
 	result.EndingBalance = endingBalance
 
-	// Calculate overall metrics
 	result.TotalProfitLoss = totalProfit - totalLoss
 	result.PercentageReturn = (endingBalance - result.StartingBalance) / result.StartingBalance * 100
 
@@ -422,6 +398,4 @@ func (r *Runner) calculatePerformanceMetrics(result *BacktestResult) {
 		result.ProfitFactor = totalProfit // Infinite profit factor if no losses
 	}
 
-	// Note: More sophisticated metrics like Sharpe ratio and max drawdown would require
-	// time series data of equity curve, which we're not tracking in this simple implementation
 }

@@ -61,10 +61,10 @@ func DefaultMultiTradingConfig() MultiTrading {
 		MaxTotalTrades:        50,
 		AnalyzerConfig: analysis.NewMarketAnalyzer(analysis.MarketAnalyzer{
 			EMAPeriods:               []int{8, 21, 50},
-			ATRPeriod:                12,
-			ADXPeriod:                12,
-			HighVolatilityThreshold:  0.032,
-			StrongTrendThreshold:     22,
+			ATRPeriod:                14,
+			ADXPeriod:                14,
+			HighVolatilityThreshold:  0.030,
+			StrongTrendThreshold:     24,
 			IchimokuConversionPeriod: 8,
 			IchimokuBasePeriod:       24,
 			IchimokuSpanBPeriod:      48,
@@ -79,9 +79,9 @@ func DefaultMultiTradingConfig() MultiTrading {
 			MarketRegimePeriod:       40,
 			VolatilityPeriod:         16,
 			CorrelationPeriod:        20,
-			NoiseFilterThreshold:     0.012,
-			ConfidenceThreshold:      0.58,
-			AdaptiveLookback:         80,
+			NoiseFilterThreshold:     0.0095,
+			ConfidenceThreshold:      0.60,
+			AdaptiveLookback:         90,
 		}),
 	}
 }

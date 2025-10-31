@@ -13,8 +13,6 @@ type ADRStrategy struct {
 	Multiplier float64 `json:"multiplier"` // expansion threshold, e.g. 1.5 → today range >= 1.5×ADR
 }
 
-// Calculate returns (ADR, signal).
-// signal:  -1 = over-extended day (range expansion), 0 = neutral, 1 = compressed day (range likely to expand soon)
 func (a *ADRStrategy) Calculate(candles []models.CandleStick, _ string) (float64, int, error) {
 	p := a.Period
 	if p <= 0 {
@@ -43,13 +41,10 @@ func (a *ADRStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 		a.Multiplier = 1.5
 	}
 
-	// Expansion when today's range is significantly larger than ADR.
 	if ratio >= a.Multiplier {
 		return adr, -1, nil
 	}
 
-	// Compression when today's range is much smaller than ADR.
-	// 0.70 is a decent, conservative default for crypto.
 	if ratio <= 0.70 {
 		return adr, 1, nil
 	}
@@ -57,8 +52,6 @@ func (a *ADRStrategy) Calculate(candles []models.CandleStick, _ string) (float64
 	return adr, 0, nil
 }
 
-// calculateADRRobust computes a trimmed-mean ADR over the last `period` candles,
-// reducing the impact of single outliers (crypto spikes).
 func calculateADRRobust(candles []models.CandleStick, period int) (float64, error) {
 	if period <= 0 {
 		return 0, fmt.Errorf("ADR period must be > 0")
@@ -78,7 +71,6 @@ func calculateADRRobust(candles []models.CandleStick, period int) (float64, erro
 		return 0, nil
 	}
 
-	// Trim 10% on each side (min 1 element when big enough)
 	sort.Float64s(ranges)
 	trim := int(math.Floor(0.10 * float64(len(ranges))))
 	start := trim
@@ -94,10 +86,6 @@ func calculateADRRobust(candles []models.CandleStick, period int) (float64, erro
 	return sum / float64(end-start), nil
 }
 
-// ---------------- ADX (Wilder) ------------------
-
-// CalculateADX returns the most recent Average Directional Index value (Wilder).
-// ADX ≥ ~25 is often interpreted as a “tradable/strong” trend.
 func (a *ADRStrategy) CalculateADX(candles []models.CandleStick) (float64, error) {
 	p := a.Period
 	if p <= 0 {
@@ -107,7 +95,6 @@ func (a *ADRStrategy) CalculateADX(candles []models.CandleStick) (float64, error
 		return 0, fmt.Errorf("not enough candles for ADX (need >= %d)", p+1)
 	}
 
-	// 1) Raw TR, +DM, -DM
 	tr := make([]float64, 0, len(candles)-1)
 	pdm := make([]float64, 0, len(candles)-1)
 	ndm := make([]float64, 0, len(candles)-1)
@@ -140,7 +127,6 @@ func (a *ADRStrategy) CalculateADX(candles []models.CandleStick) (float64, error
 		return 0, fmt.Errorf("not enough TR samples")
 	}
 
-	// 2) Wilder smoothing of TR, +DM, -DM
 	tr14 := wilderSmooth(tr, p)
 	pdm14 := wilderSmooth(pdm, p)
 	ndm14 := wilderSmooth(ndm, p)
@@ -148,7 +134,6 @@ func (a *ADRStrategy) CalculateADX(candles []models.CandleStick) (float64, error
 		return 0, fmt.Errorf("smoothing failed")
 	}
 
-	// 3) Build DX series (aligned)
 	dxSeries := make([]float64, 0, len(tr14))
 	for i := 0; i < len(tr14); i++ {
 		t := tr14[i]
@@ -167,46 +152,41 @@ func (a *ADRStrategy) CalculateADX(candles []models.CandleStick) (float64, error
 		dxSeries = append(dxSeries, dx)
 	}
 
-	// 4) ADX = Wilder-smoothed DX (seed with avg of first p DX)
 	adx := wilderADX(dxSeries, p)
 	return adx, nil
 }
 
-// wilderSmooth applies Wilder's smoothing to src with period p, returning an aligned series
-// of the same length as src starting at index p-1 (we keep full length for simplicity).
 func wilderSmooth(src []float64, p int) []float64 {
 	if p <= 0 || len(src) < p {
 		return nil
 	}
 	out := make([]float64, len(src))
-	// seed: sum of first p values
+
 	sum := 0.0
 	for i := 0; i < p; i++ {
 		sum += src[i]
 	}
 	out[p-1] = sum
-	// Wilder smoothing for subsequent values
+
 	for i := p; i < len(src); i++ {
 		sum = out[i-1] - out[i-1]/float64(p) + src[i]
 		out[i] = sum
 	}
-	// values before p-1 are zero (unaligned); that's fine for our usage
+
 	return out
 }
 
-// wilderADX computes the final ADX from the DX series using Wilder's method.
-// Seed ADX = average of first p DX values, then ADX_t = ((ADX_{t-1}*(p-1)) + DX_t) / p
 func wilderADX(dx []float64, p int) float64 {
 	if p <= 0 || len(dx) < p {
 		return 0
 	}
-	// seed
+
 	sum := 0.0
 	for i := 0; i < p; i++ {
 		sum += dx[i]
 	}
 	adx := sum / float64(p)
-	// Wilder forward
+
 	for i := p; i < len(dx); i++ {
 		adx = ((adx * float64(p-1)) + dx[i]) / float64(p)
 	}

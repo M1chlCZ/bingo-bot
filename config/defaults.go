@@ -13,11 +13,11 @@ var (
 		Strategy: &strategies.CompoundStrategy{
 			StrategyType:              strategies.CompoundStrategyType,
 			MarketState:               models.Default,
-			CandleInterval:            "1h",
+			CandleInterval:            "4h",
 			PanicSell:                 true,
-			RiskRewardThreshold:       1.20,
-			DesiredProfit:             1.60,
-			HighestPriceFallOffMargin: 0.90,
+			RiskRewardThreshold:       1.25, // tuned
+			DesiredProfit:             1.20, // tuned
+			HighestPriceFallOffMargin: 1.00, // tuned
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 			PartialTP1Pct:             0.90,
@@ -41,9 +41,9 @@ var (
 			MarketState:               models.Chaotic,
 			CandleInterval:            "1h",
 			PanicSell:                 true,
-			RiskRewardThreshold:       1.00,
-			DesiredProfit:             1.15,
-			HighestPriceFallOffMargin: 0.90,
+			RiskRewardThreshold:       1.10, // tuned
+			DesiredProfit:             1.00, // tuned
+			HighestPriceFallOffMargin: 1.10, // tuned
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 			PartialTP1Pct:             0.85,
@@ -65,10 +65,10 @@ var (
 		Strategy: &strategies.CompoundStrategy{
 			StrategyType:              strategies.CompoundStrategyType,
 			MarketState:               models.Trending,
-			CandleInterval:            "1h",
-			RiskRewardThreshold:       0.95,
-			DesiredProfit:             2.80,
-			HighestPriceFallOffMargin: 0.80,
+			CandleInterval:            "4h",
+			RiskRewardThreshold:       1.05, // tuned
+			DesiredProfit:             1.80, // tuned
+			HighestPriceFallOffMargin: 1.40, // tuned
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 			PartialTP1Pct:             1.00,
@@ -77,7 +77,7 @@ var (
 			ADR:            &algos.ADRStrategy{Period: 14, Multiplier: 1.5},
 			RSI:            &algos.RSIStrategy{Period: 14, Overbought: 70, Oversold: 30},
 			MACD:           &algos.MACDStrategy{FastPeriod: 10, SlowPeriod: 24, SignalPeriod: 5},
-			BollingerBands: &algos.BollingerBands{Period: 22, Width: 2.2},
+			BollingerBands: &algos.BollingerBands{Period: 26, Width: 2.2},
 			Stochastic:     &algos.StochasticOscillator{Period: 14, DPeriod: 3, Overbought: 80, Oversold: 20},
 			Ichimoku:       &algos.IchimokuStrategy{ConversionPeriod: 9, BasePeriod: 26, SpanBPeriod: 52},
 			CCI:            &algos.CCIStrategy{Period: 20, Overbought: 100, Oversold: -100},
@@ -90,10 +90,10 @@ var (
 		Strategy: &strategies.CompoundStrategy{
 			StrategyType:              strategies.CompoundStrategyType,
 			MarketState:               models.StronglyTrending,
-			CandleInterval:            "1h",
-			RiskRewardThreshold:       0.70,
-			DesiredProfit:             3.00,
-			HighestPriceFallOffMargin: 0.80,
+			CandleInterval:            "4h",
+			RiskRewardThreshold:       0.85, // tuned
+			DesiredProfit:             2.20, // tuned
+			HighestPriceFallOffMargin: 1.80, // tuned
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 			PartialTP1Pct:             1.10,
@@ -115,11 +115,11 @@ var (
 		Strategy: &strategies.CompoundStrategy{
 			StrategyType:              strategies.CompoundStrategyType,
 			MarketState:               models.RangeBound,
-			CandleInterval:            "1h",
+			CandleInterval:            "4h",
 			PanicSell:                 true,
-			RiskRewardThreshold:       1.25,
-			DesiredProfit:             1.30,
-			HighestPriceFallOffMargin: 0.65,
+			RiskRewardThreshold:       1.30, // tuned
+			DesiredProfit:             1.10, // tuned
+			HighestPriceFallOffMargin: 0.80, // tuned
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 			PartialTP1Pct:             0.85,
@@ -141,11 +141,11 @@ var (
 		Strategy: &strategies.CompoundStrategy{
 			StrategyType:              strategies.CompoundStrategyType,
 			MarketState:               models.Transitional,
-			CandleInterval:            "1h",
+			CandleInterval:            "4h",
 			PanicSell:                 true,
-			RiskRewardThreshold:       1.35,
-			DesiredProfit:             1.50,
-			HighestPriceFallOffMargin: 0.90,
+			RiskRewardThreshold:       1.40, // tuned
+			DesiredProfit:             1.30, // tuned
+			HighestPriceFallOffMargin: 1.20, // tuned
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 			PartialTP1Pct:             0.95,
