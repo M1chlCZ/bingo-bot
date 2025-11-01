@@ -176,12 +176,7 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			}
 		}
 
-		atr := 0.0
-		if v, err := algos.ATR(currentIndicators.CandleSticks, 14); err == nil {
-			atr = v
-		} else {
-			atr = currentIndicators.ADRVal
-		}
+		atr := getATRSafe(currentIndicators.CandleSticks, currentIndicators.ADRVal, currentIndicators.MiddleBand)
 
 		conf := cs.entryScore(currentIndicators, currentPrice)
 
@@ -258,12 +253,19 @@ func (cs *CompoundStrategy) calculateDynamicRiskReward(ci CurrentIndicators) flo
 	if n := len(ci.CandleSticks); n > 0 {
 		cp = ci.CandleSticks[n-1].Close
 	}
+
+	if cp <= 0 {
+		return cs.RiskRewardThreshold
+	}
+
 	atrAbs, err := algos.ATR(ci.CandleSticks, 14)
 	var atrPct float64
 	if err == nil && cp > 0 {
 		atrPct = atrAbs / cp
-	} else if ci.MiddleBand > 0 {
+	} else if ci.MiddleBand > 0 && cp > 0 {
 		atrPct = ci.ADRVal / ci.MiddleBand
+	} else {
+		return cs.RiskRewardThreshold
 	}
 
 	dynRR := cs.RiskRewardThreshold
@@ -278,7 +280,42 @@ func (cs *CompoundStrategy) calculateDynamicRiskReward(ci CurrentIndicators) flo
 	return dynRR
 }
 
-var pairCooldownMu sync.Map
+var (
+	pairCooldownMu        sync.Map
+	cooldownCleanupOnce   sync.Once
+	cooldownCleanupTicker *time.Ticker
+)
+
+func startCooldownCleanup() {
+	cooldownCleanupOnce.Do(func() {
+		cooldownCleanupTicker = time.NewTicker(30 * time.Minute)
+		go func() {
+			for range cooldownCleanupTicker.C {
+
+			}
+		}()
+	})
+}
+
+func getATRSafe(candles []models.CandleStick, adrVal, middleBand float64) float64 {
+	if atr, err := algos.ATR(candles, 14); err == nil && atr > 0 {
+		return atr
+	}
+
+	if adrVal > 0 {
+		return adrVal
+	}
+
+	if middleBand > 0 {
+		return middleBand * 0.01
+	}
+
+	if n := len(candles); n > 0 && candles[n-1].Close > 0 {
+		return candles[n-1].Close * 0.01
+	}
+
+	return 1e-9
+}
 
 func (cs *CompoundStrategy) isInCooldownPeriod(pair string) bool {
 	muIface, _ := pairCooldownMu.LoadOrStore(pair, &sync.Mutex{})
@@ -452,19 +489,7 @@ func (cs *CompoundStrategy) checkBullishTrending(
 		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓2 Price [+0] => %.1f", score)
 	}
 
-	atr, err := algos.ATR(ci.CandleSticks, 14)
-	if err != nil || atr <= 0 {
-		base := ci.MiddleBand
-		if base <= 0 {
-			if n := len(ci.CandleSticks); n > 0 {
-				base = ci.CandleSticks[n-1].Close
-			}
-		}
-		if base <= 0 {
-			base = 1.0
-		}
-		atr = math.Max(1e-9, base*0.01)
-	}
+	atr := getATRSafe(ci.CandleSticks, ci.ADRVal, ci.MiddleBand)
 	logger.DebugColorf(logger.Cyan, "[TRENDING] ✓3 ATR | ATR:%.6f", atr)
 
 	adrOK := ci.ADRSignal >= 0
@@ -646,10 +671,7 @@ func (cs *CompoundStrategy) checkBullishStronglyTrending(
 		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓3 Score [+0.5] => %.1f", score)
 	}
 
-	atr, err := algos.ATR(ci.CandleSticks, 14)
-	if err != nil || atr <= 0 {
-		atr = math.Max(1e-9, ci.MiddleBand*0.01)
-	}
+	atr := getATRSafe(ci.CandleSticks, ci.ADRVal, ci.MiddleBand)
 	logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓4 ATR | ATR:%.6f", atr)
 
 	pullbackTenkan := currentPrice <= ci.IchimokuRes.Tenkan*1.005 && currentPrice >= ci.IchimokuRes.Tenkan*0.980 // zpřísněno
@@ -898,10 +920,7 @@ func (cs *CompoundStrategy) checkBullishChaotic(
 		return false
 	}
 
-	atr, err := algos.ATR(ci.CandleSticks, 14)
-	if err != nil || atr <= 0 {
-		atr = math.Max(1e-9, ci.MiddleBand*0.015)
-	}
+	atr := getATRSafe(ci.CandleSticks, ci.ADRVal, ci.MiddleBand)
 	logger.DebugColorf(logger.BrightYellow, "[CHAOTIC] ✓2 ATR | ATR:%.6f", atr)
 
 	nearMB := currentPrice <= ci.MiddleBand*1.005
@@ -1080,23 +1099,23 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 		if n < 3 {
 			return false
 		}
-		atr := 0.0
-		if v, err := algos.ATR(c, 14); err == nil {
-			atr = v
-		} else {
-			atr = indicators.ADRVal
-		}
+		atr := getATRSafe(c, indicators.ADRVal, indicators.MiddleBand)
 		prevHigh := math.Max(c[n-2].High, c[n-3].High)
 		last := c[n-1]
 		boLevel := prevHigh + 0.10*atr
 
 		avgVol := 0.0
-		for i := n - 8; i < n-1; i++ {
-			if i >= 0 {
-				avgVol += c[i].Volume
-			}
+		minIdx := n - 8
+		if minIdx < 0 {
+			minIdx = 0
 		}
-		avgVol /= math.Min(8, float64(n-1))
+		for i := minIdx; i < n-1; i++ {
+			avgVol += c[i].Volume
+		}
+		count := float64(n - 1 - minIdx)
+		if count > 0 {
+			avgVol /= count
+		}
 
 		return last.Close >= boLevel &&
 			last.Low >= prevHigh-0.06*atr &&
@@ -1146,11 +1165,7 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 
 		atr := pb.ATR
 		if atr <= 0 {
-			if v, err := algos.ATR(indicators.CandleSticks, 14); err == nil {
-				atr = v
-			} else {
-				atr = indicators.ADRVal
-			}
+			atr = getATRSafe(indicators.CandleSticks, indicators.ADRVal, indicators.MiddleBand)
 		}
 
 		minBreakout := math.Max(pb.TriggerPrice*1.0008, pb.TriggerPrice+0.08*atr)
@@ -1337,11 +1352,7 @@ func (cs *CompoundStrategy) finalBuyValidation(
 
 	atr := pb.ATR
 	if atr <= 0 {
-		if v, err := algos.ATR(indicators.CandleSticks, 14); err == nil {
-			atr = v
-		} else {
-			atr = math.Max(1e-9, indicators.ADRVal)
-		}
+		atr = getATRSafe(indicators.CandleSticks, indicators.ADRVal, indicators.MiddleBand)
 	}
 
 	stopMult := 2.0
@@ -1672,12 +1683,7 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 			trade.Symbol, profitMargin, upliftFromAtl, atlPrice)
 	}
 
-	atr := 0.0
-	if v, err := algos.ATR(cs.localIndicators.CandleSticks, 14); err == nil {
-		atr = v
-	} else {
-		atr = math.Max(1e-9, cs.localIndicators.ADRVal)
-	}
+	atr := getATRSafe(cs.localIndicators.CandleSticks, cs.localIndicators.ADRVal, cs.localIndicators.MiddleBand)
 
 	trailMult := 1.8
 	switch state {
@@ -1865,12 +1871,7 @@ func (cs *CompoundStrategy) enqueueTrendReentry(pair string, currentPrice float6
 		return
 	}
 
-	atr := 0.0
-	if v, err := algos.ATR(ci.CandleSticks, 14); err == nil {
-		atr = v
-	} else {
-		atr = math.Max(1e-9, ci.ADRVal)
-	}
+	atr := getATRSafe(ci.CandleSticks, ci.ADRVal, ci.MiddleBand)
 
 	priceNearMB := currentPrice <= ci.MiddleBand*1.015
 	momentumOK := ci.MacdLine >= ci.SignalLine || ci.HistSlope > 0

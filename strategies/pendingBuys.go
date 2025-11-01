@@ -1,6 +1,8 @@
 package strategies
 
 import (
+	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -84,6 +86,13 @@ func NewPendingBuyRepo() PendingBuyRepo {
 	}
 }
 
+func calculatePriceDiff(price, basePrice float64) float64 {
+	if basePrice == 0 {
+		return 0
+	}
+	return (price - basePrice) / basePrice
+}
+
 func (r *inMemoryPendingBuyRepo) Add(pb *PendingBuy) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -113,17 +122,12 @@ func (r *inMemoryPendingBuyRepo) AddOrReplace(pb *PendingBuy) (*PendingBuy, erro
 	list := r.entries[pb.Pair]
 	var replaced *PendingBuy
 
-	// Check if similar entry exists (within 0.5% price)
 	for i, existing := range list {
-		priceDiff := 0.0
-		if existing.TriggerPrice > 0 {
-			priceDiff = (pb.TriggerPrice - existing.TriggerPrice) / existing.TriggerPrice
-		}
+		priceDiff := calculatePriceDiff(pb.TriggerPrice, existing.TriggerPrice)
 
-		if priceDiff < 0.005 && priceDiff > -0.005 { // within 0.5%
+		if math.Abs(priceDiff) < 0.005 { // within 0.5%
 			replaced = existing
 
-			// Preserve trend history when replacing
 			if existing.TrendHistory != nil {
 				pb.TrendHistory = existing.TrendHistory
 				pb.FirstSeen = existing.FirstSeen
@@ -140,7 +144,6 @@ func (r *inMemoryPendingBuyRepo) AddOrReplace(pb *PendingBuy) (*PendingBuy, erro
 		pb.ID = r.generateID()
 	}
 
-	// Initialize trend tracking for new entry
 	if pb.TrendHistory == nil {
 		pb.TrendHistory = &TrendHistory{
 			Snapshots:    make([]TrendSnapshot, 0, 10),
@@ -170,7 +173,6 @@ func (r *inMemoryPendingBuyRepo) UpdateSnapshot(pair string, ci CurrentIndicator
 			continue
 		}
 
-		// Create new snapshot
 		snapshot := TrendSnapshot{
 			Timestamp:       time.Now(),
 			Price:           currentPrice,
@@ -187,13 +189,11 @@ func (r *inMemoryPendingBuyRepo) UpdateSnapshot(pair string, ci CurrentIndicator
 			snapshot.Volume = ci.CandleSticks[len(ci.CandleSticks)-1].Volume
 		}
 
-		// Add snapshot (rolling window)
 		pb.TrendHistory.Snapshots = append(pb.TrendHistory.Snapshots, snapshot)
 		if len(pb.TrendHistory.Snapshots) > pb.TrendHistory.MaxSnapshots {
 			pb.TrendHistory.Snapshots = pb.TrendHistory.Snapshots[1:]
 		}
 
-		// Recalculate trend metrics
 		r.calculateTrendMetrics(pb.TrendHistory)
 
 		pb.LastUpdate = time.Now()
@@ -209,7 +209,6 @@ func (r *inMemoryPendingBuyRepo) UpdateSnapshot(pair string, ci CurrentIndicator
 	return updated
 }
 
-// calculateTrendMetrics analyzes the snapshot history to determine trend quality
 func (r *inMemoryPendingBuyRepo) calculateTrendMetrics(th *TrendHistory) {
 	snapshots := th.Snapshots
 	n := len(snapshots)
@@ -222,7 +221,6 @@ func (r *inMemoryPendingBuyRepo) calculateTrendMetrics(th *TrendHistory) {
 		return
 	}
 
-	// 1. PRICE DIRECTION & CONSISTENCY
 	priceUps := 0
 	priceDowns := 0
 	for i := 1; i < n; i++ {
@@ -234,7 +232,6 @@ func (r *inMemoryPendingBuyRepo) calculateTrendMetrics(th *TrendHistory) {
 	}
 	priceConsistency := float64(priceUps) / float64(n-1)
 
-	// 2. MOMENTUM CONSISTENCY (MACD Histogram slope)
 	positiveHistSlopes := 0
 	for _, s := range snapshots {
 		if s.HistSlope > 0 {
@@ -243,7 +240,6 @@ func (r *inMemoryPendingBuyRepo) calculateTrendMetrics(th *TrendHistory) {
 	}
 	momentumConsistency := float64(positiveHistSlopes) / float64(n)
 
-	// 3. RSI TREND (improving but not overbought)
 	rsiImproving := 0
 	rsiHealthy := 0
 	for i := 1; i < n; i++ {
@@ -256,21 +252,18 @@ func (r *inMemoryPendingBuyRepo) calculateTrendMetrics(th *TrendHistory) {
 	}
 	rsiScore := (float64(rsiImproving)/float64(n-1) + float64(rsiHealthy)/float64(n)) / 2.0
 
-	// 4. VOLUME TREND
 	volumeIncreasing := 0
+	volumeScore := 0.5
 	if n >= 3 {
 		for i := 2; i < n; i++ {
 			if snapshots[i].Volume > snapshots[i-1].Volume {
 				volumeIncreasing++
 			}
 		}
-	}
-	volumeScore := float64(volumeIncreasing) / float64(n-2)
-	if n < 3 {
-		volumeScore = 0.5
+
+		volumeScore = float64(volumeIncreasing) / float64(n-2)
 	}
 
-	// 5. ACCELERATION (is momentum getting stronger?)
 	acceleration := 0.0
 	if n >= 3 {
 		recentHistAvg := 0.0
@@ -290,12 +283,10 @@ func (r *inMemoryPendingBuyRepo) calculateTrendMetrics(th *TrendHistory) {
 		acceleration = recentHistAvg - olderHistAvg
 	}
 
-	// 6. OVERALL TREND SCORE (0.0-1.0)
 	th.Consistency = (priceConsistency + momentumConsistency + rsiScore) / 3.0
 	th.TrendScore = (priceConsistency*0.30 + momentumConsistency*0.35 + rsiScore*0.20 + volumeScore*0.15)
 	th.Acceleration = acceleration
 
-	// 7. DETERMINE DIRECTION
 	if priceConsistency > 0.65 && momentumConsistency > 0.60 {
 		th.TrendDirection = "UP"
 	} else if priceConsistency < 0.35 && momentumConsistency < 0.40 {
@@ -363,16 +354,25 @@ func (r *inMemoryPendingBuyRepo) Confirm(pair string, validator func(*PendingBuy
 	list := r.entries[pair]
 	for i, pb := range list {
 		if validator(pb) {
-			// Remove from pending list
+
 			r.entries[pair] = append(list[:i], list[i+1:]...)
 			if len(r.entries[pair]) == 0 {
 				delete(r.entries, pair)
 			}
 
+			trendScore := 0.0
+			trendDir := "UNKNOWN"
+			consistency := 0.0
+			if pb.TrendHistory != nil {
+				trendScore = pb.TrendHistory.TrendScore
+				trendDir = pb.TrendHistory.TrendDirection
+				consistency = pb.TrendHistory.Consistency
+			}
+
 			logger.InfoColorf(logger.Green,
 				"[PENDING CONFIRMED] %s | Age:%.1fm | Updates:%d | TrendScore:%.2f | Direction:%s | Consistency:%.2f",
 				pair, time.Since(pb.FirstSeen).Minutes(), pb.UpdateCount,
-				pb.TrendHistory.TrendScore, pb.TrendHistory.TrendDirection, pb.TrendHistory.Consistency)
+				trendScore, trendDir, consistency)
 
 			return pb
 		}
@@ -394,10 +394,9 @@ func (r *inMemoryPendingBuyRepo) Count() int {
 func (r *inMemoryPendingBuyRepo) generateID() string {
 	id := r.nextID
 	r.nextID++
-	return time.Now().Format("20060102-150405") + "-" + string(rune(id))
+	return fmt.Sprintf("%s-%06d", time.Now().Format("20060102-150405"), id)
 }
 
-// GetTrendQuality returns a quality score based on trend history
 func (pb *PendingBuy) GetTrendQuality() float64 {
 	if pb.TrendHistory == nil || len(pb.TrendHistory.Snapshots) < 3 {
 		return 0.5 // neutral - not enough data
@@ -405,15 +404,8 @@ func (pb *PendingBuy) GetTrendQuality() float64 {
 
 	th := pb.TrendHistory
 
-	// Quality factors:
-	// 1. Trend score itself (0-1)
-	// 2. Consistency (0-1)
-	// 3. Positive acceleration bonus
-	// 4. Minimum observation time (prefer longer monitoring)
-
 	quality := th.TrendScore*0.50 + th.Consistency*0.30
 
-	// Acceleration bonus (capped)
 	if th.Acceleration > 0 {
 		quality += th.Acceleration * 0.10
 		if quality > 1.0 {
@@ -421,23 +413,21 @@ func (pb *PendingBuy) GetTrendQuality() float64 {
 		}
 	}
 
-	// Time factor: prefer trends observed over time
 	age := time.Since(pb.FirstSeen).Minutes()
 	timeFactor := 1.0
 	switch {
 	case age < 2:
-		timeFactor = 0.85 // too early, might be noise
+		timeFactor = 0.85
 	case age >= 2 && age < 5:
 		timeFactor = 0.95
 	case age >= 5 && age < 10:
-		timeFactor = 1.0 // sweet spot
+		timeFactor = 1.0
 	case age >= 10:
-		timeFactor = 0.90 // getting stale
+		timeFactor = 0.90
 	}
 
 	quality *= timeFactor
 
-	// Update count bonus (more observations = more confidence)
 	if pb.UpdateCount >= 5 {
 		quality += 0.05
 	}
@@ -452,26 +442,24 @@ func (pb *PendingBuy) GetTrendQuality() float64 {
 	return quality
 }
 
-// ShouldBuyNow determines if trend conditions are optimal for entry
 func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) bool {
 	if pb.TrendHistory == nil || len(pb.TrendHistory.Snapshots) < 3 {
-		return false // need minimum observation period
+		return false
 	}
 
 	th := pb.TrendHistory
 	age := time.Since(pb.FirstSeen).Minutes()
 
-	// Minimum observation time before buying
-	minObservation := 2.0 // minutes
+	minObservation := 2.0
 	switch pb.MarketState {
 	case models.StronglyTrending:
 		minObservation = 1.5
 	case models.Trending:
 		minObservation = 2.0
 	case models.Chaotic:
-		minObservation = 1.0 // fast decision needed
+		minObservation = 1.0
 	case models.Transitional:
-		minObservation = 3.0 // wait for confirmation
+		minObservation = 3.0
 	default:
 		minObservation = 2.5
 	}
@@ -482,17 +470,16 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 		return false
 	}
 
-	// Quality thresholds
 	trendQuality := pb.GetTrendQuality()
 	minQuality := 0.65
 
 	switch pb.MarketState {
 	case models.StronglyTrending:
-		minQuality = 0.70 // demand high quality
+		minQuality = 0.70
 	case models.Trending:
 		minQuality = 0.65
 	case models.Chaotic:
-		minQuality = 0.75 // very selective in chaos
+		minQuality = 0.75
 	case models.Transitional:
 		minQuality = 0.68
 	default:
@@ -505,21 +492,18 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 		return false
 	}
 
-	// Direction must be UP
 	if th.TrendDirection != "UP" {
 		logger.DebugColorf(logger.Yellow, "[TREND DIRECTION WRONG] %s | Direction:%s",
 			pb.Pair, th.TrendDirection)
 		return false
 	}
 
-	// Consistency check
 	if th.Consistency < 0.60 {
 		logger.DebugColorf(logger.Yellow, "[TREND INCONSISTENT] %s | Consistency:%.2f < 0.60",
 			pb.Pair, th.Consistency)
 		return false
 	}
 
-	// Recent momentum confirmation
 	if len(th.Snapshots) > 0 {
 		latest := th.Snapshots[len(th.Snapshots)-1]
 		if latest.HistSlope <= 0 || latest.MacdLine <= latest.MacdSignal {
@@ -529,14 +513,13 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 		}
 	}
 
-	// Price movement check (not chasing too far)
 	priceMove := (currentPrice - pb.TriggerPrice) / pb.TriggerPrice
-	maxChase := 0.020 // 2%
+	maxChase := 0.020
 	switch pb.MarketState {
 	case models.StronglyTrending:
-		maxChase = 0.030 // 3%
+		maxChase = 0.030
 	case models.Chaotic:
-		maxChase = 0.015 // 1.5%
+		maxChase = 0.015
 	}
 
 	if priceMove > maxChase {

@@ -86,7 +86,7 @@ issues:
 ```go
  
 func someFunction() {
-    // Code that would trigger linting errors
+
 }
 ```
 

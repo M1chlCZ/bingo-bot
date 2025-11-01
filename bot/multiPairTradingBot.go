@@ -119,10 +119,11 @@ func (bot *MultiPairTradingBot) StartTrading() {
 	bot.pairs.Range(func(_, v interface{}) bool {
 		pair := v.(*models.TradingPair)
 		bot.wg.Add(1)
-		go func() {
+		go func(p *models.TradingPair) {
+			defer recoverFromPanic("tradePair-" + p.Symbol)
 			defer bot.wg.Done()
-			bot.tradePair(pair)
-		}()
+			bot.tradePair(p)
+		}(pair)
 		return true
 	})
 
@@ -369,23 +370,22 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 }
 
 func (bot *MultiPairTradingBot) handleBuy(pair *models.TradingPair, strategy interfaces.Strategy, tradeAmount, currentPrice, quoteBalance float64) bool {
-	if tradeAmount*currentPrice < pair.MinNotional {
-		tradeAmount = pair.MinNotional
 
-		if tradeAmount > quoteBalance {
-			logger.Infof("Skipping BUY for %s: Insufficient USDC balance. Need %.4f Have %.4f", pair.Symbol, tradeAmount, quoteBalance)
+	if tradeAmount*currentPrice < pair.MinNotional {
+		tradeAmount = pair.MinNotional / currentPrice
+
+		if tradeAmount*currentPrice > quoteBalance {
+			logger.Infof("Skipping BUY for %s: Insufficient USDC balance. Need %.4f Have %.4f", pair.Symbol, tradeAmount*currentPrice, quoteBalance)
 			return false
 		}
 	}
 
-	limitPrice := currentPrice * 1.000
-
 	executedVolume := strconv.FormatFloat(tradeAmount, 'f', pair.QtyPrecision, 64)
 
-	logger.Infof("Placing MARKET BUY order for %s: Quantity=%.2f, Limit Price=%.2f, Base amount %.4f", pair.Symbol, tradeAmount, limitPrice, tradeAmount*currentPrice)
+	logger.Infof("Placing MARKET BUY order for %s: Quantity=%.2f, Est. Quote=%.2f", pair.Symbol, tradeAmount, tradeAmount*currentPrice)
 	orderID, price, err := bot.exchange.CreateMarketOrder(pair.Symbol, "BUY", executedVolume)
 	if err != nil {
-		logger.Infof("Error placing LIMIT BUY order for %s: %v", pair.Symbol, err)
+		logger.Infof("Error placing MARKET BUY order for %s: %v", pair.Symbol, err)
 		return false
 	}
 	var rsiVal, macdVal, stochasticStr, stochasticSignal, lowerBound, middleBound, upperBound, ichimokuKijun, ichimokuTenkan, mfi, cci float64 = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
@@ -558,6 +558,12 @@ func (bot *MultiPairTradingBot) updateMarketAnalysis() {
 	}
 }
 
+func recoverFromPanic(context string) {
+	if r := recover(); r != nil {
+		logger.Errorf("[PANIC RECOVERY] %s: %v", context, r)
+	}
+}
+
 func (bot *MultiPairTradingBot) performPairAdjustment() {
 	logger.Infof("Adjusting trading pairs based on market analysis...")
 
@@ -567,12 +573,15 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 		return
 	}
 
+	var enabledMarketsMu sync.Mutex
 	enabledMarkets := make([]models.TradingPair, 0)
+	var analysisDataMu sync.Mutex
 	analysisData := make(map[string]models.AnalysisData)
 	var wgm sync.WaitGroup
 	wgm.Add(len(allMarkets))
 	for _, market := range allMarkets {
 		go func(market models.TradingPair) {
+			defer recoverFromPanic("performPairAdjustment-goroutine")
 			defer wgm.Done()
 			candles, err := bot.exchange.FetchCandles(market.Symbol, bot.interval, 100, false)
 			if err != nil {
@@ -590,13 +599,18 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 			}
 
 			marketState, atr, adx := bot.marketAnalyzer.AnalyzeMarket(candles)
+			analysisDataMu.Lock()
 			analysisData[market.Symbol] = models.AnalysisData{
 				MarketState: marketState,
 				ATR:         atr,
 				ADX:         adx,
 			}
+			analysisDataMu.Unlock()
+
 			if bot.isMarketStateEnabled(marketState) {
+				enabledMarketsMu.Lock()
 				enabledMarkets = append(enabledMarkets, market)
+				enabledMarketsMu.Unlock()
 			}
 			logger.Debugf("||| Market analysis for %s: State=%v, ATR=%.4f, ADX=%.4f", market.Symbol, marketState, atr, adx)
 		}(market)
@@ -664,11 +678,12 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 		}
 		numPairs++
 		wg.Add(1)
-		go func(pair models.TradingPair) {
+		go func(pair models.TradingPair, data models.AnalysisData) {
+			defer recoverFromPanic("performPairAdjustment-addPair")
 			defer wg.Done()
 			logger.Debugf("Adding pair %s", pair.Symbol)
 			bot.AddPair(&pair, &data)
-		}(pair)
+		}(pair, data)
 	}
 	wg.Wait()
 
@@ -793,7 +808,7 @@ func (bot *MultiPairTradingBot) checkEarlyWarning(candlesMap map[string][]models
 		}
 
 		perf := bot.measureShortTermPerformance(cset, 5)
-		if perf < -5.0 { // if dropped >2% in last N bars
+		if perf < -5.0 { // if dropped >5% in last N bars
 			logger.InfoColorf(logger.BrightRed, "[%s] Meltdown detected: %.2f%% drop in last 5 bars", symbol, perf)
 			meltdownCount++
 		}
@@ -837,8 +852,7 @@ func (bot *MultiPairTradingBot) checkMarketMeltdown() {
 
 func (bot *MultiPairTradingBot) measureShortTermPerformance(candles []models.CandleStick, shortPeriod int) float64 {
 	n := len(candles)
-	if n < shortPeriod*2 {
-
+	if shortPeriod <= 0 || n < shortPeriod*2 {
 		return 0
 	}
 
