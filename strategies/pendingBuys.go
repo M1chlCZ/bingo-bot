@@ -20,15 +20,31 @@ type TrendSnapshot struct {
 	RsiSlope        float64
 	MiddleBandSlope float64
 	Volume          float64
+
+	EMA20      float64
+	EMA50      float64
+	EMA200     float64
+	EMASlope20 float64
+	EMASlope50 float64
+
+	ADX     float64
+	PlusDI  float64
+	MinusDI float64
+
+	KeltnerMid   float64
+	KeltnerUpper float64
+	KeltnerLower float64
+	KeltnerSlope float64
+	BandPosition float64
 }
 
 type TrendHistory struct {
 	Snapshots      []TrendSnapshot
-	MaxSnapshots   int // rolling window size
+	MaxSnapshots   int
 	TrendScore     float64
-	TrendDirection string  // "UP", "DOWN", "SIDEWAYS"
-	Consistency    float64 // 0.0-1.0, higher = more consistent
-	Acceleration   float64 // rate of change improvement
+	TrendDirection string
+	Consistency    float64
+	Acceleration   float64
 }
 
 type PendingBuy struct {
@@ -168,9 +184,24 @@ func (r *inMemoryPendingBuyRepo) UpdateSnapshot(pair string, ci CurrentIndicator
 	}
 
 	updated := false
+
 	for _, pb := range list {
 		if pb.TrendHistory == nil {
 			continue
+		}
+
+		kMid := ci.KCMid
+		kUpper := ci.KCUpper
+		kLower := ci.KCLower
+
+		bandPos := 0.5
+		if span := kUpper - kLower; span > 0 {
+			bandPos = (currentPrice - kLower) / span
+			if bandPos < 0 {
+				bandPos = 0
+			} else if bandPos > 1 {
+				bandPos = 1
+			}
 		}
 
 		snapshot := TrendSnapshot{
@@ -182,28 +213,52 @@ func (r *inMemoryPendingBuyRepo) UpdateSnapshot(pair string, ci CurrentIndicator
 			HistSlope:       ci.HistSlope,
 			RsiSlope:        ci.RsiSlope,
 			MiddleBandSlope: ci.MiddleBandSlope,
-			Volume:          0, // filled from candles if available
+			Volume: func() float64 {
+				if len(ci.CandleSticks) > 0 {
+					return ci.CandleSticks[len(ci.CandleSticks)-1].Volume
+				}
+				return 0
+			}(),
+
+			EMA20:      ci.EMA20,
+			EMA50:      ci.EMA50,
+			EMA200:     ci.EMA200,
+			EMASlope20: ci.EMASlope20,
+			EMASlope50: ci.EMASlope50,
+
+			ADX:     ci.ADX,
+			PlusDI:  ci.PlusDI,
+			MinusDI: ci.MinusDI,
+
+			KeltnerMid:   kMid,
+			KeltnerUpper: kUpper,
+			KeltnerLower: kLower,
+			BandPosition: bandPos,
 		}
 
-		if len(ci.CandleSticks) > 0 {
-			snapshot.Volume = ci.CandleSticks[len(ci.CandleSticks)-1].Volume
+		th := pb.TrendHistory
+		if len(th.Snapshots) > 0 {
+			prev := th.Snapshots[len(th.Snapshots)-1]
+			snapshot.KeltnerSlope = snapshot.KeltnerMid - prev.KeltnerMid
 		}
 
-		pb.TrendHistory.Snapshots = append(pb.TrendHistory.Snapshots, snapshot)
-		if len(pb.TrendHistory.Snapshots) > pb.TrendHistory.MaxSnapshots {
-			pb.TrendHistory.Snapshots = pb.TrendHistory.Snapshots[1:]
+		th.Snapshots = append(th.Snapshots, snapshot)
+		if len(th.Snapshots) > th.MaxSnapshots {
+			th.Snapshots = th.Snapshots[1:]
 		}
 
-		r.calculateTrendMetrics(pb.TrendHistory)
+		r.calculateTrendMetrics(th)
 
 		pb.LastUpdate = time.Now()
 		pb.UpdateCount++
 		updated = true
 
-		logger.DebugColorf(logger.Blue,
-			"[TREND SNAPSHOT] %s | Updates:%d | Score:%.2f | Direction:%s | Consistency:%.2f | Accel:%.3f",
-			pair, pb.UpdateCount, pb.TrendHistory.TrendScore, pb.TrendHistory.TrendDirection,
-			pb.TrendHistory.Consistency, pb.TrendHistory.Acceleration)
+		logger.DebugColorf(
+			logger.Blue,
+			"[TREND SNAPSHOT] %s | Updates:%d | Score:%.2f | Dir:%s | Consistency:%.2f | Accel:%.3f | ADX:%.1f",
+			pair, pb.UpdateCount, th.TrendScore, th.TrendDirection,
+			th.Consistency, th.Acceleration, th.Snapshots[0].ADX,
+		)
 	}
 
 	return updated
@@ -224,9 +279,10 @@ func (r *inMemoryPendingBuyRepo) calculateTrendMetrics(th *TrendHistory) {
 	priceUps := 0
 	priceDowns := 0
 	for i := 1; i < n; i++ {
-		if snapshots[i].Price > snapshots[i-1].Price {
+		switch {
+		case snapshots[i].Price > snapshots[i-1].Price:
 			priceUps++
-		} else if snapshots[i].Price < snapshots[i-1].Price {
+		case snapshots[i].Price < snapshots[i-1].Price:
 			priceDowns++
 		}
 	}
@@ -260,15 +316,56 @@ func (r *inMemoryPendingBuyRepo) calculateTrendMetrics(th *TrendHistory) {
 				volumeIncreasing++
 			}
 		}
-
 		volumeScore = float64(volumeIncreasing) / float64(n-2)
 	}
 
+	kcUp := 0
+	kcDown := 0
+	for i := 1; i < n; i++ {
+		d := snapshots[i].KeltnerMid - snapshots[i-1].KeltnerMid
+		switch {
+		case d > 0:
+			kcUp++
+		case d < 0:
+			kcDown++
+		}
+	}
+	kcSlopeScore := float64(kcUp) / float64(n-1)
+
+	adxTrendCount := 0
+	adxBearCount := 0
+	const adxThresh = 18.0
+	for _, s := range snapshots {
+		if s.ADX >= adxThresh {
+			if s.PlusDI > s.MinusDI {
+				adxTrendCount++
+			} else if s.PlusDI < s.MinusDI {
+				adxBearCount++
+			}
+		}
+	}
+	adxScore := float64(adxTrendCount) / float64(n)
+
+	upTrendBars := 0
+	downTrendBars := 0
+	for _, s := range snapshots {
+		if s.ADX >= 18 && s.PlusDI > s.MinusDI {
+			upTrendBars++
+		}
+		if s.ADX >= 18 && s.MinusDI > s.PlusDI {
+			downTrendBars++
+		}
+	}
+	upStrength := float64(upTrendBars) / float64(n)
+	downStrength := float64(downTrendBars) / float64(n)
+
+	directionalStrength := upStrength
+
 	acceleration := 0.0
 	if n >= 3 {
+		mid := n / 2
 		recentHistAvg := 0.0
 		olderHistAvg := 0.0
-		mid := n / 2
 
 		for i := mid; i < n; i++ {
 			recentHistAvg += snapshots[i].HistSlope
@@ -281,17 +378,33 @@ func (r *inMemoryPendingBuyRepo) calculateTrendMetrics(th *TrendHistory) {
 		olderHistAvg /= float64(mid)
 
 		acceleration = recentHistAvg - olderHistAvg
+
 	}
 
-	th.Consistency = (priceConsistency + momentumConsistency + rsiScore) / 3.0
-	th.TrendScore = (priceConsistency*0.30 + momentumConsistency*0.35 + rsiScore*0.20 + volumeScore*0.15)
+	th.Consistency = priceConsistency*0.35 +
+		momentumConsistency*0.30 +
+		rsiScore*0.20 +
+		directionalStrength*0.15
+
+	th.TrendScore = priceConsistency*0.25 +
+		momentumConsistency*0.30 +
+		rsiScore*0.20 +
+		volumeScore*0.10 +
+		directionalStrength*0.15
 	th.Acceleration = acceleration
 
-	if priceConsistency > 0.65 && momentumConsistency > 0.60 {
+	switch {
+	case priceConsistency > 0.60 &&
+		momentumConsistency > 0.60 &&
+		kcSlopeScore > 0.55 &&
+		adxScore > 0.50 && upStrength > 0.55:
 		th.TrendDirection = "UP"
-	} else if priceConsistency < 0.35 && momentumConsistency < 0.40 {
+	case priceConsistency < 0.40 &&
+		momentumConsistency < 0.45 &&
+		float64(kcDown)/float64(n-1) > 0.55 &&
+		adxBearCount > adxTrendCount && downStrength > 0.50:
 		th.TrendDirection = "DOWN"
-	} else {
+	default:
 		th.TrendDirection = "SIDEWAYS"
 	}
 }
@@ -363,16 +476,20 @@ func (r *inMemoryPendingBuyRepo) Confirm(pair string, validator func(*PendingBuy
 			trendScore := 0.0
 			trendDir := "UNKNOWN"
 			consistency := 0.0
+			accel := 0.0
 			if pb.TrendHistory != nil {
 				trendScore = pb.TrendHistory.TrendScore
 				trendDir = pb.TrendHistory.TrendDirection
 				consistency = pb.TrendHistory.Consistency
+				accel = pb.TrendHistory.Acceleration
 			}
 
-			logger.InfoColorf(logger.Green,
-				"[PENDING CONFIRMED] %s | Age:%.1fm | Updates:%d | TrendScore:%.2f | Direction:%s | Consistency:%.2f",
+			logger.InfoColorf(
+				logger.Green,
+				"[PENDING CONFIRMED] %s | Age:%.1fm | Updates:%d | TrendScore:%.2f | Dir:%s | Consist:%.2f | Accel:%.3f",
 				pair, time.Since(pb.FirstSeen).Minutes(), pb.UpdateCount,
-				trendScore, trendDir, consistency)
+				trendScore, trendDir, consistency, accel,
+			)
 
 			return pb
 		}
@@ -408,9 +525,6 @@ func (pb *PendingBuy) GetTrendQuality() float64 {
 
 	if th.Acceleration > 0 {
 		quality += th.Acceleration * 0.10
-		if quality > 1.0 {
-			quality = 1.0
-		}
 	}
 
 	age := time.Since(pb.FirstSeen).Minutes()
@@ -420,23 +534,26 @@ func (pb *PendingBuy) GetTrendQuality() float64 {
 		timeFactor = 0.85
 	case age >= 2 && age < 5:
 		timeFactor = 0.95
-	case age >= 5 && age < 10:
+	case age >= 5 && age < 12:
 		timeFactor = 1.0
-	case age >= 10:
-		timeFactor = 0.90
+	case age >= 12 && age < 25:
+		timeFactor = 0.93
+	case age >= 25:
+		timeFactor = 0.88
 	}
-
 	quality *= timeFactor
 
 	if pb.UpdateCount >= 5 {
-		quality += 0.05
+		quality += 0.04
 	}
 	if pb.UpdateCount >= 8 {
-		quality += 0.05
+		quality += 0.04
 	}
 
 	if quality > 1.0 {
 		quality = 1.0
+	} else if quality < 0 {
+		quality = 0
 	}
 
 	return quality
@@ -470,6 +587,24 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 		return false
 	}
 
+	adx := ci.ADX
+	plus := ci.PlusDI
+	minus := ci.MinusDI
+
+	if adx < 10 {
+		logger.DebugColorf(logger.Yellow, "[TREND ADX TOO LOW] %s | ADX=%.1f < 10", pb.Pair, adx)
+		return false
+	}
+
+	if pb.MarketState == models.StronglyTrending || pb.MarketState == models.Trending {
+		if adx < 16 || plus <= minus {
+			logger.DebugColorf(logger.Yellow,
+				"[TREND DMI WEAK] %s | State:%s ADX=%.1f, +DI=%.1f, -DI=%.1f",
+				pb.Pair, pb.MarketState.String(), adx, plus, minus)
+			return false
+		}
+	}
+
 	trendQuality := pb.GetTrendQuality()
 	minQuality := 0.65
 
@@ -484,6 +619,18 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 		minQuality = 0.68
 	default:
 		minQuality = 0.65
+	}
+
+	if adx >= 25 {
+		minQuality -= 0.03
+	} else if adx < 16 {
+		minQuality += 0.04
+	}
+	if minQuality < 0.55 {
+		minQuality = 0.55
+	}
+	if minQuality > 0.85 {
+		minQuality = 0.85
 	}
 
 	if trendQuality < minQuality {
@@ -504,13 +651,37 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 		return false
 	}
 
-	if len(th.Snapshots) > 0 {
-		latest := th.Snapshots[len(th.Snapshots)-1]
-		if latest.HistSlope <= 0 || latest.MacdLine <= latest.MacdSignal {
-			logger.DebugColorf(logger.Yellow, "[TREND MOMENTUM WEAK] %s | HistSlope:%.6f, MACD cross invalid",
-				pb.Pair, latest.HistSlope)
-			return false
-		}
+	latest := th.Snapshots[len(th.Snapshots)-1]
+
+	if latest.HistSlope <= 0 || latest.MacdLine <= latest.MacdSignal {
+		logger.DebugColorf(logger.Yellow, "[TREND MOMENTUM WEAK] %s | HistSlope:%.6f, MACD cross invalid",
+			pb.Pair, latest.HistSlope)
+		return false
+	}
+
+	if ci.RSIVal >= 70 {
+		logger.DebugColorf(logger.Yellow, "[TREND RSI OVERBOUGHT] %s | RSI:%.2f",
+			pb.Pair, ci.RSIVal)
+		return false
+	}
+
+	const adxMin = 18.0
+	if latest.ADX < adxMin || latest.PlusDI <= latest.MinusDI {
+		logger.DebugColorf(logger.Yellow, "[TREND ADX/DI WEAK] %s | ADX:%.1f, +DI:%.1f, -DI:%.1f",
+			pb.Pair, latest.ADX, latest.PlusDI, latest.MinusDI)
+		return false
+	}
+
+	if latest.KeltnerSlope <= 0 {
+		logger.DebugColorf(logger.Yellow, "[TREND KC SLOPE DOWN] %s | KeltnerSlope:%.6f",
+			pb.Pair, latest.KeltnerSlope)
+		return false
+	}
+
+	if latest.KeltnerUpper > 0 && currentPrice >= latest.KeltnerUpper*1.01 {
+		logger.DebugColorf(logger.Yellow, "[TREND OVEREXTENDED KC] %s | cp=%.4f >= KU*1.01=%.4f",
+			pb.Pair, currentPrice, latest.KeltnerUpper*1.01)
+		return false
 	}
 
 	priceMove := (currentPrice - pb.TriggerPrice) / pb.TriggerPrice
@@ -520,17 +691,20 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 		maxChase = 0.030
 	case models.Chaotic:
 		maxChase = 0.015
+	default:
+		maxChase = 0.020
 	}
-
 	if priceMove > maxChase {
 		logger.DebugColorf(logger.Yellow, "[TREND CHASE TOO FAR] %s | Move:%.2f%% > Max:%.2f%%",
 			pb.Pair, priceMove*100, maxChase*100)
 		return false
 	}
 
-	logger.InfoColorf(logger.Green,
+	logger.InfoColorf(
+		logger.Green,
 		"[TREND BUY READY ✓] %s | Quality:%.2f | Dir:%s | Consist:%.2f | Accel:%.3f | Age:%.1fm | Updates:%d",
-		pb.Pair, trendQuality, th.TrendDirection, th.Consistency, th.Acceleration, age, pb.UpdateCount)
+		pb.Pair, trendQuality, th.TrendDirection, th.Consistency, th.Acceleration, age, pb.UpdateCount,
+	)
 
 	return true
 }
