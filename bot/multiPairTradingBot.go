@@ -518,19 +518,29 @@ func (bot *MultiPairTradingBot) updateMarketAnalysis() {
 
 			localCandles := make(map[string][]models.CandleStick)
 			for _, pair := range pairsToAnalyze {
+
 				strg, _ := bot.pairStrategies.Load(pair.Symbol)
 				strategy, ok := strg.(interfaces.Strategy)
-				if !ok {
-					logger.Warnf("Missing strategy for %s. Skipping trade cycle.", pair.Symbol)
-					continue
+				if !ok || strategy == nil {
+					if bot.config.Default.Strategy == nil {
+						logger.Warnf("1] Missing strategy for %s and no default. Skipping.", pair.Symbol)
+						continue
+					}
+					strategy = bot.config.Default.Strategy.Clone()
+					bot.pairStrategies.Store(pair.Symbol, strategy)
+					logger.Warnf("1] Missing strategy for %s. Assigned default %T.", pair.Symbol, strategy)
 				}
+
 				candles, err := bot.exchange.FetchCandles(pair.Symbol, strategy.GetCandleInterval(), 100, true)
 				if err != nil {
 					logger.Errorf("Error fetching candles for %s: %v", pair.Symbol, err)
 					continue
 				}
-				marketState, atr, adx := bot.marketAnalyzer.AnalyzeMarket(candles)
-				logger.Debugf("/// Market analysis for %s: State=%v, ATR=%.4f, ADX=%.4f", pair.Symbol, marketState, atr, adx)
+
+				marketState, atr, adx := bot.marketAnalyzer.AnalyzeMarket(pair.Symbol, candles)
+				logger.Debugf("/// Market analysis for %s: State=%v, ATR=%.4f, ADX=%.4f",
+					pair.Symbol, marketState, atr, adx)
+
 				analysisData := analysis.PairAnalysis{
 					Pair:        pair,
 					MarketState: marketState,
@@ -541,14 +551,14 @@ func (bot *MultiPairTradingBot) updateMarketAnalysis() {
 				newStrategy := bot.SuggestStrategy(analysisData.MarketState)
 				localCandles[pair.Symbol] = candles
 
+				bot.analysisData.Store(pair.Symbol, &analysisData)
+
 				if newStrategy.GetMarketState() == strategy.GetMarketState() {
 					logger.Infof("No change in strategy for %s: Market State=%v", pair.Symbol, marketState)
 					continue
 				}
 
-				bot.analysisData.Store(pair.Symbol, &analysisData)
 				bot.pairStrategies.Store(pair.Symbol, newStrategy)
-
 				logger.Infof("Market analysis updated for %s: State=%v", pair.Symbol, marketState)
 			}
 			bot.checkEarlyWarning(localCandles)
@@ -598,7 +608,7 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 				return
 			}
 
-			marketState, atr, adx := bot.marketAnalyzer.AnalyzeMarket(candles)
+			marketState, atr, adx := bot.marketAnalyzer.AnalyzeMarket(market.Symbol, candles)
 			analysisDataMu.Lock()
 			analysisData[market.Symbol] = models.AnalysisData{
 				MarketState: marketState,

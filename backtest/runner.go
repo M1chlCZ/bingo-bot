@@ -2,11 +2,12 @@ package backtest
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/M1chlCZ/bingo-bot/analysis"
 	"github.com/M1chlCZ/bingo-bot/interfaces"
 	"github.com/M1chlCZ/bingo-bot/logger"
 	"github.com/M1chlCZ/bingo-bot/models"
-	"time"
 )
 
 type BacktestConfig struct {
@@ -124,7 +125,7 @@ func (r *Runner) Run() (*BacktestResult, error) {
 				continue
 			}
 
-			marketState, atr, adx := r.marketAnalyzer.AnalyzeMarket(candles)
+			marketState, atr, adx := r.marketAnalyzer.AnalyzeMarket(pair.Symbol, candles)
 			logger.Debugf("Backtest: Market state for %s: %s (ATR=%.2f, ADX=%.2f)", pair.Symbol, marketState.String(), atr, adx)
 
 			strategy := r.SuggestStrategy(marketState)
