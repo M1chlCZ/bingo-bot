@@ -26,6 +26,8 @@ type CompoundStrategy struct {
 	CCI                       *algos.CCIStrategy          `validate:"required" json:"cci"`
 	MFI                       *algos.MFIStrategy          `validate:"required" json:"mfi"`
 	ADR                       *algos.ADRStrategy          `validate:"required" json:"adr"`
+	Keltner                   *algos.KeltnerChannel       `json:"keltnerChannel"`
+	ADX                       *algos.ADXStrategy          `json:"adx"`
 	MarketState               models.MarketState          `validate:"marketStateEnum" json:"marketState"`
 	RiskRewardThreshold       float64                     `validate:"gte=0" json:"riskRewardThreshold"`
 	FeeRate                   float64                     `validate:"gte=0" json:"feeRate"`
@@ -67,6 +69,22 @@ type CurrentIndicators struct {
 	CandleSticks    []models.CandleStick
 	PrevMiddleBand  float64
 	MiddleBandSlope float64
+
+	EMA20      float64
+	EMA50      float64
+	EMA200     float64
+	EMASlope20 float64
+	EMASlope50 float64
+
+	ADX     float64
+	PlusDI  float64
+	MinusDI float64
+
+	KCLower float64
+	KCMid   float64
+	KCUpper float64
+	KCSlope float64
+	KCPos   float64
 }
 
 var (
@@ -349,10 +367,10 @@ func (cs *CompoundStrategy) entryScore(ci CurrentIndicators, currentPrice float6
 	score := 0.0
 
 	if ci.ADRSignal > 0 {
-		score += 0.5
+		score += 0.35
 	}
 	if ci.MacdIndicator == 1 {
-		score += 0.35
+		score += 0.5
 	}
 	if ci.HistSlope > 0 {
 		score += 0.20
@@ -380,6 +398,13 @@ func (cs *CompoundStrategy) entryScore(ci CurrentIndicators, currentPrice float6
 	}
 	if ci.CCIVal > -100 && ci.CCIVal < 100 {
 		score += 0.02
+	}
+	if ci.KCSlope > 0 {
+		score += 0.06
+	}
+
+	if ci.KCUpper > ci.KCLower && ci.KCPos > 0.20 && ci.KCPos < 0.80 {
+		score += 0.04
 	}
 
 	if score > 1.0 {
@@ -461,16 +486,33 @@ func (cs *CompoundStrategy) checkBullishTrending(
 ) bool {
 
 	var score float64 = 0.0
-	requiredScore := 5.5
+	requiredScore := 7.5
 
 	mbSlopeOK := ci.MiddleBandSlope > 0.0001   // zpřísněno z -0.0001
 	macdOK := ci.MacdLine > ci.SignalLine*0.99 // zpřísněno z 0.97
 	trendOK := mbSlopeOK && macdOK
 
+	adxOK := ci.ADX >= 18 && ci.PlusDI > ci.MinusDI
+	if adxOK {
+		score += 0.7
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓ADX [+0.7] ADX=%.1f +DI=%.1f -DI=%.1f => %.1f", ci.ADX, ci.PlusDI, ci.MinusDI, score)
+	} else {
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✗ADX ADX=%.1f", ci.ADX)
+	}
+
+	emaStack := ci.EMA20 >= ci.EMA50 && ci.EMA50 >= ci.EMA200
+	if emaStack {
+		score += 0.8
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓EMA Stack [+0.8] => %.1f", score)
+	}
+	if ci.EMASlope20 > 0 && ci.EMASlope50 > 0 {
+		score += 0.4
+		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓EMA Slopes [+0.4] => %.1f", score)
+	}
+
 	if trendOK {
 		score += 2.0
 		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓1 Trend [+2.0] => %.1f", score)
-	} else if macdOK && mbSlopeOK {
 		score += 0.8 // sníženo z 1.2
 		logger.DebugColorf(logger.Cyan, "[TRENDING] ✓1 Trend [+0.8] => %.1f | partial", score)
 	} else {
@@ -626,17 +668,34 @@ func (cs *CompoundStrategy) checkBullishStronglyTrending(
 ) bool {
 
 	var score float64 = 0.0
-	requiredScore := 6.5
+	requiredScore := 7.0
 
 	mbOK := ci.MiddleBandSlope > 0.0002                                                                     // zpřísněno z -0.0002
 	ichiOK := ci.IchimokuRes.Bullish && currentPrice > math.Max(ci.IchimokuRes.SpanA, ci.IchimokuRes.SpanB) // zpřísněno
 	macdOK := ci.MacdLine > ci.SignalLine*0.99                                                              // zpřísněno z 0.97
-	trendOK := (mbOK && ichiOK && macdOK)
+	trendOK := mbOK && ichiOK && macdOK
+
+	adxOK := ci.ADX >= 22 && ci.PlusDI > ci.MinusDI
+	if adxOK {
+		score += 1.0
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓ADX [+1.0] ADX=%.1f", ci.ADX)
+	} else {
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✗ADX ADX=%.1f", ci.ADX)
+	}
+
+	emaStack := ci.EMA20 >= ci.EMA50 && ci.EMA50 >= ci.EMA200
+	if emaStack {
+		score += 0.9
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓EMA Stack [+0.9] => %.1f", score)
+	}
+	if ci.EMASlope20 > 0 && ci.EMASlope50 > 0 {
+		score += 0.5
+		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓EMA Slopes [+0.5] => %.1f", score)
+	}
 
 	if trendOK {
 		score += 2.5
 		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓1 Trend [+2.5] => %.1f | full", score)
-	} else if mbOK && macdOK && ichiOK {
 		score += 1.5 // sníženo z 1.8
 		logger.DebugColorf(logger.Magenta, "[ST-TREND] ✓1 Trend [+1.5] => %.1f | 2/3", score)
 	} else if macdOK && ichiOK {
@@ -1200,9 +1259,17 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 		if pb.MarketState == models.StronglyTrending || pb.MarketState == models.Trending {
 			maxExtension = 1.018
 		}
-		if indicators.UpperBand > 0 && currentPrice >= indicators.UpperBand*maxExtension {
-			logger.Debugf("[PENDING] %s => overextended: %.4f >= %.4f",
-				pair, currentPrice, indicators.UpperBand*maxExtension)
+
+		overExtBB := indicators.UpperBand > 0 && currentPrice >= indicators.UpperBand*maxExtension
+		overExtKC := indicators.KCUpper > 0 && currentPrice >= indicators.KCUpper*maxExtension
+
+		if overExtBB || overExtKC {
+			logger.Debugf("[PENDING] %s => overextended: cp=%.4f (BB>=%.4f? %t, KC>=%.4f? %t)",
+				pair,
+				currentPrice,
+				indicators.UpperBand*maxExtension, overExtBB,
+				indicators.KCUpper*maxExtension, overExtKC,
+			)
 			return false
 		}
 
@@ -1537,20 +1604,77 @@ func (cs *CompoundStrategy) trackPriceExtremes(symbol string, currentPrice float
 	return athPrice, atlPrice, lastAthTime, nil
 }
 
-func (cs *CompoundStrategy) checkEarlyExitCondition(trade *models.ActiveTrade, currentPrice float64) bool {
+func (cs *CompoundStrategy) checkEarlyExitCondition(
+	trade *models.ActiveTrade,
+	currentPrice float64,
+	state models.MarketState,
+	mstate string,
+) bool {
 	tradeDuration := time.Since(trade.Timestamp)
 	breakevenPrice := trade.BuyPrice * (1 + cs.FeeRate)
 	profitMargin := (currentPrice - breakevenPrice) / breakevenPrice * 100
 
-	const maxHoldingTime = 45 * time.Minute
-	const minimalAcceptableLoss = -0.35 // -0.35% under breakeven
-
-	if tradeDuration > maxHoldingTime && profitMargin >= minimalAcceptableLoss {
-		logger.InfoColorf(logger.BrightYellow, "[EARLY EXIT] %s: Holding too long (%v), current margin=%.2f%%",
-			trade.Symbol, tradeDuration, profitMargin)
-		return true
+	if profitMargin >= 0.30 {
+		logger.DebugColorf(
+			logger.BrightYellow,
+			"[EARLY EXIT SKIP] %s: PM=%.2f%% >= 0.30%% (state=%s, momo=%s) → let trend/targets manage",
+			trade.Symbol, profitMargin, state.String(), mstate,
+		)
+		return false
 	}
-	return false
+
+	maxHoldingTime := 45 * time.Minute
+	switch state {
+	case models.StronglyTrending:
+		maxHoldingTime = 5 * time.Hour
+	case models.Trending:
+		maxHoldingTime = 4 * time.Hour
+	case models.Transitional:
+		maxHoldingTime = 90 * time.Minute
+	case models.RangeBound:
+		maxHoldingTime = 45 * time.Minute
+	case models.Chaotic:
+		maxHoldingTime = 30 * time.Minute
+	default:
+		maxHoldingTime = 60 * time.Minute
+	}
+
+	if tradeDuration <= maxHoldingTime {
+		logger.DebugColorf(
+			logger.BrightYellow,
+			"[EARLY EXIT WAIT] %s: age=%v ≤ max=%v (state=%s, momo=%s, PM=%.2f%%)",
+			trade.Symbol, tradeDuration, maxHoldingTime, state.String(), mstate, profitMargin,
+		)
+		return false
+	}
+
+	const minimalAcceptableLoss = -0.35 // -0.35% under breakeven
+	if profitMargin < minimalAcceptableLoss {
+		logger.DebugColorf(
+			logger.BrightYellow,
+			"[EARLY EXIT SKIP] %s: PM=%.2f%% < minimalAcceptableLoss=%.2f%% → let other protections handle",
+			trade.Symbol, profitMargin, minimalAcceptableLoss,
+		)
+		return false
+	}
+
+	if state == models.StronglyTrending || state == models.Trending {
+		if mstate != "DOWN" {
+			logger.InfoColorf(
+				logger.BrightYellow,
+				"[EARLY EXIT SKIP] %s: Trend state=%s, momo=%s, age=%v, PM=%.2f%% → allow more time",
+				trade.Symbol, state.String(), mstate, tradeDuration, profitMargin,
+			)
+			return false
+		}
+	}
+
+	logger.InfoColorf(
+		logger.BrightYellow,
+		"[EARLY EXIT] %s: Holding too long (%v), current margin=%.2f%% (state=%s, momo=%s)",
+		trade.Symbol, tradeDuration, profitMargin, state.String(), mstate,
+	)
+	return true
 }
 
 func (cs *CompoundStrategy) checkPanicSellCondition(profitMargin float64) bool {
@@ -1661,10 +1785,9 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 	mstate := momoState(cs.localIndicators)
 
 	breakevenPrice := trade.BuyPrice * (1 + cs.FeeRate)
-	profitMargin := (currentPrice - trade.BuyPrice) / trade.BuyPrice * 100
+	pmBuy := (currentPrice - trade.BuyPrice) / trade.BuyPrice * 100
 
 	athPrice, atlPrice, lastAthTime, _ := cs.trackPriceExtremes(trade.Symbol, currentPrice)
-
 	if athPrice <= 0 {
 		athPrice = currentPrice
 	}
@@ -1672,15 +1795,16 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 		atlPrice = currentPrice
 	}
 
-	profitMarginATH := (currentPrice - athPrice) / athPrice * 100
-	upliftFromAtl := (currentPrice - atlPrice) / atlPrice * 100
+	pmFromATH := (currentPrice - athPrice) / athPrice * 100
+	pmPeak := (athPrice - trade.BuyPrice) / trade.BuyPrice * 100
 
-	logger.Infof("[Trade Monitor] %s | State=%s | Buy=%.4f | Curr=%.4f | PM=%.2f%% | ATH=%.4f | PM_ATH=%.2f%% | MOMO=%s",
-		trade.Symbol, state.String(), trade.BuyPrice, currentPrice, profitMargin, athPrice, profitMarginATH, mstate)
+	logger.Infof("[Trade Monitor] %s | State=%s | Buy=%.4f | Curr=%.4f | PM=%.2f%% | PM_ATH=%.2f%% | MOMO=%s",
+		trade.Symbol, state.String(), trade.BuyPrice, currentPrice, pmBuy, pmFromATH, mstate)
 
-	if profitMargin < 0 {
+	if pmBuy < 0 {
+		upliftFromAtl := (currentPrice - atlPrice) / atlPrice * 100
 		logger.InfoColorf(logger.BrightYellow, "[DRAWDOWN] %s: PM=%.2f%%, UpliftFromATL=%.2f%% (ATL=%.4f)",
-			trade.Symbol, profitMargin, upliftFromAtl, atlPrice)
+			trade.Symbol, pmBuy, upliftFromAtl, atlPrice)
 	}
 
 	atr := getATRSafe(cs.localIndicators.CandleSticks, cs.localIndicators.ADRVal, cs.localIndicators.MiddleBand)
@@ -1697,17 +1821,14 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 		trailMult = 1.3
 	case models.Chaotic:
 		trailMult = 1.1
-	default:
-		trailMult = 1.6
 	}
 
-	trailingActive := profitMargin > 0 && athPrice > trade.BuyPrice && atr > 0
+	trailingActive := pmBuy > 0 && athPrice > trade.BuyPrice && atr > 0
 	trailingStop := 0.0
 	if trailingActive {
-
 		trailingStop = athPrice - trailMult*atr
 
-		minTrailTrigger := 0.35 // % profit
+		minTrailTrigger := 0.35 // %
 		switch state {
 		case models.StronglyTrending:
 			minTrailTrigger = 0.50
@@ -1721,9 +1842,8 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 			minTrailTrigger = 0.20
 		}
 
-		if profitMargin >= minTrailTrigger {
-
-			minStop := breakevenPrice * 1.0005 // ~+0.05% above breakeven
+		if pmBuy >= minTrailTrigger {
+			minStop := breakevenPrice * 1.0012 // small buffer over BE (~0.12%)
 			if trailingStop < minStop {
 				trailingStop = minStop
 			}
@@ -1740,117 +1860,122 @@ func (cs *CompoundStrategy) checkActiveTrade(trade *models.ActiveTrade, currentP
 		case ageMin > 60:
 			trailingStop = math.Max(trailingStop, currentPrice-1.1*atr)
 		case ageMin > 30:
-			trailingStop = math.Max(trailingStop, currentPrice-1.4*atr)
+			trailingStop = math.Max(trailingStop, currentPrice-1.3*atr)
 		case ageMin > 15:
-			trailingStop = math.Max(trailingStop, currentPrice-1.6*atr)
+			trailingStop = math.Max(trailingStop, currentPrice-1.5*atr)
 		}
 
-		isTrendRegime := state == models.StronglyTrending || state == models.Trending
-		if isTrendRegime && profitMargin >= 1.2 {
-			lock := trade.BuyPrice * 1.0035
+		isTrend := state == models.StronglyTrending || state == models.Trending
+		if isTrend && pmBuy >= 1.2 {
+			lock := trade.BuyPrice * 1.0040
 			if trailingStop < lock {
 				trailingStop = lock
 			}
 		}
 	}
 
-	allowSellNow := true
-	isTrendRegime := state == models.StronglyTrending || state == models.Trending
-	if isTrendRegime {
-
-		if mstate == "UP" {
-			allowSellNow = false
-		}
-
-		if profitMargin < 0.35 && mstate != "DOWN" {
-			allowSellNow = false
-		}
-	}
-
-	if cs.checkPanicSellCondition(profitMargin) {
-		logger.InfoColorf(logger.BrightRed, "[PANIC SELL] %s: Drop %.2f%%", trade.Symbol, profitMargin)
+	if cs.checkPanicSellCondition(pmBuy) {
+		logger.InfoColorf(logger.BrightRed, "[PANIC SELL] %s: PM=%.2f%%", trade.Symbol, pmBuy)
 		return -1, nil
 	}
-	if cs.checkEarlyExitCondition(trade, currentPrice) {
+	if cs.checkEarlyExitCondition(trade, currentPrice, state, mstate) {
 		return -1, nil
 	}
 
 	if trailingActive && trailingStop > 0 && currentPrice <= trailingStop {
-		if allowSellNow {
-			logger.InfoColorf(logger.BrightRed, "[TRAIL STOP] %s: cp=%.4f <= tsl=%.4f (state=%s, PM=%.2f%%, momo=%s)",
-				trade.Symbol, currentPrice, trailingStop, state.String(), profitMargin, mstate)
-			if isTrendRegime && cs.sinceTrailExit(trade.Symbol) > 3*time.Minute {
-				cs.enqueueTrendReentry(trade.Symbol, currentPrice, state)
-				cs.touchTrailExit(trade.Symbol)
-			}
-			return -1, nil
+		logger.InfoColorf(logger.BrightRed, "[TRAIL STOP] %s: cp=%.4f <= tsl=%.4f (state=%s, PM=%.2f%%, momo=%s)",
+			trade.Symbol, currentPrice, trailingStop, state.String(), pmBuy, mstate)
+
+		if (state == models.StronglyTrending || state == models.Trending) && cs.sinceTrailExit(trade.Symbol) > 3*time.Minute {
+			cs.enqueueTrendReentry(trade.Symbol, currentPrice, state)
+			cs.touchTrailExit(trade.Symbol)
 		}
-		logger.InfoColorf(logger.Green, "[HOLD-TREND] %s: Momentum/Policy hold, ignoring trail stop (cp=%.4f, tsl=%.4f)",
-			trade.Symbol, currentPrice, trailingStop)
+		return -1, nil
 	}
 
-	if profitMargin > 0 && athPrice > trade.BuyPrice {
-		if cs.checkAthFallOffSellCondition(profitMargin, profitMarginATH) {
-			if !isTrendRegime || mstate != "UP" {
-				logger.InfoColorf(logger.BrightRed, "[ATH FALLOFF] %s: Drop %.2f%% from ATH (momo=%s)", trade.Symbol, profitMarginATH, mstate)
+	if pmBuy > 0 && athPrice > trade.BuyPrice {
+		if cs.checkAthFallOffSellCondition(pmBuy, pmFromATH) {
+			isTrend := state == models.StronglyTrending || state == models.Trending
+			if !isTrend || mstate != "UP" {
+				logger.InfoColorf(logger.BrightRed, "[ATH FALLOFF] %s: Drop %.2f%% from ATH (momo=%s)", trade.Symbol, pmFromATH, mstate)
 				return -1, nil
 			}
 		}
 	}
 
-	if cs.checkTimeSinceSellCondition(state, trade.Symbol, profitMargin, lastAthTime) {
-		if !isTrendRegime || (mstate != "UP" && (cs.localIndicators.HistSlope <= 0 || cs.localIndicators.RsiSlope <= 0)) {
+	g2rArm := 0.45
+	switch state {
+	case models.StronglyTrending:
+		g2rArm = 0.60
+	case models.Trending:
+		g2rArm = 0.50
+	case models.Transitional:
+		g2rArm = 0.45
+	case models.RangeBound:
+		g2rArm = 0.40
+	case models.Chaotic:
+		g2rArm = 0.35
+	}
+	beBuf := 0.0012 // ~0.12%
+	if pmPeak >= g2rArm && currentPrice <= breakevenPrice*(1.0+beBuf) {
+		logger.InfoColorf(logger.BrightRed, "[G2R LOCK EXIT] %s: pmPeak=%.2f%%, cp near/under BE", trade.Symbol, pmPeak)
+		return -1, nil
+	}
+
+	if cs.checkTimeSinceSellCondition(state, trade.Symbol, pmBuy, lastAthTime) {
+		isTrend := state == models.StronglyTrending || state == models.Trending
+		if !isTrend || (cs.localIndicators.HistSlope <= 0 || cs.localIndicators.RsiSlope <= 0 || mstate != "UP") {
 			return -1, nil
 		}
 	}
 
-	if cs.checkBearishSignalSellCondition(profitMargin, bearishSignal, state) {
-		if !isTrendRegime {
+	if cs.checkBearishSignalSellCondition(pmBuy, bearishSignal, state) {
+		isTrend := state == models.StronglyTrending || state == models.Trending
+		if !isTrend {
 			logger.InfoColorf(logger.BrightRed, "[BEARISH EXIT] %s: State=%s, PM=%.2f%%, momo=%s",
-				trade.Symbol, state.String(), profitMargin, mstate)
+				trade.Symbol, state.String(), pmBuy, mstate)
 			return -1, nil
 		}
-
 		switch mstate {
 		case "DOWN":
 			logger.InfoColorf(logger.BrightRed, "[BEARISH EXIT] %s: Trend %s, momo=DOWN, PM=%.2f%%",
-				trade.Symbol, state.String(), profitMargin)
+				trade.Symbol, state.String(), pmBuy)
 			return -1, nil
 		case "NEUTRAL":
 			if cs.localIndicators.MacdLine < cs.localIndicators.SignalLine && cs.localIndicators.HistSlope < 0 {
 				logger.InfoColorf(logger.BrightRed, "[BEARISH EXIT] %s: Trend %s, momo=NEUTRAL (confirm), PM=%.2f%%",
-					trade.Symbol, state.String(), profitMargin)
+					trade.Symbol, state.String(), pmBuy)
 				return -1, nil
 			}
-		default:
 		}
 	}
 
 	if currentPrice < breakevenPrice {
-		logger.InfoColorf(logger.BrightYellow, "[HOLD] %s: Below breakeven, PM=%.2f%%", trade.Symbol, profitMargin)
+		logger.InfoColorf(logger.BrightYellow, "[HOLD] %s: Below breakeven, PM=%.2f%%", trade.Symbol, pmBuy)
 		return 0, nil
 	}
 
-	if met, adjustedProfit := cs.checkDesiredProfitSellCondition(profitMargin, state); met {
-		if allowSellNow || profitMargin >= adjustedProfit*1.2 {
-			logger.InfoColorf(logger.BrightBlack, "[PROFIT SELL] %s: PM=%.2f%% vs target %.2f%% (momo=%s)",
-				trade.Symbol, profitMargin, adjustedProfit, mstate)
+	if cs.PartialTP1Pct > 0 {
+		target := cs.PartialTP1Pct
+		nearUpper := cs.localIndicators.UpperBand > 0 && currentPrice >= cs.localIndicators.UpperBand*0.999
+		momoCooling := cs.localIndicators.HistSlope <= 0.0 || cs.localIndicators.RsiSlope <= 0.0 ||
+			cs.localIndicators.MacdLine <= cs.localIndicators.SignalLine
+		if pmBuy >= target && (momoCooling || nearUpper) {
+			logger.InfoColorf(logger.BrightBlack, "[SCALP EXIT] %s: PM=%.2f%% (target=%.2f%%), cooling=%t, nearUpper=%t",
+				trade.Symbol, pmBuy, target, momoCooling, nearUpper)
+
 			return -2, nil
 		}
 	}
 
-	timeSinceATH := time.Since(lastAthTime).Minutes()
-	if isTrendRegime && !allowSellNow {
-		logger.InfoColorf(logger.Green, "[HOLD-TREND] %s: Momentum/Policy hold, PM=%.2f%%, tsl=%.4f",
-			trade.Symbol, profitMargin, trailingStop)
-		return 0, nil
+	if met, adjusted := cs.checkDesiredProfitSellCondition(pmBuy, state); met {
+		logger.InfoColorf(logger.BrightBlack, "[PROFIT SELL] %s: PM=%.2f%% vs target %.2f%% (momo=%s)",
+			trade.Symbol, pmBuy, adjusted, mstate)
+		return -2, nil
 	}
-	if currentPrice < breakevenPrice {
-		logger.InfoColorf(logger.BrightYellow, "[HOLD] %s: Below breakeven, PM=%.2f%%", trade.Symbol, profitMargin)
-		return 0, nil
-	}
+
 	logger.InfoColorf(logger.BrightBlack, "[HOLD] %s: PM=%.2f%% | ATH age %.1fm | momo=%s",
-		trade.Symbol, profitMargin, timeSinceATH, mstate)
+		trade.Symbol, pmBuy, time.Since(lastAthTime).Minutes(), mstate)
 	return 0, nil
 }
 
@@ -2021,6 +2146,38 @@ func (cs *CompoundStrategy) getIndicators(candles []models.CandleStick, pair str
 	}
 	mbSlope := midB - prevMid
 
+	cl := closesOf(candles)
+	ema20 := emaLast(cl, 20)
+	ema50 := emaLast(cl, 50)
+	ema200 := emaLast(cl, 200)
+	emaSlope20 := emaSlopeLast(cl, 20)
+	emaSlope50 := emaSlopeLast(cl, 50)
+
+	adx, pdi, mdi := adxLast(candles, 14)
+
+	var kcLower, kcMid, kcUpper, kcSlope, kcPos float64
+	if cs.Keltner != nil {
+		if l, m, u, err := cs.Keltner.Calculate(candles); err == nil {
+			kcLower, kcMid, kcUpper = l, m, u
+
+			if n := len(candles); n >= 2 {
+				if _, pm, _, errPrev := cs.Keltner.Calculate(candles[:n-1]); errPrev == nil {
+					kcSlope = m - pm
+				}
+			}
+
+			if u > l {
+				cp := candles[len(candles)-1].Close
+				kcPos = (cp - l) / (u - l)
+				if kcPos < 0 {
+					kcPos = 0
+				} else if kcPos > 1 {
+					kcPos = 1
+				}
+			}
+		}
+	}
+
 	return CurrentIndicators{
 		RSIVal:        rsiVal,
 		PrevRSI:       prevRSI,
@@ -2048,6 +2205,22 @@ func (cs *CompoundStrategy) getIndicators(candles []models.CandleStick, pair str
 
 		PrevMiddleBand:  prevMid,
 		MiddleBandSlope: mbSlope,
+
+		EMA20:      ema20,
+		EMA50:      ema50,
+		EMA200:     ema200,
+		EMASlope20: emaSlope20,
+		EMASlope50: emaSlope50,
+
+		ADX:     adx,
+		PlusDI:  pdi,
+		MinusDI: mdi,
+
+		KCLower: kcLower,
+		KCMid:   kcMid,
+		KCUpper: kcUpper,
+		KCSlope: kcSlope,
+		KCPos:   kcPos,
 	}, nil
 }
 
@@ -2142,6 +2315,8 @@ func (cs *CompoundStrategy) Clone() interfaces.Strategy {
 			Overbought: cs.MFI.Overbought,
 			Oversold:   cs.MFI.Oversold,
 		},
+		Keltner:                   cs.Keltner,
+		ADX:                       cs.ADX,
 		MarketState:               cs.MarketState,
 		RiskRewardThreshold:       cs.RiskRewardThreshold,
 		FeeRate:                   cs.FeeRate,
@@ -2184,4 +2359,100 @@ func (cs *CompoundStrategy) Validate() error {
 		panic(err)
 	}
 	return v.Struct(cs)
+}
+
+func emaLast(closes []float64, period int) float64 {
+	if period <= 1 || len(closes) == 0 {
+		return 0
+	}
+	alpha := 2.0 / (float64(period) + 1.0)
+	ema := closes[0]
+	for i := 1; i < len(closes); i++ {
+		ema = alpha*closes[i] + (1-alpha)*ema
+	}
+	return ema
+}
+
+func emaSlopeLast(closes []float64, period int) float64 {
+	if len(closes) < 2 {
+		return 0
+	}
+	emaNow := emaLast(closes, period)
+	emaPrev := emaLast(closes[:len(closes)-1], period)
+	return emaNow - emaPrev // raw slope; sign & magnitude are enough for our scoring
+}
+
+func adxLast(c []models.CandleStick, period int) (adx, plusDI, minusDI float64) {
+	n := len(c)
+	if period < 2 || n < period+2 {
+		return 0, 0, 0
+	}
+
+	var tr, pdm, mdm []float64
+	tr = make([]float64, n)
+	pdm = make([]float64, n)
+	mdm = make([]float64, n)
+
+	for i := 1; i < n; i++ {
+		highDiff := c[i].High - c[i-1].High
+		lowDiff := c[i-1].Low - c[i].Low
+
+		upMove := math.Max(highDiff, 0)
+		downMove := math.Max(lowDiff, 0)
+
+		if upMove > downMove {
+			pdm[i] = upMove
+			mdm[i] = 0
+		} else if downMove > upMove {
+			pdm[i] = 0
+			mdm[i] = downMove
+		} else {
+			pdm[i], mdm[i] = 0, 0
+		}
+
+		hiLo := c[i].High - c[i].Low
+		hiPc := math.Abs(c[i].High - c[i-1].Close)
+		loPc := math.Abs(c[i].Low - c[i-1].Close)
+		tr[i] = math.Max(hiLo, math.Max(hiPc, loPc))
+	}
+
+	sumTR, sumPDM, sumMDM := 0.0, 0.0, 0.0
+	for i := 1; i <= period; i++ {
+		sumTR += tr[i]
+		sumPDM += pdm[i]
+		sumMDM += mdm[i]
+	}
+
+	smTR := sumTR
+	smPDM := sumPDM
+	smMDM := sumMDM
+
+	var dx float64
+	for i := period + 1; i < n; i++ {
+		smTR = smTR - (smTR / float64(period)) + tr[i]
+		smPDM = smPDM - (smPDM / float64(period)) + pdm[i]
+		smMDM = smMDM - (smMDM / float64(period)) + mdm[i]
+
+		if smTR <= 0 {
+			continue
+		}
+		plusDI = 100.0 * (smPDM / smTR)
+		minusDI = 100.0 * (smMDM / smTR)
+		den := plusDI + minusDI
+		if den == 0 {
+			continue
+		}
+		dx = 100.0 * math.Abs((plusDI-minusDI)/den)
+	}
+
+	adx = dx
+	return adx, plusDI, minusDI
+}
+
+func closesOf(c []models.CandleStick) []float64 {
+	out := make([]float64, 0, len(c))
+	for _, k := range c {
+		out = append(out, k.Close)
+	}
+	return out
 }
