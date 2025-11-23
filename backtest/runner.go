@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/M1chlCZ/bingo-bot/analysis"
+	db2 "github.com/M1chlCZ/bingo-bot/db"
 	"github.com/M1chlCZ/bingo-bot/interfaces"
 	"github.com/M1chlCZ/bingo-bot/logger"
 	"github.com/M1chlCZ/bingo-bot/models"
@@ -30,6 +31,10 @@ type BacktestConfig struct {
 	RiskPercentage float64
 
 	MinNotional float64
+
+	WarmupCandles   int
+	PendingCoolDown time.Duration
+	UseInMemoryDB   bool
 }
 
 type BacktestResult struct {
@@ -87,6 +92,16 @@ func NewRunner(config BacktestConfig) *Runner {
 
 func (r *Runner) Run() (*BacktestResult, error) {
 
+	if r.config.UseInMemoryDB {
+		if err := db2.InitInMemory(); err != nil {
+			return nil, fmt.Errorf("failed to init in-memory DB: %w", err)
+		}
+	} else if db2.SQLiteDB.DB == nil {
+		if err := db2.InitDB(); err != nil {
+			return nil, fmt.Errorf("failed to init DB: %w", err)
+		}
+	}
+
 	r.client = NewMockExchangeClient(r.config.InitialBalances, r.config.FeeRate)
 
 	for symbol, intervalData := range r.config.HistoricalData {
@@ -95,10 +110,18 @@ func (r *Runner) Run() (*BacktestResult, error) {
 		}
 	}
 
+	warmup := r.config.WarmupCandles
+	if warmup <= 0 {
+		warmup = 180
+	}
+
 	for _, pair := range r.config.TradingPairs {
 		err := r.client.AddTradingPair(pair)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add trading pair %s: %v", pair.Symbol, err)
+		}
+		if err := r.client.SetIndex(pair.Symbol, warmup-1); err != nil {
+			logger.Warnf("Backtest: could not warm index for %s: %v", pair.Symbol, err)
 		}
 	}
 
@@ -114,8 +137,12 @@ func (r *Runner) Run() (*BacktestResult, error) {
 	}
 	result.StartingBalance = startingBalance
 
-	currentTime := r.config.StartTime
-	for currentTime.Before(r.config.EndTime) {
+	pendingCD := r.config.PendingCoolDown
+	if pendingCD <= 0 {
+		pendingCD = 24 * time.Hour
+	}
+
+	for {
 
 		for _, pair := range r.config.TradingPairs {
 
@@ -130,7 +157,7 @@ func (r *Runner) Run() (*BacktestResult, error) {
 
 			strategy := r.SuggestStrategy(marketState)
 
-			signal, err := strategy.Calculate(candles, pair.Symbol, marketState, 24*time.Hour)
+			signal, err := strategy.Calculate(candles, pair.Symbol, marketState, pendingCD)
 			if err != nil {
 				logger.Warnf("Backtest: Failed to calculate signal for %s: %v", pair.Symbol, err)
 				continue
@@ -144,13 +171,17 @@ func (r *Runner) Run() (*BacktestResult, error) {
 			}
 		}
 
-		currentTime = currentTime.Add(r.config.TimeStep)
+		advancedAll := true
 		for _, pair := range r.config.TradingPairs {
 
 			err := r.client.AdvanceTime(pair.Symbol, 1)
 			if err != nil {
-				logger.Warnf("Backtest: Failed to advance time for %s: %v", pair.Symbol, err)
+				logger.Warnf("Backtest: Reached end for %s: %v", pair.Symbol, err)
+				advancedAll = false
 			}
+		}
+		if !advancedAll {
+			break
 		}
 	}
 

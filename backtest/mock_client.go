@@ -54,6 +54,27 @@ func (m *MockExchangeClient) LoadHistoricalData(symbol, interval string, candles
 	m.currentIndex[symbol] = 0
 }
 
+func (m *MockExchangeClient) SetIndex(symbol string, idx int) error {
+	if _, ok := m.historicalData[symbol]; !ok {
+		return fmt.Errorf("no historical data for symbol %s", symbol)
+	}
+	if idx < 0 {
+		idx = 0
+	}
+
+	for _, candles := range m.historicalData[symbol] {
+		if len(candles) == 0 {
+			continue
+		}
+		if idx >= len(candles) {
+			idx = len(candles) - 1
+		}
+		break
+	}
+	m.currentIndex[symbol] = idx
+	return nil
+}
+
 func (m *MockExchangeClient) ResetBacktest(initialBalances map[string]float64) {
 	m.currentIndex = make(map[string]int)
 	m.balances = initialBalances

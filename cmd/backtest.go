@@ -3,9 +3,10 @@ package cmd
 import (
 	"flag"
 	"fmt"
+	"os"
+
 	"github.com/M1chlCZ/bingo-bot/backtest"
 	"github.com/M1chlCZ/bingo-bot/logger"
-	"os"
 )
 
 func HandleBacktestCommands(args []string) bool {

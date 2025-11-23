@@ -44,7 +44,38 @@ func InitDB() error {
 		return err
 
 	}
+	if err := createBaseTables(db); err != nil {
+		return err
+	}
 
+	if err := UpdateSchema(db, dbVersion); err != nil {
+		return fmt.Errorf("failed to update database schema: %w", err)
+	}
+
+	log.Println("Database initialized successfully.")
+	SQLiteDB.DB = db
+	return nil
+}
+
+func InitInMemory() error {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		return err
+	}
+
+	if err := createBaseTables(db); err != nil {
+		return err
+	}
+	if err := UpdateSchema(db, dbVersion); err != nil {
+		return fmt.Errorf("failed to update in-memory schema: %w", err)
+	}
+
+	logger.Infof("Initialized in-memory database for backtesting")
+	SQLiteDB.DB = db
+	return nil
+}
+
+func createBaseTables(db *sql.DB) error {
 	query := `
     CREATE TABLE IF NOT EXISTS trades (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,8 +85,7 @@ func InitDB() error {
         price REAL,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     );`
-	_, err = db.Exec(query)
-	if err != nil {
+	if _, err := db.Exec(query); err != nil {
 		logger.Infof("Error creating trades table: %v", err)
 		return err
 	}
@@ -66,10 +96,10 @@ func InitDB() error {
     symbol TEXT NOT NULL,
     buy_price REAL NOT NULL,
     quantity REAL NOT NULL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    order_id INTEGER
 	);`
-	_, err = db.Exec(query)
-	if err != nil {
+	if _, err := db.Exec(query); err != nil {
 		logger.Infof("Error creating active_trades table: %v", err)
 		return err
 	}
@@ -83,18 +113,10 @@ func InitDB() error {
     profit_loss REAL NOT NULL,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 );`
-	_, err = db.Exec(query)
-	if err != nil {
+	if _, err := db.Exec(query); err != nil {
 		logger.Infof("Error creating completed_trades table: %v", err)
 		return err
 	}
-
-	if err := UpdateSchema(db, dbVersion); err != nil {
-		return fmt.Errorf("failed to update database schema: %w", err)
-	}
-
-	log.Println("Database initialized successfully.")
-	SQLiteDB.DB = db
 	return nil
 }
 

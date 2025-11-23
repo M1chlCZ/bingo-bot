@@ -139,6 +139,9 @@ func RunBacktest(symbol, interval string, strategy interfaces.Strategy, startTim
 		TimeStep:        getTimeStepFromInterval(interval),
 		RiskPercentage:  0.02, // Risk 2% of account on each trade
 		MinNotional:     10.0, // Minimum notional value for trades (e.g., $10)
+		WarmupCandles:   220,  // ensure Ichimoku has full history
+		PendingCoolDown: 15 * time.Minute,
+		UseInMemoryDB:   true,
 	}
 
 	runner := NewRunner(config)
