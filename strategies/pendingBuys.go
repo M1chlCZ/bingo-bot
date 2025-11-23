@@ -47,6 +47,29 @@ type TrendHistory struct {
 	Acceleration   float64
 }
 
+type MarketMemoryPoint struct {
+	Timestamp   time.Time
+	Price       float64
+	HistSlope   float64
+	RsiSlope    float64
+	ADX         float64
+	PlusDI      float64
+	MinusDI     float64
+	MarketState models.MarketState
+}
+
+type MarketTrendMemory struct {
+	Points    []MarketMemoryPoint
+	MaxPoints int
+}
+
+type TrendBias struct {
+	Direction  string
+	Strength   float64
+	Samples    int
+	LastUpdate time.Time
+}
+
 type PendingBuy struct {
 	ID              string
 	Pair            string
@@ -86,18 +109,22 @@ type PendingBuyRepo interface {
 	Confirm(pair string, validator func(*PendingBuy) bool) *PendingBuy
 	Count() int
 
-	UpdateSnapshot(pair string, ci CurrentIndicators, currentPrice float64) bool
+	UpdateSnapshot(pair string, ci CurrentIndicators, currentPrice float64, state models.MarketState) bool
+	RecordMarketTrend(pair string, state models.MarketState, ci CurrentIndicators, currentPrice float64)
+	GetTrendBias(pair string) TrendBias
 }
 
 type inMemoryPendingBuyRepo struct {
 	mu      sync.RWMutex
 	entries map[string][]*PendingBuy // keyed by pair
+	memory  map[string]*MarketTrendMemory
 	nextID  int
 }
 
 func NewPendingBuyRepo() PendingBuyRepo {
 	return &inMemoryPendingBuyRepo{
 		entries: make(map[string][]*PendingBuy),
+		memory:  make(map[string]*MarketTrendMemory),
 		nextID:  1,
 	}
 }
@@ -107,6 +134,17 @@ func calculatePriceDiff(price, basePrice float64) float64 {
 		return 0
 	}
 	return (price - basePrice) / basePrice
+}
+
+func clamp01(val float64) float64 {
+	switch {
+	case val < 0:
+		return 0
+	case val > 1:
+		return 1
+	default:
+		return val
+	}
 }
 
 func (r *inMemoryPendingBuyRepo) Add(pb *PendingBuy) error {
@@ -119,8 +157,8 @@ func (r *inMemoryPendingBuyRepo) Add(pb *PendingBuy) error {
 
 	if pb.TrendHistory == nil {
 		pb.TrendHistory = &TrendHistory{
-			Snapshots:    make([]TrendSnapshot, 0, 10),
-			MaxSnapshots: 10, // keep last 10 snapshots
+			Snapshots:    make([]TrendSnapshot, 0, 100),
+			MaxSnapshots: 100,
 		}
 		pb.FirstSeen = time.Now()
 	}
@@ -141,7 +179,7 @@ func (r *inMemoryPendingBuyRepo) AddOrReplace(pb *PendingBuy) (*PendingBuy, erro
 	for i, existing := range list {
 		priceDiff := calculatePriceDiff(pb.TriggerPrice, existing.TriggerPrice)
 
-		if math.Abs(priceDiff) < 0.005 { // within 0.5%
+		if math.Abs(priceDiff) < 0.005 {
 			replaced = existing
 
 			if existing.TrendHistory != nil {
@@ -174,7 +212,137 @@ func (r *inMemoryPendingBuyRepo) AddOrReplace(pb *PendingBuy) (*PendingBuy, erro
 	return nil, nil
 }
 
-func (r *inMemoryPendingBuyRepo) UpdateSnapshot(pair string, ci CurrentIndicators, currentPrice float64) bool {
+func (m *MarketTrendMemory) add(point MarketMemoryPoint) {
+	if m.MaxPoints <= 0 {
+		m.MaxPoints = 240
+	}
+	m.Points = append(m.Points, point)
+
+	cutoff := time.Now().Add(-12 * time.Hour)
+	trimIdx := 0
+	for i, pt := range m.Points {
+		if pt.Timestamp.After(cutoff) {
+			break
+		}
+		trimIdx = i + 1
+	}
+	if trimIdx > 0 && trimIdx < len(m.Points) {
+		m.Points = m.Points[trimIdx:]
+	} else if trimIdx >= len(m.Points) {
+		m.Points = m.Points[len(m.Points)-1:]
+	}
+
+	if len(m.Points) > m.MaxPoints {
+		m.Points = m.Points[len(m.Points)-m.MaxPoints:]
+	}
+}
+
+func (m *MarketTrendMemory) bias() TrendBias {
+	if m == nil || len(m.Points) == 0 {
+		return TrendBias{Direction: "UNKNOWN"}
+	}
+
+	upVotes := 0
+	downVotes := 0
+	adxSum := 0.0
+
+	for _, pt := range m.Points {
+		switch {
+		case pt.HistSlope > 0:
+			upVotes++
+		case pt.HistSlope < 0:
+			downVotes++
+		}
+
+		switch {
+		case pt.RsiSlope > 0:
+			upVotes++
+		case pt.RsiSlope < 0:
+			downVotes++
+		}
+
+		switch {
+		case pt.PlusDI > pt.MinusDI:
+			upVotes++
+		case pt.PlusDI < pt.MinusDI:
+			downVotes++
+		}
+
+		adxSum += pt.ADX
+	}
+
+	totalVotes := upVotes + downVotes
+	dirScore := 0.5
+	if totalVotes > 0 {
+		dirScore = float64(upVotes) / float64(totalVotes)
+	}
+
+	direction := "SIDEWAYS"
+	switch {
+	case dirScore >= 0.58:
+		direction = "UP"
+	case dirScore <= 0.42:
+		direction = "DOWN"
+	}
+
+	avgADX := adxSum / float64(len(m.Points))
+	adxScore := clamp01(avgADX / 35.0)
+
+	strength := clamp01(dirScore*0.55 + adxScore*0.45)
+
+	return TrendBias{
+		Direction:  direction,
+		Strength:   strength,
+		Samples:    len(m.Points),
+		LastUpdate: m.Points[len(m.Points)-1].Timestamp,
+	}
+}
+
+func (r *inMemoryPendingBuyRepo) recordTrendMemoryLocked(pair string, state models.MarketState, ci CurrentIndicators, currentPrice float64) {
+	if state == models.Chaotic {
+		delete(r.memory, pair)
+		return
+	}
+
+	if state != models.StronglyTrending && state != models.Trending {
+		return
+	}
+
+	mem, ok := r.memory[pair]
+	if !ok {
+		mem = &MarketTrendMemory{MaxPoints: 240}
+		r.memory[pair] = mem
+	}
+
+	mem.add(MarketMemoryPoint{
+		Timestamp:   time.Now(),
+		Price:       currentPrice,
+		HistSlope:   ci.HistSlope,
+		RsiSlope:    ci.RsiSlope,
+		ADX:         ci.ADX,
+		PlusDI:      ci.PlusDI,
+		MinusDI:     ci.MinusDI,
+		MarketState: state,
+	})
+}
+
+func (r *inMemoryPendingBuyRepo) RecordMarketTrend(pair string, state models.MarketState, ci CurrentIndicators, currentPrice float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.recordTrendMemoryLocked(pair, state, ci, currentPrice)
+}
+
+func (r *inMemoryPendingBuyRepo) GetTrendBias(pair string) TrendBias {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if mem, ok := r.memory[pair]; ok {
+		return mem.bias()
+	}
+	return TrendBias{Direction: "UNKNOWN"}
+}
+
+func (r *inMemoryPendingBuyRepo) UpdateSnapshot(pair string, ci CurrentIndicators, currentPrice float64, state models.MarketState) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -182,6 +350,8 @@ func (r *inMemoryPendingBuyRepo) UpdateSnapshot(pair string, ci CurrentIndicator
 	if len(list) == 0 {
 		return false
 	}
+
+	r.recordTrendMemoryLocked(pair, state, ci, currentPrice)
 
 	updated := false
 
@@ -335,7 +505,9 @@ func (r *inMemoryPendingBuyRepo) calculateTrendMetrics(th *TrendHistory) {
 	adxTrendCount := 0
 	adxBearCount := 0
 	const adxThresh = 18.0
+	var adxSum float64
 	for _, s := range snapshots {
+		adxSum += s.ADX
 		if s.ADX >= adxThresh {
 			if s.PlusDI > s.MinusDI {
 				adxTrendCount++
@@ -344,7 +516,6 @@ func (r *inMemoryPendingBuyRepo) calculateTrendMetrics(th *TrendHistory) {
 			}
 		}
 	}
-	adxScore := float64(adxTrendCount) / float64(n)
 
 	upTrendBars := 0
 	downTrendBars := 0
@@ -360,6 +531,27 @@ func (r *inMemoryPendingBuyRepo) calculateTrendMetrics(th *TrendHistory) {
 	downStrength := float64(downTrendBars) / float64(n)
 
 	directionalStrength := upStrength
+
+	macdAbove := 0
+	for _, s := range snapshots {
+		if s.MacdLine > s.MacdSignal {
+			macdAbove++
+		}
+	}
+	macdAboveScore := float64(macdAbove) / float64(n)
+
+	emaStack := 0
+	emaSlopePos := 0
+	for _, s := range snapshots {
+		if s.EMA20 >= s.EMA50 && s.EMA50 >= s.EMA200 {
+			emaStack++
+		}
+		if s.EMASlope20 > 0 && s.EMASlope50 > 0 {
+			emaSlopePos++
+		}
+	}
+	emaStackScore := float64(emaStack) / float64(n)
+	emaSlopeScore := float64(emaSlopePos) / float64(n)
 
 	acceleration := 0.0
 	if n >= 3 {
@@ -381,28 +573,44 @@ func (r *inMemoryPendingBuyRepo) calculateTrendMetrics(th *TrendHistory) {
 
 	}
 
-	th.Consistency = priceConsistency*0.35 +
-		momentumConsistency*0.30 +
-		rsiScore*0.20 +
-		directionalStrength*0.15
+	th.Consistency = priceConsistency*0.30 +
+		momentumConsistency*0.25 +
+		rsiScore*0.15 +
+		directionalStrength*0.15 +
+		emaSlopeScore*0.10 +
+		macdAboveScore*0.05
 
 	th.TrendScore = priceConsistency*0.25 +
-		momentumConsistency*0.30 +
-		rsiScore*0.20 +
+		momentumConsistency*0.25 +
+		rsiScore*0.15 +
 		volumeScore*0.10 +
-		directionalStrength*0.15
+		directionalStrength*0.15 +
+		emaSlopeScore*0.05 +
+		emaStackScore*0.05
 	th.Acceleration = acceleration
 
+	avgADX := adxSum / float64(n)
+	strongTrend := avgADX >= 25 && adxTrendCount >= adxBearCount
+	upDirScore := priceConsistency*0.35 +
+		momentumConsistency*0.25 +
+		kcSlopeScore*0.15 +
+		emaSlopeScore*0.10 +
+		macdAboveScore*0.10 +
+		emaStackScore*0.05
+
+	downDirScore := downStrength*0.40 +
+		(1-priceConsistency)*0.30 +
+		(1-momentumConsistency)*0.20 +
+		kcSlopeScore*0.10
+
 	switch {
-	case priceConsistency > 0.60 &&
-		momentumConsistency > 0.60 &&
-		kcSlopeScore > 0.55 &&
-		adxScore > 0.50 && upStrength > 0.55:
+	case strongTrend && upDirScore >= 0.52:
 		th.TrendDirection = "UP"
-	case priceConsistency < 0.40 &&
-		momentumConsistency < 0.45 &&
-		float64(kcDown)/float64(n-1) > 0.55 &&
-		adxBearCount > adxTrendCount && downStrength > 0.50:
+	case upDirScore >= 0.60 && upStrength > 0.50:
+		th.TrendDirection = "UP"
+	case downDirScore >= 0.55 && adxBearCount >= adxTrendCount:
+		th.TrendDirection = "DOWN"
+	case downStrength > 0.55 && priceConsistency < 0.45:
 		th.TrendDirection = "DOWN"
 	default:
 		th.TrendDirection = "SIDEWAYS"
@@ -659,6 +867,12 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 		return false
 	}
 
+	if ci.RsiSlope < 0 && latest.HistSlope < 0.00005 {
+		logger.DebugColorf(logger.Yellow, "[TREND MOMENTUM ROLLING] %s | RsiSlope:%.6f, HistSlope:%.6f",
+			pb.Pair, ci.RsiSlope, latest.HistSlope)
+		return false
+	}
+
 	if ci.RSIVal >= 70 {
 		logger.DebugColorf(logger.Yellow, "[TREND RSI OVERBOUGHT] %s | RSI:%.2f",
 			pb.Pair, ci.RSIVal)
@@ -672,15 +886,32 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 		return false
 	}
 
-	if latest.KeltnerSlope <= 0 {
-		logger.DebugColorf(logger.Yellow, "[TREND KC SLOPE DOWN] %s | KeltnerSlope:%.6f",
-			pb.Pair, latest.KeltnerSlope)
+	hasKC := latest.KeltnerUpper > 0 && latest.KeltnerLower > 0
+	if hasKC {
+		if latest.KeltnerSlope <= 0 {
+			logger.DebugColorf(logger.Yellow, "[TREND KC SLOPE DOWN] %s | KeltnerSlope:%.6f",
+				pb.Pair, latest.KeltnerSlope)
+			return false
+		}
+
+		if currentPrice >= latest.KeltnerUpper*1.01 {
+			logger.DebugColorf(logger.Yellow, "[TREND OVEREXTENDED KC] %s | cp=%.4f >= KU*1.01=%.4f",
+				pb.Pair, currentPrice, latest.KeltnerUpper*1.01)
+			return false
+		}
+	} else {
+		logger.DebugColorf(logger.BrightBlack, "[TREND KC MISSING] %s | proceeding without KC guards", pb.Pair)
+	}
+
+	if th.Acceleration < -0.00005 {
+		logger.DebugColorf(logger.Yellow, "[TREND DECELERATING] %s | Accel:%.6f", pb.Pair, th.Acceleration)
 		return false
 	}
 
-	if latest.KeltnerUpper > 0 && currentPrice >= latest.KeltnerUpper*1.01 {
-		logger.DebugColorf(logger.Yellow, "[TREND OVEREXTENDED KC] %s | cp=%.4f >= KU*1.01=%.4f",
-			pb.Pair, currentPrice, latest.KeltnerUpper*1.01)
+	emaSlopeOK := latest.EMASlope20 > 0 && latest.EMASlope50 > 0
+	if !emaSlopeOK && !(ci.ADX >= 28 && th.Acceleration > 0) {
+		logger.DebugColorf(logger.Yellow, "[TREND EMA SLOPE WEAK] %s | EMA20s:%.6f EMA50s:%.6f",
+			pb.Pair, latest.EMASlope20, latest.EMASlope50)
 		return false
 	}
 

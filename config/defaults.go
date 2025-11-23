@@ -33,6 +33,7 @@ var (
 			Ichimoku:       &algos.IchimokuStrategy{ConversionPeriod: 9, BasePeriod: 26, SpanBPeriod: 52},
 			CCI:            &algos.CCIStrategy{Period: 14, Overbought: 100, Oversold: -100},
 			MFI:            &algos.MFIStrategy{Period: 14, Overbought: 80, Oversold: 20},
+			Keltner:        &algos.KeltnerChannel{Period: 20, Multiplier: 1.8},
 		},
 	}
 
@@ -61,6 +62,7 @@ var (
 			Ichimoku:       &algos.IchimokuStrategy{ConversionPeriod: 8, BasePeriod: 22, SpanBPeriod: 44},
 			CCI:            &algos.CCIStrategy{Period: 12, Overbought: 120, Oversold: -120},
 			MFI:            &algos.MFIStrategy{Period: 11, Overbought: 75, Oversold: 15},
+			Keltner:        &algos.KeltnerChannel{Period: 18, Multiplier: 2.1},
 		},
 	}
 
@@ -89,6 +91,7 @@ var (
 			Ichimoku:       &algos.IchimokuStrategy{ConversionPeriod: 9, BasePeriod: 26, SpanBPeriod: 52},
 			CCI:            &algos.CCIStrategy{Period: 20, Overbought: 100, Oversold: -100},
 			MFI:            &algos.MFIStrategy{Period: 14, Overbought: 80, Oversold: 20},
+			Keltner:        &algos.KeltnerChannel{Period: 20, Multiplier: 1.9},
 		},
 	}
 
@@ -117,6 +120,7 @@ var (
 			Ichimoku:       &algos.IchimokuStrategy{ConversionPeriod: 9, BasePeriod: 26, SpanBPeriod: 52},
 			CCI:            &algos.CCIStrategy{Period: 14, Overbought: 100, Oversold: -100},
 			MFI:            &algos.MFIStrategy{Period: 14, Overbought: 80, Oversold: 20},
+			Keltner:        &algos.KeltnerChannel{Period: 18, Multiplier: 2.0},
 		},
 	}
 
@@ -145,6 +149,7 @@ var (
 			Ichimoku:       &algos.IchimokuStrategy{ConversionPeriod: 9, BasePeriod: 26, SpanBPeriod: 52},
 			CCI:            &algos.CCIStrategy{Period: 20, Overbought: 150, Oversold: -150},
 			MFI:            &algos.MFIStrategy{Period: 14, Overbought: 85, Oversold: 15},
+			Keltner:        &algos.KeltnerChannel{Period: 22, Multiplier: 1.8},
 		},
 	}
 
@@ -173,6 +178,7 @@ var (
 			Ichimoku:       &algos.IchimokuStrategy{ConversionPeriod: 7, BasePeriod: 22, SpanBPeriod: 44},
 			CCI:            &algos.CCIStrategy{Period: 14, Overbought: 100, Oversold: -100},
 			MFI:            &algos.MFIStrategy{Period: 12, Overbought: 78, Oversold: 22},
+			Keltner:        &algos.KeltnerChannel{Period: 18, Multiplier: 1.9},
 		},
 	}
 

@@ -145,6 +145,10 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 	}
 	cs.localIndicators = currentIndicators
 
+	repo := cs.ensureRepo()
+	repo.RecordMarketTrend(pair, marketState, currentIndicators, currentPrice)
+	bias := repo.GetTrendBias(pair)
+
 	bullishConditions := cs.checkBullishConditions(marketState, currentIndicators, currentPrice, pair)
 	bearishConditions := cs.checkBearishConditions(marketState, currentIndicators, currentPrice)
 
@@ -161,14 +165,14 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		currentIndicators.CCIVal, currentIndicators.MFIVal,
 	)
 
-	bought := cs.evaluatePendingBuys(pair, currentPrice, currentIndicators, cs.scalePendingCooldown(pendingCoolDown, marketState))
+	cs.logCompactState(pair, marketState, currentPrice, currentIndicators, bias, len(repo.GetAll(pair)), trade, bullishConditions, bearishConditions)
+
+	bought := cs.evaluatePendingBuys(pair, currentPrice, currentIndicators, cs.scalePendingCooldown(pendingCoolDown, marketState), marketState)
 	if bought == 1 {
 		return 1, nil
 	}
 
 	if bullishConditions {
-		repo := cs.ensureRepo()
-
 		if repo.ExistsWithCondition(pair, func(pb *PendingBuy) bool {
 			if time.Since(pb.TriggerTime) > 15*time.Minute {
 				return false
@@ -197,6 +201,9 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 		atr := getATRSafe(currentIndicators.CandleSticks, currentIndicators.ADRVal, currentIndicators.MiddleBand)
 
 		conf := cs.entryScore(currentIndicators, currentPrice)
+		if bias.Direction == "UP" {
+			conf = clamp01(conf + bias.Strength*0.20)
+		}
 
 		priority := 3
 		switch marketState {
@@ -214,6 +221,12 @@ func (cs *CompoundStrategy) Calculate(candles []models.CandleStick, pair string,
 			priority = 3
 		}
 		if pricePos <= 0.33 {
+			priority++
+			if priority > 5 {
+				priority = 5
+			}
+		}
+		if bias.Direction == "UP" && bias.Strength > 0.60 {
 			priority++
 			if priority > 5 {
 				priority = 5
@@ -459,22 +472,41 @@ func (cs *CompoundStrategy) checkBullishConditions(
 	emaAlignment := ci.MacdLine > ci.SignalLine
 
 	if cs.isInCooldownPeriod(pair) {
+		logger.Debugf("[BULLISH REJECT] %s state=%s reason=cooldown", pair, state.String())
 		return false
 	}
 
 	switch state {
 	case models.StronglyTrending:
-		return cs.checkBullishStronglyTrending(ci, currentPrice, dynRR, volumeOk, emaAlignment, state)
+		res := cs.checkBullishStronglyTrending(ci, currentPrice, dynRR, volumeOk, emaAlignment, state)
+		logger.Debugf("[BULLISH RESULT] %s state=StronglyTrending res=%t rsi=%.1f hist=%.6f adx=%.1f rr=%.3f",
+			pair, res, ci.RSIVal, ci.HistSlope, ci.ADX, dynRR)
+		return res
 	case models.Trending:
-		return cs.checkBullishTrending(ci, currentPrice, dynRR, volumeOk, state)
+		res := cs.checkBullishTrending(ci, currentPrice, dynRR, volumeOk, state)
+		logger.Debugf("[BULLISH RESULT] %s state=Trending res=%t rsi=%.1f hist=%.6f adx=%.1f rr=%.3f",
+			pair, res, ci.RSIVal, ci.HistSlope, ci.ADX, dynRR)
+		return res
 	case models.RangeBound:
-		return cs.checkBullishRangeBound(ci, currentPrice, dynRR, state)
+		res := cs.checkBullishRangeBound(ci, currentPrice, dynRR, state)
+		logger.Debugf("[BULLISH RESULT] %s state=RangeBound res=%t rsi=%.1f cci=%.1f rr=%.3f",
+			pair, res, ci.RSIVal, ci.CCIVal, dynRR)
+		return res
 	case models.Chaotic:
-		return cs.checkBullishChaotic(ci, currentPrice, dynRR, state)
+		res := cs.checkBullishChaotic(ci, currentPrice, dynRR, state)
+		logger.Debugf("[BULLISH RESULT] %s state=Chaotic res=%t rsi=%.1f hist=%.6f rr=%.3f",
+			pair, res, ci.RSIVal, ci.HistSlope, dynRR)
+		return res
 	case models.Transitional:
-		return cs.checkBullishTransitional(ci, currentPrice, dynRR, emaAlignment, state)
+		res := cs.checkBullishTransitional(ci, currentPrice, dynRR, emaAlignment, state)
+		logger.Debugf("[BULLISH RESULT] %s state=Transitional res=%t rsi=%.1f hist=%.6f rr=%.3f",
+			pair, res, ci.RSIVal, ci.HistSlope, dynRR)
+		return res
 	default:
-		return cs.checkBullishConditionsDefault(state, ci, currentPrice, dynRR, volumeOk)
+		res := cs.checkBullishConditionsDefault(state, ci, currentPrice, dynRR, volumeOk)
+		logger.Debugf("[BULLISH RESULT] %s state=Default res=%t rsi=%.1f hist=%.6f rr=%.3f",
+			pair, res, ci.RSIVal, ci.HistSlope, dynRR)
+		return res
 	}
 }
 
@@ -1074,17 +1106,29 @@ func (cs *CompoundStrategy) checkBearishConditions(
 ) bool {
 	switch state {
 	case models.StronglyTrending:
-		return cs.checkBearishStronglyTrending(ci, currentPrice)
+		res := cs.checkBearishStronglyTrending(ci, currentPrice)
+		logger.Debugf("[BEARISH RESULT] state=StronglyTrending res=%t rsi=%.1f hist=%.6f macdInd=%d", res, ci.RSIVal, ci.HistSlope, ci.MacdIndicator)
+		return res
 	case models.Trending:
-		return cs.checkBearishTrending(ci)
+		res := cs.checkBearishTrending(ci)
+		logger.Debugf("[BEARISH RESULT] state=Trending res=%t rsi=%.1f hist=%.6f macdInd=%d", res, ci.RSIVal, ci.HistSlope, ci.MacdIndicator)
+		return res
 	case models.RangeBound:
-		return cs.checkBearishRangeBound(ci, currentPrice)
+		res := cs.checkBearishRangeBound(ci, currentPrice)
+		logger.Debugf("[BEARISH RESULT] state=RangeBound res=%t rsi=%.1f upper=%.4f cp=%.4f", res, ci.RSIVal, ci.UpperBand, currentPrice)
+		return res
 	case models.Chaotic:
-		return cs.checkBearishChaotic(ci, currentPrice)
+		res := cs.checkBearishChaotic(ci, currentPrice)
+		logger.Debugf("[BEARISH RESULT] state=Chaotic res=%t rsi=%.1f hist=%.6f upper=%.4f cp=%.4f", res, ci.RSIVal, ci.HistSlope, ci.UpperBand, currentPrice)
+		return res
 	case models.Transitional:
-		return cs.checkBearishTransitional(ci)
+		res := cs.checkBearishTransitional(ci)
+		logger.Debugf("[BEARISH RESULT] state=Transitional res=%t rsi=%.1f hist=%.6f macdInd=%d", res, ci.RSIVal, ci.HistSlope, ci.MacdIndicator)
+		return res
 	default:
-		return cs.checkBearishDefault(ci)
+		res := cs.checkBearishDefault(ci)
+		logger.Debugf("[BEARISH RESULT] state=Default res=%t rsi=%.1f hist=%.6f macdInd=%d", res, ci.RSIVal, ci.HistSlope, ci.MacdIndicator)
+		return res
 	}
 }
 
@@ -1147,10 +1191,16 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 	currentPrice float64,
 	indicators CurrentIndicators,
 	pendingCoolDown time.Duration,
+	state models.MarketState,
 ) int {
 	repo := cs.ensureRepo()
 
-	repo.UpdateSnapshot(pair, indicators, currentPrice)
+	repo.UpdateSnapshot(pair, indicators, currentPrice, state)
+	bias := repo.GetTrendBias(pair)
+
+	if bias.Direction == "UP" && bias.Strength > 0.55 {
+		pendingCoolDown = time.Duration(float64(pendingCoolDown) * 0.8)
+	}
 
 	microBreakoutOK := func() bool {
 		c := indicators.CandleSticks
@@ -1185,14 +1235,22 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 
 	ok := func(pb *PendingBuy) bool {
 		if pendingCoolDown > 0 && time.Since(pb.TriggerTime) < pendingCoolDown {
-			return false
+			if !(bias.Direction == "UP" && bias.Strength > 0.60 &&
+				(pb.MarketState == models.StronglyTrending || pb.MarketState == models.Trending)) {
+				return false
+			}
 		}
 
-		if pb.UpdateCount >= 3 {
+		trendReady := pb.UpdateCount >= 3
+		if !trendReady && bias.Direction == "UP" && bias.Strength > 0.65 && pb.UpdateCount >= 1 {
+			trendReady = true
+		}
+
+		if trendReady {
 			if !pb.ShouldBuyNow(currentPrice, indicators) {
 				logger.DebugColorf(logger.Yellow,
-					"[TREND CHECK] %s => Not ready yet (Quality:%.2f, Dir:%s, Updates:%d)",
-					pair, pb.GetTrendQuality(), pb.TrendHistory.TrendDirection, pb.UpdateCount)
+					"[TREND CHECK] %s => Not ready yet (Quality:%.2f, Dir:%s, Cons:%.2f, Updates:%d, Bias:%.2f %s)",
+					pair, pb.GetTrendQuality(), pb.TrendHistory.TrendDirection, pb.TrendHistory.Consistency, pb.UpdateCount, bias.Strength, bias.Direction)
 				return false
 			}
 
@@ -1215,6 +1273,9 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 			chaseThreshold = 1.015
 		default:
 			chaseThreshold = 1.020
+		}
+		if bias.Direction == "UP" && bias.Strength > 0.65 {
+			chaseThreshold += 0.003
 		}
 		if pb.TriggerPrice > 0 && currentPrice > pb.TriggerPrice*chaseThreshold {
 			logger.Debugf("[PENDING] %s => price moved too far: %.4f > %.4f",
@@ -1243,6 +1304,11 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 		rsiHealthy := indicators.RSIVal > 38 && indicators.RSIVal < 70
 		histAccel := indicators.HistSlope > -0.00001
 		momentumOK := (macdStrong && histAccel) || (indicators.RsiSlope > 0 && rsiHealthy)
+		if bias.Direction == "UP" && bias.Strength > 0.70 && indicators.RsiSlope >= 0 && indicators.HistSlope > -0.00005 {
+			momentumOK = true
+		}
+		logger.Debugf("[PENDING MOMO] %s breakoutOK=%t accept=%t momentumOK=%t macdStrong=%t rsiHealthy=%t hist=%.6f rsislp=%.6f bias=%.2f",
+			pair, breakoutOK, accept, momentumOK, macdStrong, rsiHealthy, indicators.HistSlope, indicators.RsiSlope, bias.Strength)
 
 		if pb.MarketState == models.StronglyTrending || pb.MarketState == models.Trending {
 			if microBreakoutOK() || momentumOK {
@@ -1258,6 +1324,9 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 		maxExtension := 1.012
 		if pb.MarketState == models.StronglyTrending || pb.MarketState == models.Trending {
 			maxExtension = 1.018
+			if bias.Direction == "UP" && bias.Strength > 0.70 {
+				maxExtension += 0.002
+			}
 		}
 
 		overExtBB := indicators.UpperBand > 0 && currentPrice >= indicators.UpperBand*maxExtension
@@ -1282,9 +1351,13 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 				}
 			}
 			avgVol /= math.Min(10, float64(n-1))
-			if last.Volume < avgVol*0.70 {
+			volFloor := 0.70
+			if bias.Direction == "UP" && bias.Strength > 0.65 {
+				volFloor = 0.65
+			}
+			if last.Volume < avgVol*volFloor {
 				logger.Debugf("[PENDING] %s => low volume: %.2f < %.2f",
-					pair, last.Volume, avgVol*0.70)
+					pair, last.Volume, avgVol*volFloor)
 				return false
 			}
 		}
@@ -1377,6 +1450,10 @@ func (cs *CompoundStrategy) evaluatePendingBuys(
 		logger.Debugf("[PENDING BUY] %s => pruned %d entries", pair, removed)
 	}
 
+	if len(all) > 0 {
+		logger.Debugf("[PENDING STATUS] %s count=%d bias=%s/%.2f latestAge=%.1fm", pair, len(all), bias.Direction, bias.Strength, time.Since(all[len(all)-1].TriggerTime).Minutes())
+	}
+
 	return 0
 }
 
@@ -1412,6 +1489,10 @@ func (cs *CompoundStrategy) finalBuyValidation(
 		overbought = 68.0
 	case models.Chaotic:
 		overbought = 60.0
+	case models.RangeBound, models.Transitional, models.Default:
+
+	default:
+		logger.Debugf("[FINAL BUY] %s => unknown marketState=%v for overbought; using baseline %.1f", pb.Pair, pb.MarketState, overbought)
 	}
 	if indicators.RSIVal > overbought {
 		return false
@@ -1440,6 +1521,10 @@ func (cs *CompoundStrategy) finalBuyValidation(
 	case models.Chaotic:
 		stopMult = 2.5
 		targetMult = 2.7
+	case models.Default:
+
+	default:
+		logger.Debugf("[FINAL BUY] %s => unknown marketState=%v for stops; using baseline", pb.Pair, pb.MarketState)
 	}
 	stop := currentPrice - stopMult*atr
 	target := math.Max(indicators.UpperBand*1.01, currentPrice+targetMult*atr)
@@ -1475,6 +1560,10 @@ func (cs *CompoundStrategy) finalBuyValidation(
 		minScore = 0.70
 	case models.RangeBound:
 		minScore = 0.62
+	case models.Default:
+
+	default:
+		logger.Debugf("[FINAL BUY] %s => unknown marketState=%v for minScore; using baseline %.2f", pb.Pair, pb.MarketState, minScore)
 	}
 	if pb.ConfidenceScore < minScore {
 		logger.Debugf("[FINAL BUY] %s => score too low: %.2f < %.2f", pb.Pair, pb.ConfidenceScore, minScore)
@@ -1700,7 +1789,7 @@ func (cs *CompoundStrategy) checkDesiredProfitSellCondition(profitMargin float64
 
 	switch state {
 	case models.StronglyTrending:
-		adjustedProfit *= 1.8 // Let winners run more
+		adjustedProfit *= 1.8
 	case models.Trending:
 		adjustedProfit *= 1.4
 	case models.Transitional:
@@ -2175,6 +2264,8 @@ func (cs *CompoundStrategy) getIndicators(candles []models.CandleStick, pair str
 					kcPos = 1
 				}
 			}
+		} else {
+			logger.Debugf("[KELTNER MISS] %s err=%v", pair, err)
 		}
 	}
 
@@ -2274,6 +2365,21 @@ func (cs *CompoundStrategy) UnmarshalJSON(data []byte) error {
 }
 
 func (cs *CompoundStrategy) Clone() interfaces.Strategy {
+	require := func(name string, v any) {
+		if v == nil {
+			log.Panicf("Clone: %s is nil", name)
+		}
+	}
+
+	require("ADR", cs.ADR)
+	require("RSI", cs.RSI)
+	require("MACD", cs.MACD)
+	require("Stochastic", cs.Stochastic)
+	require("BollingerBands", cs.BollingerBands)
+	require("Ichimoku", cs.Ichimoku)
+	require("CCI", cs.CCI)
+	require("MFI", cs.MFI)
+
 	newCS := &CompoundStrategy{
 		StrategyType: cs.StrategyType,
 		ADR: &algos.ADRStrategy{
@@ -2315,8 +2421,18 @@ func (cs *CompoundStrategy) Clone() interfaces.Strategy {
 			Overbought: cs.MFI.Overbought,
 			Oversold:   cs.MFI.Oversold,
 		},
-		Keltner:                   cs.Keltner,
-		ADX:                       cs.ADX,
+		Keltner: func() *algos.KeltnerChannel {
+			if cs.Keltner == nil {
+				return nil
+			}
+			return &algos.KeltnerChannel{Period: cs.Keltner.Period, Multiplier: cs.Keltner.Multiplier}
+		}(),
+		ADX: func() *algos.ADXStrategy {
+			if cs.ADX == nil {
+				return nil
+			}
+			return &algos.ADXStrategy{Period: cs.ADX.Period}
+		}(),
 		MarketState:               cs.MarketState,
 		RiskRewardThreshold:       cs.RiskRewardThreshold,
 		FeeRate:                   cs.FeeRate,
@@ -2379,7 +2495,7 @@ func emaSlopeLast(closes []float64, period int) float64 {
 	}
 	emaNow := emaLast(closes, period)
 	emaPrev := emaLast(closes[:len(closes)-1], period)
-	return emaNow - emaPrev // raw slope; sign & magnitude are enough for our scoring
+	return emaNow - emaPrev
 }
 
 func adxLast(c []models.CandleStick, period int) (adx, plusDI, minusDI float64) {
@@ -2447,6 +2563,21 @@ func adxLast(c []models.CandleStick, period int) (adx, plusDI, minusDI float64) 
 
 	adx = dx
 	return adx, plusDI, minusDI
+}
+
+func (cs *CompoundStrategy) logCompactState(pair string, state models.MarketState, price float64, ci CurrentIndicators, bias TrendBias, pendingCount int, trade *models.ActiveTrade, bull, bear bool) {
+	width := ci.UpperBand - ci.LowerBand
+	pos := 0.5
+	if width > 0 {
+		pos = clamp01((price - ci.LowerBand) / width)
+	}
+
+	logger.Debugf(
+		"[COMPACT] pair=%s state=%s price=%.5f rsi=%.1f rsislp=%.5f macd=%.5f/%.5f hslp=%.6f ichiB=%t ichiBr=%t adx=%.1f +di=%.1f -di=%.1f bbPos=%.2f kcPos=%.2f bias=%s/%.2f pend=%d bull=%t bear=%t active=%t",
+		pair, state.String(), price, ci.RSIVal, ci.RsiSlope, ci.MacdLine, ci.SignalLine, ci.HistSlope,
+		ci.IchimokuRes.Bullish, ci.IchimokuRes.Bearish, ci.ADX, ci.PlusDI, ci.MinusDI, pos, ci.KCPos,
+		bias.Direction, bias.Strength, pendingCount, bull, bear, trade != nil,
+	)
 }
 
 func closesOf(c []models.CandleStick) []float64 {
