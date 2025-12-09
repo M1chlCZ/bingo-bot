@@ -60,28 +60,37 @@ func DefaultMultiTradingConfig() MultiTrading {
 		MaxDailyTrades:        50,
 		MaxTotalTrades:        50,
 		AnalyzerConfig: analysis.NewMarketAnalyzer(analysis.MarketAnalyzer{
-			EMAPeriods:               []int{8, 21, 50},
-			ATRPeriod:                14,
-			ADXPeriod:                14,
-			HighVolatilityThreshold:  0.030,
-			StrongTrendThreshold:     24,
-			IchimokuConversionPeriod: 8,
-			IchimokuBasePeriod:       24,
-			IchimokuSpanBPeriod:      48,
-			VolumeThreshold:          12000,
-			FractalLookback:          18,
-			MFIPeriod:                12,
-			MFIOverbought:            78,
-			MFIOversold:              22,
-			CCIPeriod:                18,
-			CCIOverbought:            110,
-			CCIOversold:              -110,
-			MarketRegimePeriod:       40,
-			VolatilityPeriod:         16,
-			CorrelationPeriod:        20,
-			NoiseFilterThreshold:     0.0095,
-			ConfidenceThreshold:      0.60,
-			AdaptiveLookback:         90,
+			EMAPeriods: []int{9, 21, 50},
+
+			ATRPeriod: 14,
+			ADXPeriod: 14,
+
+			HighVolatilityThreshold: 0.07,
+			StrongTrendThreshold:    22,
+
+			IchimokuConversionPeriod: 9,
+			IchimokuBasePeriod:       26,
+			IchimokuSpanBPeriod:      52,
+
+			VolumeThreshold: 12000,
+			FractalLookback: 20,
+
+			MFIPeriod:     14,
+			MFIOverbought: 80,
+			MFIOversold:   20,
+
+			CCIPeriod:     20,
+			CCIOverbought: 120,
+			CCIOversold:   -120,
+
+			MarketRegimePeriod: 60,
+			VolatilityPeriod:   30,
+			CorrelationPeriod:  30,
+
+			NoiseFilterThreshold: 0.45,
+
+			ConfidenceThreshold: 0.65,
+			AdaptiveLookback:    120,
 		}),
 	}
 }

@@ -1572,6 +1572,42 @@ func (ma *MarketAnalyzer) average(values []float64) float64 {
 	return sum / float64(len(values))
 }
 
+func (ma *MarketAnalyzer) DetectMarketRegime(c []models.CandleStick) models.MarketRegime {
+	return ma.detectMarketRegime(c)
+}
+
+func (ma *MarketAnalyzer) DetectVolatilityRegime(c []models.CandleStick) models.VolatilityRegime {
+	return ma.detectVolatilityRegime(c)
+}
+
+func (ma *MarketAnalyzer) AssessPriceActionQuality(c []models.CandleStick) float64 {
+	return ma.assessPriceActionQuality(c)
+}
+
+func (ma *MarketAnalyzer) AssessMomentumQuality(c []models.CandleStick) float64 {
+	return ma.assessMomentumQuality(c)
+}
+
+func (ma *MarketAnalyzer) CalculateNoiseLevel(c []models.CandleStick) float64 {
+	return ma.calculateNoiseLevel(c)
+}
+
+func (ma *MarketAnalyzer) SimulateMultiTimeframeAnalysis(c []models.CandleStick) float64 {
+	return ma.simulateMultiTimeframeAnalysis(c)
+}
+
+func (ma *MarketAnalyzer) AnalyzeVolumeProfile(c []models.CandleStick) models.VolumeProfile {
+	return ma.analyzeVolumeProfile(c)
+}
+
+func (ma *MarketAnalyzer) AssessPriceStructure(c []models.CandleStick) float64 {
+	return ma.assessPriceStructure(c)
+}
+
+func (ma *MarketAnalyzer) IsDivergencePresent(c []models.CandleStick) bool {
+	return ma.isDivergencePresent(c)
+}
+
 func (ma *MarketAnalyzer) averageVolume(candles []models.CandleStick) float64 {
 	if len(candles) == 0 {
 		return 0

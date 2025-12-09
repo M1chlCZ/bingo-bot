@@ -147,6 +147,25 @@ func clamp01(val float64) float64 {
 	}
 }
 
+func marketStateWeight(st models.MarketState) float64 {
+	switch st {
+	case models.StronglyTrending:
+		return 1.2
+	case models.Trending:
+		return 1.0
+	case models.Transitional:
+		return 0.75
+	case models.RangeBound:
+		return 0.65
+	case models.Chaotic:
+		return 0.35
+	case models.Default:
+		return 0.6
+	default:
+		return 0.6
+	}
+}
+
 func (r *inMemoryPendingBuyRepo) Add(pb *PendingBuy) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -242,40 +261,50 @@ func (m *MarketTrendMemory) bias() TrendBias {
 		return TrendBias{Direction: "UNKNOWN"}
 	}
 
-	upVotes := 0
-	downVotes := 0
-	adxSum := 0.0
+	var (
+		upVotesW   float64
+		downVotesW float64
+		adxSumW    float64
+		weightSum  float64
+	)
 
 	for _, pt := range m.Points {
+		w := marketStateWeight(pt.MarketState)
+		if w <= 0 {
+			continue
+		}
+
 		switch {
 		case pt.HistSlope > 0:
-			upVotes++
+			upVotesW += 1 * w
 		case pt.HistSlope < 0:
-			downVotes++
+			downVotesW += 1 * w
 		}
 
 		switch {
 		case pt.RsiSlope > 0:
-			upVotes++
+			upVotesW += 1 * w
 		case pt.RsiSlope < 0:
-			downVotes++
+			downVotesW += 1 * w
 		}
 
 		switch {
 		case pt.PlusDI > pt.MinusDI:
-			upVotes++
+			upVotesW += 1 * w
 		case pt.PlusDI < pt.MinusDI:
-			downVotes++
+			downVotesW += 1 * w
 		}
 
-		adxSum += pt.ADX
+		adxSumW += pt.ADX * w
+		weightSum += w
 	}
 
-	totalVotes := upVotes + downVotes
-	dirScore := 0.5
-	if totalVotes > 0 {
-		dirScore = float64(upVotes) / float64(totalVotes)
+	totalVotes := upVotesW + downVotesW
+	if totalVotes == 0 {
+		return TrendBias{Direction: "UNKNOWN"}
 	}
+
+	dirScore := upVotesW / totalVotes
 
 	direction := "SIDEWAYS"
 	switch {
@@ -285,7 +314,10 @@ func (m *MarketTrendMemory) bias() TrendBias {
 		direction = "DOWN"
 	}
 
-	avgADX := adxSum / float64(len(m.Points))
+	if weightSum == 0 {
+		weightSum = 1
+	}
+	avgADX := adxSumW / weightSum
 	adxScore := clamp01(avgADX / 35.0)
 
 	strength := clamp01(dirScore*0.55 + adxScore*0.45)
@@ -299,12 +331,7 @@ func (m *MarketTrendMemory) bias() TrendBias {
 }
 
 func (r *inMemoryPendingBuyRepo) recordTrendMemoryLocked(pair string, state models.MarketState, ci CurrentIndicators, currentPrice float64) {
-	if state == models.Chaotic {
-		delete(r.memory, pair)
-		return
-	}
-
-	if state != models.StronglyTrending && state != models.Trending {
+	if state == models.Chaotic && ci.ADX < 12 {
 		return
 	}
 
@@ -325,7 +352,6 @@ func (r *inMemoryPendingBuyRepo) recordTrendMemoryLocked(pair string, state mode
 		MarketState: state,
 	})
 }
-
 func (r *inMemoryPendingBuyRepo) RecordMarketTrend(pair string, state models.MarketState, ci CurrentIndicators, currentPrice float64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -423,11 +449,13 @@ func (r *inMemoryPendingBuyRepo) UpdateSnapshot(pair string, ci CurrentIndicator
 		pb.UpdateCount++
 		updated = true
 
+		latest := th.Snapshots[len(th.Snapshots)-1]
+
 		logger.DebugColorf(
 			logger.Blue,
 			"[TREND SNAPSHOT] %s | Updates:%d | Score:%.2f | Dir:%s | Consistency:%.2f | Accel:%.3f | ADX:%.1f",
 			pair, pb.UpdateCount, th.TrendScore, th.TrendDirection,
-			th.Consistency, th.Acceleration, th.Snapshots[0].ADX,
+			th.Consistency, th.Acceleration, latest.ADX,
 		)
 	}
 
@@ -790,8 +818,11 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 	}
 
 	if age < minObservation {
-		logger.DebugColorf(logger.Yellow, "[TREND WAIT] %s | Age:%.1fm < Min:%.1fm",
-			pb.Pair, age, minObservation)
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND WAIT] %s | Age:%.1fm < Min:%.1fm",
+			pb.Pair, age, minObservation,
+		)
 		return false
 	}
 
@@ -799,18 +830,42 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 	plus := ci.PlusDI
 	minus := ci.MinusDI
 
-	if adx < 10 {
-		logger.DebugColorf(logger.Yellow, "[TREND ADX TOO LOW] %s | ADX=%.1f < 10", pb.Pair, adx)
+	const globalADXMin = 8.0
+	if adx < globalADXMin {
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND ADX TOO LOW] %s | ADX=%.1f < %.1f",
+			pb.Pair, adx, globalADXMin,
+		)
 		return false
 	}
 
-	if pb.MarketState == models.StronglyTrending || pb.MarketState == models.Trending {
-		if adx < 16 || plus <= minus {
-			logger.DebugColorf(logger.Yellow,
-				"[TREND DMI WEAK] %s | State:%s ADX=%.1f, +DI=%.1f, -DI=%.1f",
-				pb.Pair, pb.MarketState.String(), adx, plus, minus)
-			return false
-		}
+	var minTrendADX float64
+	switch pb.MarketState {
+	case models.StronglyTrending:
+		minTrendADX = 14.0
+	case models.Trending:
+		minTrendADX = 12.0
+	default:
+		minTrendADX = 10.0
+	}
+
+	if (pb.MarketState == models.StronglyTrending || pb.MarketState == models.Trending) && adx < minTrendADX {
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND DMI WEAK] %s | State:%s ADX=%.1f < MinTrend=%.1f",
+			pb.Pair, pb.MarketState.String(), adx, minTrendADX,
+		)
+		return false
+	}
+
+	if (pb.MarketState == models.StronglyTrending || pb.MarketState == models.Trending) && plus <= minus {
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND DMI DIR WEAK] %s | State:%s ADX=%.1f, +DI=%.1f <= -DI=%.1f",
+			pb.Pair, pb.MarketState.String(), adx, plus, minus,
+		)
+		return false
 	}
 
 	trendQuality := pb.GetTrendQuality()
@@ -818,7 +873,7 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 
 	switch pb.MarketState {
 	case models.StronglyTrending:
-		minQuality = 0.70
+		minQuality = 0.68
 	case models.Trending:
 		minQuality = 0.65
 	case models.Chaotic:
@@ -829,8 +884,8 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 		minQuality = 0.65
 	}
 
-	if adx >= 25 {
-		minQuality -= 0.03
+	if adx >= 28 {
+		minQuality -= 0.04
 	} else if adx < 16 {
 		minQuality += 0.04
 	}
@@ -842,76 +897,118 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 	}
 
 	if trendQuality < minQuality {
-		logger.DebugColorf(logger.Yellow, "[TREND QUALITY LOW] %s | Quality:%.2f < Min:%.2f",
-			pb.Pair, trendQuality, minQuality)
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND QUALITY LOW] %s | Quality:%.2f < Min:%.2f",
+			pb.Pair, trendQuality, minQuality,
+		)
 		return false
 	}
 
 	if th.TrendDirection != "UP" {
-		logger.DebugColorf(logger.Yellow, "[TREND DIRECTION WRONG] %s | Direction:%s",
-			pb.Pair, th.TrendDirection)
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND DIRECTION WRONG] %s | Direction:%s",
+			pb.Pair, th.TrendDirection,
+		)
 		return false
 	}
 
 	if th.Consistency < 0.60 {
-		logger.DebugColorf(logger.Yellow, "[TREND INCONSISTENT] %s | Consistency:%.2f < 0.60",
-			pb.Pair, th.Consistency)
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND INCONSISTENT] %s | Consistency:%.2f < 0.60",
+			pb.Pair, th.Consistency,
+		)
 		return false
 	}
 
 	latest := th.Snapshots[len(th.Snapshots)-1]
 
 	if latest.HistSlope <= 0 || latest.MacdLine <= latest.MacdSignal {
-		logger.DebugColorf(logger.Yellow, "[TREND MOMENTUM WEAK] %s | HistSlope:%.6f, MACD cross invalid",
-			pb.Pair, latest.HistSlope)
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND MOMENTUM WEAK] %s | HistSlope:%.6f, MACD cross invalid",
+			pb.Pair, latest.HistSlope,
+		)
 		return false
 	}
 
 	if ci.RsiSlope < 0 && latest.HistSlope < 0.00005 {
-		logger.DebugColorf(logger.Yellow, "[TREND MOMENTUM ROLLING] %s | RsiSlope:%.6f, HistSlope:%.6f",
-			pb.Pair, ci.RsiSlope, latest.HistSlope)
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND MOMENTUM ROLLING] %s | RsiSlope:%.6f, HistSlope:%.6f",
+			pb.Pair, ci.RsiSlope, latest.HistSlope,
+		)
 		return false
 	}
 
 	if ci.RSIVal >= 70 {
-		logger.DebugColorf(logger.Yellow, "[TREND RSI OVERBOUGHT] %s | RSI:%.2f",
-			pb.Pair, ci.RSIVal)
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND RSI OVERBOUGHT] %s | RSI:%.2f",
+			pb.Pair, ci.RSIVal,
+		)
 		return false
 	}
 
-	const adxMin = 18.0
-	if latest.ADX < adxMin || latest.PlusDI <= latest.MinusDI {
-		logger.DebugColorf(logger.Yellow, "[TREND ADX/DI WEAK] %s | ADX:%.1f, +DI:%.1f, -DI:%.1f",
-			pb.Pair, latest.ADX, latest.PlusDI, latest.MinusDI)
+	baseADXMin := 16.0
+	if pb.MarketState == models.StronglyTrending {
+		baseADXMin = 14.0
+	}
+
+	if latest.ADX < baseADXMin || latest.PlusDI <= latest.MinusDI {
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND ADX/DI WEAK] %s | ADX:%.1f (min:%.1f), +DI:%.1f, -DI:%.1f",
+			pb.Pair, latest.ADX, baseADXMin, latest.PlusDI, latest.MinusDI,
+		)
 		return false
 	}
 
 	hasKC := latest.KeltnerUpper > 0 && latest.KeltnerLower > 0
 	if hasKC {
 		if latest.KeltnerSlope <= 0 {
-			logger.DebugColorf(logger.Yellow, "[TREND KC SLOPE DOWN] %s | KeltnerSlope:%.6f",
-				pb.Pair, latest.KeltnerSlope)
+			logger.DebugColorf(
+				logger.Yellow,
+				"[TREND KC SLOPE DOWN] %s | KeltnerSlope:%.6f",
+				pb.Pair, latest.KeltnerSlope,
+			)
 			return false
 		}
 
 		if currentPrice >= latest.KeltnerUpper*1.01 {
-			logger.DebugColorf(logger.Yellow, "[TREND OVEREXTENDED KC] %s | cp=%.4f >= KU*1.01=%.4f",
-				pb.Pair, currentPrice, latest.KeltnerUpper*1.01)
+			logger.DebugColorf(
+				logger.Yellow,
+				"[TREND OVEREXTENDED KC] %s | cp=%.4f >= KU*1.01=%.4f",
+				pb.Pair, currentPrice, latest.KeltnerUpper*1.01,
+			)
 			return false
 		}
 	} else {
-		logger.DebugColorf(logger.BrightBlack, "[TREND KC MISSING] %s | proceeding without KC guards", pb.Pair)
+		logger.DebugColorf(
+			logger.BrightBlack,
+			"[TREND KC MISSING] %s | proceeding without KC guards",
+			pb.Pair,
+		)
 	}
 
 	if th.Acceleration < -0.00005 {
-		logger.DebugColorf(logger.Yellow, "[TREND DECELERATING] %s | Accel:%.6f", pb.Pair, th.Acceleration)
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND DECELERATING] %s | Accel:%.6f",
+			pb.Pair, th.Acceleration,
+		)
 		return false
 	}
 
 	emaSlopeOK := latest.EMASlope20 > 0 && latest.EMASlope50 > 0
 	if !emaSlopeOK && !(ci.ADX >= 28 && th.Acceleration > 0) {
-		logger.DebugColorf(logger.Yellow, "[TREND EMA SLOPE WEAK] %s | EMA20s:%.6f EMA50s:%.6f",
-			pb.Pair, latest.EMASlope20, latest.EMASlope50)
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND EMA SLOPE WEAK] %s | EMA20s:%.6f EMA50s:%.6f",
+			pb.Pair, latest.EMASlope20, latest.EMASlope50,
+		)
 		return false
 	}
 
@@ -926,8 +1023,11 @@ func (pb *PendingBuy) ShouldBuyNow(currentPrice float64, ci CurrentIndicators) b
 		maxChase = 0.020
 	}
 	if priceMove > maxChase {
-		logger.DebugColorf(logger.Yellow, "[TREND CHASE TOO FAR] %s | Move:%.2f%% > Max:%.2f%%",
-			pb.Pair, priceMove*100, maxChase*100)
+		logger.DebugColorf(
+			logger.Yellow,
+			"[TREND CHASE TOO FAR] %s | Move:%.2f%% > Max:%.2f%%",
+			pb.Pair, priceMove*100, maxChase*100,
+		)
 		return false
 	}
 

@@ -1,9 +1,9 @@
 module github.com/M1chlCZ/bingo-bot
 
-go 1.25
+go 1.25.5
 
 require (
-	github.com/adshao/go-binance/v2 v2.8.7
+	github.com/adshao/go-binance/v2 v2.8.8
 	github.com/go-playground/validator/v10 v10.28.0
 	github.com/goccy/go-json v0.10.5
 	github.com/joho/godotenv v1.5.1
@@ -20,8 +20,7 @@ require (
 	github.com/jpillora/backoff v1.0.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
-	golang.org/x/crypto v0.45.0 // indirect
-	golang.org/x/net v0.47.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/crypto v0.46.0 // indirect
+	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/text v0.32.0 // indirect
 )

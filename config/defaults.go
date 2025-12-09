@@ -15,15 +15,15 @@ var (
 			MarketState:    models.Default,
 			CandleInterval: "4h",
 
-			RiskRewardThreshold:       1.25, // base RR; dynamically adjusted by volatility
-			DesiredProfit:             1.20, // % profit where we start to like taking money
-			HighestPriceFallOffMargin: 1.00, // % allowed drop from local peak before "fall-off" triggers
+			RiskRewardThreshold:       1.25,
+			DesiredProfit:             1.20,
+			HighestPriceFallOffMargin: 0.30,
 			FeeRate:                   0.0009,
 			PanicSell:                 true,
 			SellOnBearish:             true,
 
-			PartialTP1Pct:  0.90,
-			PartialTP1Size: 0.35,
+			PartialTP1Pct:  0,
+			PartialTP1Size: 0,
 
 			ADR:            &algos.ADRStrategy{Period: 14, Multiplier: 1.5},
 			RSI:            &algos.RSIStrategy{Period: 14, Overbought: 70, Oversold: 30},
@@ -47,12 +47,12 @@ var (
 			PanicSell:                 true,
 			RiskRewardThreshold:       1.10,
 			DesiredProfit:             1.00,
-			HighestPriceFallOffMargin: 1.10,
+			HighestPriceFallOffMargin: 0.10,
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 
-			PartialTP1Pct:  0.85,
-			PartialTP1Size: 0.45,
+			PartialTP1Pct:  0,
+			PartialTP1Size: 0,
 
 			ADR:            &algos.ADRStrategy{Period: 11, Multiplier: 1.8},
 			RSI:            &algos.RSIStrategy{Period: 11, Overbought: 65, Oversold: 28},
@@ -73,15 +73,15 @@ var (
 			MarketState:    models.Trending,
 			CandleInterval: "4h",
 
-			RiskRewardThreshold:       1.05, // slightly relaxed – trend carries RR
-			DesiredProfit:             1.80, // we want more than in default
-			HighestPriceFallOffMargin: 1.40,
+			RiskRewardThreshold:       1.05,
+			DesiredProfit:             1.80,
+			HighestPriceFallOffMargin: 0.40,
 			FeeRate:                   0.0009,
-			PanicSell:                 false, // let trailing and ATH falloff logic manage
+			PanicSell:                 true,
 			SellOnBearish:             true,
 
-			PartialTP1Pct:  1.00,
-			PartialTP1Size: 0.33,
+			PartialTP1Pct:  0,
+			PartialTP1Size: 0,
 
 			ADR:            &algos.ADRStrategy{Period: 14, Multiplier: 1.5},
 			RSI:            &algos.RSIStrategy{Period: 14, Overbought: 70, Oversold: 30},
@@ -102,15 +102,15 @@ var (
 			MarketState:    models.StronglyTrending,
 			CandleInterval: "4h",
 
-			RiskRewardThreshold:       0.85, // allow slightly lower RR because winners can run far
+			RiskRewardThreshold:       0.85,
 			DesiredProfit:             2.20,
-			HighestPriceFallOffMargin: 1.80,
+			HighestPriceFallOffMargin: 0.80,
 			FeeRate:                   0.0009,
-			PanicSell:                 false, // let trailing/ATH falloff handle
+			PanicSell:                 true,
 			SellOnBearish:             true,
 
-			PartialTP1Pct:  1.10,
-			PartialTP1Size: 0.30,
+			PartialTP1Pct:  0,
+			PartialTP1Size: 0,
 
 			ADR:            &algos.ADRStrategy{Period: 12, Multiplier: 1.5},
 			RSI:            &algos.RSIStrategy{Period: 14, Overbought: 68, Oversold: 32},
@@ -134,12 +134,12 @@ var (
 			PanicSell:                 true,
 			RiskRewardThreshold:       1.30,
 			DesiredProfit:             1.10,
-			HighestPriceFallOffMargin: 0.80, // tighter falloff – don't let range trades bleed
+			HighestPriceFallOffMargin: 0.40,
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 
-			PartialTP1Pct:  0.85,
-			PartialTP1Size: 0.40,
+			PartialTP1Pct:  0,
+			PartialTP1Size: 0,
 
 			ADR:            &algos.ADRStrategy{Period: 14, Multiplier: 1.25},
 			RSI:            &algos.RSIStrategy{Period: 14, Overbought: 72, Oversold: 30},
@@ -167,8 +167,8 @@ var (
 			FeeRate:                   0.0009,
 			SellOnBearish:             true,
 
-			PartialTP1Pct:  0.95,
-			PartialTP1Size: 0.35,
+			PartialTP1Pct:  0,
+			PartialTP1Size: 0,
 
 			ADR:            &algos.ADRStrategy{Period: 12, Multiplier: 1.4},
 			RSI:            &algos.RSIStrategy{Period: 12, Overbought: 70, Oversold: 30},

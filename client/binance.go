@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,8 @@ import (
 	"github.com/M1chlCZ/bingo-bot/validation"
 	"github.com/adshao/go-binance/v2"
 )
+
+const maxCachedCandles = 5000
 
 type BinanceClient struct {
 	client      *binance.Client
@@ -279,7 +282,6 @@ func (b *BinanceClient) GetCurrentPrice(symbol string) (float64, error) {
 }
 
 func (b *BinanceClient) FetchCandles(symbol, interval string, limit int, priority bool) ([]models.CandleStick, error) {
-
 	if err := validation.ValidateSymbol(symbol); err != nil {
 		return nil, errors.WrapWithType(err, errors.ErrInvalidInput, fmt.Sprintf("invalid symbol: %s", symbol))
 	}
@@ -290,8 +292,11 @@ func (b *BinanceClient) FetchCandles(symbol, interval string, limit int, priorit
 		return nil, errors.WrapWithType(err, errors.ErrInvalidInput, fmt.Sprintf("invalid limit: %d", limit))
 	}
 
+	cacheKey := symbol + "|" + interval
+
 	doFunc := func() (any, error) {
 		var klines []*binance.Kline
+
 		err := retry(func() error {
 			var err error
 			klines, err = b.client.NewKlinesService().
@@ -306,14 +311,15 @@ func (b *BinanceClient) FetchCandles(symbol, interval string, limit int, priorit
 			return nil, errors.WrapWithType(err, errors.ErrNetworkError, "failed to fetch candles")
 		}
 
-		candles := make([]models.CandleStick, len(klines))
+		newCandles := make([]models.CandleStick, len(klines))
 		for i, k := range klines {
 			open, _ := strconv.ParseFloat(k.Open, 64)
 			high, _ := strconv.ParseFloat(k.High, 64)
 			low, _ := strconv.ParseFloat(k.Low, 64)
 			cls, _ := strconv.ParseFloat(k.Close, 64)
 			volume, _ := strconv.ParseFloat(k.Volume, 64)
-			candles[i] = models.CandleStick{
+
+			newCandles[i] = models.CandleStick{
 				Timestamp: time.Unix(k.OpenTime/1000, 0),
 				Open:      open,
 				High:      high,
@@ -324,16 +330,22 @@ func (b *BinanceClient) FetchCandles(symbol, interval string, limit int, priorit
 		}
 
 		b.cacheMutex.Lock()
-		b.candleCache[symbol] = candles
+		existing := b.candleCache[cacheKey]
+		merged := mergeCandles(existing, newCandles, maxCachedCandles)
+		b.candleCache[cacheKey] = merged
 		b.cacheMutex.Unlock()
 
-		return candles, nil
+		if limit <= 0 || len(merged) <= limit {
+			return merged, nil
+		}
+		return merged[len(merged)-limit:], nil
 	}
 
 	data, err := b.enqueueRequest(doFunc, priority)
 	if err != nil {
 		return nil, err
 	}
+
 	candles, ok := data.([]models.CandleStick)
 	if !ok {
 		return nil, errors.NewWithType(errors.ErrInternal, "unexpected data type returned from queue")
@@ -673,6 +685,43 @@ func (b *BinanceClient) FetchActiveTrades(symbol string) ([]*binance.TradeV3, er
 	})
 
 	return trades, nil
+}
+
+func mergeCandles(
+	existing, incoming []models.CandleStick,
+	max int,
+) []models.CandleStick {
+	if max <= 0 {
+		max = maxCachedCandles
+	}
+
+	byTS := make(map[int64]models.CandleStick, len(existing)+len(incoming))
+
+	for _, c := range existing {
+		byTS[c.Timestamp.Unix()] = c
+	}
+	for _, c := range incoming {
+		byTS[c.Timestamp.Unix()] = c
+	}
+
+	timestamps := make([]int64, 0, len(byTS))
+	for ts := range byTS {
+		timestamps = append(timestamps, ts)
+	}
+	sort.Slice(timestamps, func(i, j int) bool {
+		return timestamps[i] < timestamps[j]
+	})
+
+	start := 0
+	if len(timestamps) > max {
+		start = len(timestamps) - max
+	}
+
+	merged := make([]models.CandleStick, 0, len(timestamps)-start)
+	for i := start; i < len(timestamps); i++ {
+		merged = append(merged, byTS[timestamps[i]])
+	}
+	return merged
 }
 
 func isIncludedMarket(symbol string, includedMarkets []string) bool {

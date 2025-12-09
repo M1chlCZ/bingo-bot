@@ -2,6 +2,7 @@ package bot
 
 import (
 	"log"
+	"math"
 	"os"
 	"os/signal"
 	"strconv"
@@ -73,7 +74,7 @@ func NewMultiPairTradingBot(exchange interfaces.ExchangeClient, config *config.M
 	return &MultiPairTradingBot{
 		exchange:       exchange,
 		config:         *config,
-		interval:       "1d", // only for initial analysis
+		interval:       "1d",
 		marketAnalyzer: config.AnalyzerConfig,
 		stopCh:         make(chan struct{}),
 	}
@@ -140,82 +141,111 @@ func (bot *MultiPairTradingBot) Stop() {
 	logger.Warn("Trading bot stopped.")
 }
 
-func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(signal int, notional, quoteBalance, baseBalance float64, pair string, atr, adx float64) float64 {
+func (bot *MultiPairTradingBot) calculateTradeAmountAdvance(
+	signal int,
+	minNotional, quoteBalance, baseBalance float64,
+	pair string,
+	ctx PositionContext,
+) float64 {
+
+	if signal <= 0 {
+		logger.Debugf(
+			"SELL %s: BaseBalance=%.4f, ATR=%.5f, ADX=%.2f, PAQ=%.2f, MQ=%.2f, Noise=%.2f",
+			pair, baseBalance, ctx.ATR, ctx.ADX, ctx.PriceActionQuality, ctx.MomentumQuality, ctx.Noise,
+		)
+		return baseBalance
+	}
+
+	if quoteBalance <= 0 {
+		logger.Infof("Skipping BUY for %s: no quote balance", pair)
+		return 0
+	}
+	if ctx.EntryPrice <= 0 {
+		logger.Infof("Skipping BUY for %s: invalid entry price", pair)
+		return 0
+	}
 
 	const (
-		baseRiskPercentage = 0.10 // Risk 10%
-		minTradePercentage = 0.18 // 18%
-		atrReference       = 1.0  // ATR reference level
-		adxReference       = 25.0 // ADX reference for "moderate" trend
-		maxTradePercentage = 0.5  // Maximum 50% of quote balance
+		baseRiskPerTrade = 0.004  // 0.4% of quoteBalance
+		minRiskPerTrade  = 0.0015 // 0.15%
+		maxRiskPerTrade  = 0.008  // 0.8%
 
-		extraPercent = 0.1
+		maxExposureFrac = 0.22 // max 22% of quote into one pair
 	)
 
-	basePosition := quoteBalance * baseRiskPercentage
+	ctxMult := positionContextMultiplier(ctx)
 
-	adxMultiplier := 1.0 + (adx-adxReference)*0.02
-	if adxMultiplier < 0.5 {
-		adxMultiplier = 0.5
-	} else if adxMultiplier > 2.0 {
-		adxMultiplier = 2.0
+	baseRiskUSD := quoteBalance * baseRiskPerTrade
+	riskUSD := baseRiskUSD * ctxMult
+
+	minRiskUSD := quoteBalance * minRiskPerTrade
+	maxRiskUSD := quoteBalance * maxRiskPerTrade
+
+	if riskUSD < minRiskUSD {
+		riskUSD = minRiskUSD
 	}
-	adjustedForADX := basePosition * adxMultiplier
-
-	atrMultiplier := 1.0
-	if atr > 0 {
-		atrMultiplier = atrReference / atr
-	}
-	if atrMultiplier < 0.5 {
-		atrMultiplier = 0.5
-	} else if atrMultiplier > 1.5 {
-		atrMultiplier = 1.5
-	}
-	adjustedForVolatility := adjustedForADX * atrMultiplier
-
-	tradePercentage := adjustedForVolatility / quoteBalance
-
-	if tradePercentage < minTradePercentage {
-		tradePercentage = minTradePercentage
-	} else if tradePercentage > maxTradePercentage {
-		tradePercentage = maxTradePercentage
+	if riskUSD > maxRiskUSD {
+		riskUSD = maxRiskUSD
 	}
 
-	finalAmount := tradePercentage * quoteBalance
+	var perUnitRisk float64
+	if ctx.StopPrice > 0 && ctx.EntryPrice > 0 {
+		perUnitRisk = math.Abs(ctx.EntryPrice - ctx.StopPrice)
 
-	minBuyAbsolute := notional
+		minStopDist := ctx.EntryPrice * 0.003 // 0.3% of price
+		if perUnitRisk < minStopDist {
+			perUnitRisk = minStopDist
+		}
+	}
+
+	if perUnitRisk <= 0 && ctx.ATR > 0 {
+
+		perUnitRisk = 1.7 * ctx.ATR
+	}
+	if perUnitRisk <= 0 {
+
+		perUnitRisk = ctx.EntryPrice * 0.02
+	}
+
+	qtyBase := riskUSD / perUnitRisk
+	positionNotional := qtyBase * ctx.EntryPrice // this is in quote (e.g. USDT)
+
+	maxExposure := quoteBalance * maxExposureFrac
+	if positionNotional > maxExposure {
+		positionNotional = maxExposure
+	}
+
+	minBuyAbsolute := minNotional
 	if minBuyAbsolute <= 0 {
-		minBuyAbsolute = 10 // or from config
+		minBuyAbsolute = 10
 	}
-	minBuyAbsolute *= 1 + extraPercent
+	minBuyAbsolute *= 1.10 // small buffer
 
-	if signal > 0 { // BUY Signal
+	if positionNotional < minBuyAbsolute {
+		positionNotional = minBuyAbsolute
+	}
 
-		if finalAmount < minBuyAbsolute {
-			finalAmount = minBuyAbsolute
-		}
+	if positionNotional > quoteBalance {
+		positionNotional = quoteBalance
+	}
 
-		if finalAmount > quoteBalance {
-			finalAmount = quoteBalance
-		}
-
-		if quoteBalance < minBuyAbsolute {
-			logger.Infof("Skipping BUY for %s: Insufficient USDC balance. Need %.4f Have %.4f", pair, minBuyAbsolute, quoteBalance)
-			return 0
-		}
-
-		logger.Debugf(
-			"BUY %.2f %s | ATR=%.2f, ADX=%.2f, BaseRisk=%.2f%%, ADXMultiplier=%.2f, ATRMultiplier=%.2f, TradePercentage=%.2f%%, MinBuy=%.2f",
-			finalAmount, pair, atr, adx, baseRiskPercentage*100, adxMultiplier, atrMultiplier, tradePercentage*100, minBuyAbsolute,
-		)
-		return finalAmount
+	if quoteBalance < minBuyAbsolute {
+		logger.Infof("Skipping BUY for %s: Insufficient quote balance. Need %.4f Have %.4f",
+			pair, minBuyAbsolute, quoteBalance)
+		return 0
 	}
 
 	logger.Debugf(
-		"SELL %s: BaseBalance=%.2f, ATR=%.2f, ADX=%.2f, TradePercentage=%.2f%%",
-		pair, baseBalance, atr, adx, tradePercentage*100,
+		"BUY %.2f %s | riskUSD=%.2f ctxMult=%.2f Entry=%.4f Stop=%.4f PerUnitRisk=%.5f ATR=%.5f ADX=%.1f State=%s PAQ=%.2f MQ=%.2f Noise=%.2f Edge=%.2f RR=%.2f dynRR=%.2f",
+		positionNotional, pair,
+		riskUSD, ctxMult,
+		ctx.EntryPrice, ctx.StopPrice, perUnitRisk,
+		ctx.ATR, ctx.ADX, ctx.State.String(),
+		ctx.PriceActionQuality, ctx.MomentumQuality, ctx.Noise,
+		ctx.Edge, ctx.ActualRR, ctx.DynamicRR,
 	)
-	return baseBalance
+
+	return positionNotional
 }
 
 func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
@@ -263,7 +293,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 				continue
 			}
 
-			candles, err := bot.exchange.FetchCandles(pair.Symbol, strategy.GetCandleInterval(), 1000, false)
+			candles, err := bot.exchange.FetchCandles(pair.Symbol, strategy.GetCandleInterval(), 500, false)
 			if err != nil {
 				logger.Errorf("Error fetching candles for %s ", pair.Symbol)
 				continue
@@ -312,7 +342,37 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 
 			currentPrice := candles[len(candles)-1].Close
 
-			tradeAmount := bot.calculateTradeAmountAdvance(tradeSignal, pair.MinNotional, quoteBalance, baseBalance, pair.Symbol, analys.ATR, analys.ADX)
+			ctx := PositionContext{
+				State:      analys.MarketState,
+				ATR:        analys.ATR,
+				ADX:        analys.ADX,
+				EntryPrice: currentPrice,
+			}
+
+			if cs, ok := strategy.(*strategies.CompoundStrategy); ok {
+				last := cs.GetLatestData()
+
+				ctx.PriceActionQuality = last.PriceActionQuality
+				ctx.MomentumQuality = last.MomentumQuality
+				ctx.Noise = last.NoiseLevel
+				ctx.MultiTFTrendScore = last.MultiTFTrendScore
+
+				ctx.RsiSlope = last.RsiSlope
+				ctx.HistSlope = last.HistSlope
+				ctx.RSI = last.RSIVal
+
+				ctx.MarketRegime = last.MarketRegime
+
+			}
+
+			tradeAmount := bot.calculateTradeAmountAdvance(
+				tradeSignal,
+				pair.MinNotional,
+				quoteBalance,
+				baseBalance,
+				pair.Symbol,
+				ctx,
+			)
 			if tradeAmount == 0 {
 				continue
 			}
@@ -333,7 +393,7 @@ func (bot *MultiPairTradingBot) tradePair(pair *models.TradingPair) {
 					logger.Errorf("Error fetching today's active trades count: %v", err)
 					continue
 				}
-				if analys.MarketState != models.StronglyTrending && analys.MarketState != models.Trending {
+				if analys.MarketState == models.Chaotic {
 					logger.Infof("Today's trade count: %d | Total active trade count %d", todayTradeCount, activeTradesTotal)
 					if activeTradesTotal >= bot.config.MaxTotalTrades || todayTradeCount >= bot.config.MaxDailyTrades {
 						logger.InfoColorf(logger.Yellow, "Maximum daily trades reached. Skipping trade.")
@@ -574,7 +634,7 @@ func (bot *MultiPairTradingBot) performPairAdjustment() {
 	for _, market := range allMarkets {
 		go func(market models.TradingPair) {
 			defer wgm.Done()
-			candles, err := bot.exchange.FetchCandles(market.Symbol, bot.interval, 100, false)
+			candles, err := bot.exchange.FetchCandles(market.Symbol, bot.interval, 1000, false)
 			if err != nil {
 				logger.Errorf("Error fetching candles for %s | Sleeping for 3 minutes", market.Symbol)
 				return // Skip this market
@@ -757,26 +817,35 @@ func containsPairs(pairs []models.TradingPair, symbol string) bool {
 }
 
 func (bot *MultiPairTradingBot) SuggestStrategy(marketState models.MarketState) interfaces.Strategy {
+	var base interfaces.Strategy
 
 	switch marketState {
 	case models.Trending:
-		return bot.config.Trending.Strategy.Clone()
+		base = bot.config.Trending.Strategy
 
 	case models.Chaotic:
-		return bot.config.Chaotic.Strategy.Clone()
+		base = bot.config.Chaotic.Strategy
 
 	case models.RangeBound:
-		return bot.config.RangeBound.Strategy.Clone()
+		base = bot.config.RangeBound.Strategy
 
 	case models.Transitional:
-		return bot.config.Transitional.Strategy.Clone()
+		base = bot.config.Transitional.Strategy
 
 	case models.StronglyTrending:
-		return bot.config.StronglyTrending.Strategy.Clone()
+		base = bot.config.StronglyTrending.Strategy
 
 	default:
-		return bot.config.Default.Strategy.Clone()
+		base = bot.config.Default.Strategy
 	}
+
+	if base == nil {
+		return nil
+	}
+
+	strat := base.Clone()
+
+	return bot.injectAnalyzer(strat)
 }
 
 func (bot *MultiPairTradingBot) checkEarlyWarning(candlesMap map[string][]models.CandleStick) {
@@ -793,7 +862,7 @@ func (bot *MultiPairTradingBot) checkEarlyWarning(candlesMap map[string][]models
 		}
 
 		perf := bot.measureShortTermPerformance(cset, 5)
-		if perf < -5.0 { // if dropped >2% in last N bars
+		if perf < -5.0 {
 			logger.InfoColorf(logger.BrightRed, "[%s] Meltdown detected: %.2f%% drop in last 5 bars", symbol, perf)
 			meltdownCount++
 		}
@@ -860,4 +929,15 @@ func (bot *MultiPairTradingBot) measureShortTermPerformance(candles []models.Can
 	}
 
 	return perfPct
+}
+
+func (bot *MultiPairTradingBot) injectAnalyzer(strat interfaces.Strategy) interfaces.Strategy {
+	if bot.marketAnalyzer == nil || strat == nil {
+		return strat
+	}
+
+	if cs, ok := strat.(*strategies.CompoundStrategy); ok {
+		cs.SetAnalyzer(bot.marketAnalyzer)
+	}
+	return strat
 }
