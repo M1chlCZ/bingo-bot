@@ -7,9 +7,8 @@ Bingo-Bot (Binance GO Bot) is a **work-in-progress**, **experimental trading bot
 
 ---
 
-<a href="https://www.buymeacoffee.com/xDujIfYZVt" target="_blank">
-    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="150"/>
-</a>
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/m1chl)
+<a href="https://buymeacoffee.com/xdujifyzvt"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" height="30"></a>
 
 ## ⚡ Features
 - **Automated Trading**: Works with Binance for spot trading. More exchanges coming soon!
